@@ -120,7 +120,9 @@ def plot(pts: pd.DataFrame, summary: pd.DataFrame, *, meta: dict, out_png: Path)
         ax.text(0.98, 0.02, f"{beyond} points beyond {P.AXIS_MAX_KM:g} km not drawn",
                 transform=ax.transAxes, ha="right", va="bottom", fontsize=6.5, color=INK_2)
 
-    ax.set_xlabel(r"$d(\mathrm{TG},\ \mathrm{nearest\ PNI})$ (km)", fontsize=8)
+    # "Interconnect", not "PNI": the lists hold private interconnects *and*
+    # settlement-free peering locations. Code keeps the `pni_*` names.
+    ax.set_xlabel(r"$d(\mathrm{TG},\ \mathrm{nearest\ interconnect})$ (km)", fontsize=8)
     ax.set_ylabel(r"$d_\mathrm{sp}-d_\mathrm{geo}$ (km)", fontsize=8)
     ax.tick_params(labelsize=7.5, length=3)
     ax.tick_params(which="minor", length=1.8)

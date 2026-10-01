@@ -94,19 +94,7 @@ RTT_MATCH_TOL_MS = 1e-6
 
 def _checked_run(run: RunPaths, pni_csv: Path, record: dict, source_csv: Path | None) -> pd.DataFrame:
     """One run's min-RTT edges, after checking its inputs are the clustered ones."""
-    rerun = "Re-run `plot-pni-gap` over the same --run-id set."
-    if P.sha256_file(Path(pni_csv)) != record.get("pni_csv_sha256"):
-        raise ValueError(
-            f"{run.run_id}: {pni_csv} has changed since the clusters were computed "
-            f"(the output directory is not keyed on its content). {rerun}"
-        )
-    csv = edges.resolve_source_csv(run, source_csv)
-    sha = P.sha256_file(Path(csv))
-    if sha != record.get("source_csv_sha256"):
-        raise ValueError(
-            f"{run.run_id}: {csv} is not the CSV the clusters were computed from "
-            f"(sha256 {sha[:12]} vs {str(record.get('source_csv_sha256'))[:12]}). {rerun}"
-        )
+    csv = P.checked_source_csv(run, pni_csv, record, source_csv)
     rtt = edges.load_min_rtt(run, source_csv=csv)
     rtt.insert(0, "run_id", run.run_id)
     return rtt

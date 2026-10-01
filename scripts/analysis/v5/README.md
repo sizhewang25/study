@@ -91,6 +91,7 @@ outputs/analysis/v5/<run>/cost/cost_box.<heap|alloc>[.solved].{png,csv,manifest.
 outputs/analysis/v5/<run>/pni-gap/<pni-stem>/pni_gap_{clusters,points}.csv, pni_gap.manifest.json, pni_gap_scatter.png
 outputs/analysis/v5/<run>/pni-gap/<pni-stem>/pni_cluster_rtt.{png,csv,manifest.json}
 outputs/analysis/v5/_cross/pni-gap/<n>-runs-<hash>/pni_gap_*, pni_cluster_rtt.*   # --layout pooled
+outputs/analysis/v5/<run>|_cross/pni-gap/.../sp_interconnect_rtt.png, sp_interconnect_tgs.csv, sp_interconnect.report.json
 outputs/analysis/v5/_cross/cost/<n>-runs-<hash>/cost_box.pooled.<heap|alloc>[.solved].*
 outputs/analysis/v5/<run>/mtl-map/healpix-128/mtl_map.<method>.html
 outputs/analysis/v5/<run>/mtl-map/regions/<method>/<tg>.json          # replay cache, rung-free
@@ -512,6 +513,22 @@ its members, so k-means keeps it. Its silhouette there is the only negative of
 far-from-PNI sites, not with SeaTac, although the two share an S-P VP and an
 RTT floor.
 
+**`plot-sp-interconnect`** is Fig. B of the S-P subsection: the S-P VP's RTT
+against the direct distance and against the path through the interconnect
+nearest the S-P VP, with the propagation floor (`d / 100` km per ms) and twice
+it, coloured by the `plot-pni-gap` clusters. Routing through the S-P VP's own
+interconnect is the claim, not a flaw: if S-P is the VP at the crossing, that
+path must fit. `sp_interconnect.report.json` holds every number the subsection
+quotes, by paragraph and with its unit: the S-P VP at an interconnect against
+a random VP at 25/50/100 km, the three paths' fit and floor violations, the
+per-cluster latency condition (per-TG Spearman of VP distance against VP RTT,
+VPs tied within 1 ms), and the ceiling and floor numbers. It recomputes
+`d_geo`/`d_sp` with the S-P VP's identity and refuses to run if they differ
+from the clusters CSV's, or if a list or edge CSV changed since clustering.
+The interconnect lists must hold private interconnects **and** settlement-free
+peering locations: on PNI-only lists, AS03 grew a spurious cluster and RTTs
+that no path through the listed PNIs could produce.
+
 **`plot-pni-cluster-rtt`** reads `pni_gap_clusters.csv` off disk rather than
 re-clustering, and draws one box per cluster over its TGs' **smallest RTT**
 (each TG's S-P VP RTT, the delay no VP avoids), on a linear y axis from
@@ -607,6 +624,8 @@ python -m scripts.analysis.v5.cli plot-rtt-cdf --x-scale linear --x-max 100 --x-
     --run-id as7018-ripe-mesh
 python -m scripts.analysis.v5.cli plot-pni-gap         --run-id pro-as01-mesh   # PNI list from the config
 python -m scripts.analysis.v5.cli plot-pni-cluster-rtt --run-id pro-as01-mesh
+python -m scripts.analysis.v5.cli plot-sp-interconnect --layout per-run --layout pooled \
+    --run-id pro-as01-mesh --run-id pro-as02-mesh --run-id pro-as03-mesh
 python -m scripts.analysis.v5.cli plot-pni-gap \
     --run-id as01-260728-260802-mesh --pni-csv datasets/pni/as01-us-pni.approx.csv
 python -m scripts.analysis.v5.cli plot-pni-gap --layout pooled \

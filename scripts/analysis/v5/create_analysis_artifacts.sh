@@ -156,6 +156,7 @@ fi
 #   plot-champion-upset  needs classify
 #   plot-pni-gap         needs only the edge CSV and the config's PNI list
 #   plot-pni-cluster-rtt needs plot-pni-gap
+#   plot-sp-interconnect needs plot-pni-gap
 #
 # Every cross-dataset figure below reads `classify` output, so this loop must
 # finish for every run in a group before that group's section runs.
@@ -209,6 +210,8 @@ for R in "${ALL[@]}"; do
   if [ -n "$pni" ]; then
     if run plot-pni-gap $V5 plot-pni-gap --run-id "$R" --pni-csv "$pni"; then
       run plot-pni-cluster-rtt $V5 plot-pni-cluster-rtt --run-id "$R" --pni-csv "$pni"
+      # Fig. B of the S-P subsection, and the report holding every number it quotes.
+      run plot-sp-interconnect $V5 plot-sp-interconnect --run-id "$R" --pni-csv "$pni"
     fi
   else
     SKIPPED+=("$R :: plot-pni-gap (config declares no analysis.common.pni_csv)")
@@ -265,6 +268,7 @@ cross_group() {
   if [ "${#undeclared[@]}" -eq 0 ]; then
     if run plot-pni-gap-pooled $V5 plot-pni-gap --layout pooled "${args[@]}"; then
       run plot-pni-cluster-rtt-pooled $V5 plot-pni-cluster-rtt --layout pooled "${args[@]}"
+      run plot-sp-interconnect-pooled $V5 plot-sp-interconnect --layout pooled "${args[@]}"
     fi
   else
     SKIPPED+=("$R :: plot-pni-gap-pooled (no analysis.common.pni_csv in: ${undeclared[*]})")

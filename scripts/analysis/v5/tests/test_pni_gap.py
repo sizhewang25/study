@@ -461,13 +461,16 @@ class TestPooled:
             _pni_inputs(["run-a"], ["merged"], tmp_path / "p.csv", None, tmp_path)
 
 
-class TestTheRealPooledBoundaryPoint:
-    """The case that made Ward the default, pinned on the real meshes.
+class TestTheRealPooledMeshes:
+    """Ward against k-means on the real pooled meshes. Skips where they are absent.
 
-    Pooled over pro-as01/02/03, one 7-replica AS03 point (123 km from a PNI,
-    79 km gap) lands, under k-means, in a 5-point cluster away from the other
-    13 replicas of its own site. Ward keeps it with its site. Skips when the
-    benchmark tree or the PNI lists are not on this machine.
+    History: with AS03's interconnect list holding private interconnects only,
+    k-means put a 7-replica AS03 point in a 5-point cluster away from its own
+    site (the only negative silhouette of 80) and Ward did not, which is why
+    Ward became the default. Completing the list with two settlement-free
+    peering locations (2026-10-01) dissolved that cluster, and the two methods
+    now agree. What is pinned is what must keep holding: Ward is never worse
+    than k-means here and leaves no point closer to another cluster than its own.
     """
 
     RUNS = ("pro-as01-mesh", "pro-as02-mesh", "pro-as03-mesh")
@@ -483,32 +486,18 @@ class TestTheRealPooledBoundaryPoint:
             pytest.skip(f"benchmark runs not available: {exc}")
         pnis = {r: declared_pni_csv(r) for r in self.RUNS}
         if any(p is None or not p.exists() for p in pnis.values()):
-            pytest.skip("a pro-as0* config declares no existing PNI list")
+            pytest.skip("a pro-as0* config declares no existing interconnect list")
         pop = pd.concat([P.run_population(run, pnis[run.run_id])[0] for run in runs], ignore_index=True)
         return P.points(pop)
 
-    @staticmethod
-    def _boundary_and_site(pts):
-        boundary = pts[(pts.run_id == "pro-as03-mesh") & pts[P.D_PNI].between(120, 126)
-                       & pts[P.GAP].between(75, 85)]
-        assert len(boundary) == 1, boundary
-        site = pts[(pts.site_key == boundary.site_key.iloc[0]) & (pts.point_id != boundary.point_id.iloc[0])]
-        assert len(site) == 1
-        return boundary.point_id.iloc[0], site.point_id.iloc[0]
-
-    @pytest.mark.parametrize("method,together", [("ward", True), ("kmeans", False)])
-    def test_the_boundary_point_and_its_site(self, pooled, method, together):
-        out, rec = P.cluster(pooled.copy(), method=method)
-        b, sibling = self._boundary_and_site(out)
-        by_id = out.set_index(P.POINT_COL)[P.CLUSTER_COL]
-        assert rec["k"] == 4
-        assert bool(by_id[b] == by_id[sibling]) is together
+    def test_ward_is_never_worse_than_kmeans(self, pooled):
+        _, ward = P.cluster(pooled.copy(), method=P.WARD)
+        _, km = P.cluster(pooled.copy(), method=P.KMEANS)
+        assert ward["silhouette_at_k"] >= km["silhouette_at_k"] - 1e-9
 
     def test_ward_leaves_no_negative_silhouette(self, pooled):
         _, ward = P.cluster(pooled.copy(), method=P.WARD)
-        _, km = P.cluster(pooled.copy(), method=P.KMEANS)
-        assert ward["n_negative_silhouette_points"] == 0 < km["n_negative_silhouette_points"]
-        assert ward["silhouette_at_k"] > km["silhouette_at_k"]
+        assert ward["n_negative_silhouette_points"] == 0
 
 
 class TestShares:

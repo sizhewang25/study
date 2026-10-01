@@ -59,6 +59,7 @@ from scripts.analysis.v5.modules import (
     figure_peripherality,
     figure_pni_cluster_rtt,
     figure_pni_gap,
+    figure_sp_interconnect,
     figure_rtt_cdf,
     figure_stability,
     figure_vp_dist_gap,
@@ -1279,6 +1280,39 @@ def plot_pni_cluster_rtt_cmd(
     try:
         runs, pni_csvs, layouts, source_csvs = _pni_inputs(run_id, layout, pni_csv, source_csv, outputs_root)
         pngs = figure_pni_cluster_rtt.build_for_runs(
+            runs, pni_csvs, layouts=layouts,
+            analysis_root=analysis_root, source_csvs=source_csvs,
+        )
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for png in pngs:
+        typer.echo(f"wrote {png}")
+
+
+@app.command("plot-sp-interconnect")
+def plot_sp_interconnect_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Run (repeatable): the set `plot-pni-gap` clustered."),
+    layout: list[str] = typer.Option(None, "--layout", help=_PNI_LAYOUT_HELP),
+    pni_csv: Path = typer.Option(None, "--pni-csv", help=_PNI_CSV_HELP + " One --run-id only."),
+    source_csv: Path = typer.Option(None, "--source-csv", help="Override the run's edge CSV. One --run-id only."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """Does S-P locate the interconnect? The S-P VP's RTT against two distances.
+
+    Left: the direct distance to the S-P VP. Right: the path through the
+    interconnect nearest the S-P VP. Both with the propagation floor and twice
+    it, markers coloured by the `plot-pni-gap` clusters.
+
+    Also writes `sp_interconnect.report.json`, every number the S-P subsection
+    quotes (distribution, interconnect coverage, S-P VP at an interconnect vs a
+    random VP at 25/50/100 km, path fit, the latency condition per cluster,
+    ceiling, floor, nearest-interconnect violations), and a per-TG CSV. Reads
+    the clusters off disk and refuses them if any input changed.
+    """
+    try:
+        runs, pni_csvs, layouts, source_csvs = _pni_inputs(run_id, layout, pni_csv, source_csv, outputs_root)
+        pngs = figure_sp_interconnect.build_for_runs(
             runs, pni_csvs, layouts=layouts,
             analysis_root=analysis_root, source_csvs=source_csvs,
         )

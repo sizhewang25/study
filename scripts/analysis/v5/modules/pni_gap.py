@@ -654,6 +654,30 @@ def write(tgs: pd.DataFrame, pts: pd.DataFrame, meta: dict, out_dir: Path) -> di
 # -- what the RTT figure reads back -------------------------------------------
 
 
+def checked_source_csv(run: RunPaths, pni_csv: Path, record: dict, source_csv: Path | None) -> Path:
+    """The run's edge CSV, after checking it and the interconnect list are the clustered ones.
+
+    `record` is the run's entry in the clusters manifest's `runs`. Every
+    consumer of the clusters calls this, so a list edited in place (same file
+    stem, same directory) or a changed edge CSV is refused the same way.
+    """
+    rerun = "Re-run `plot-pni-gap` over the same --run-id set."
+    if sha256_file(Path(pni_csv)) != record.get("pni_csv_sha256"):
+        raise ValueError(
+            f"{run.run_id}: {pni_csv} has changed since the clusters were computed "
+            f"(the output directory is not keyed on its content). {rerun}"
+        )
+    csv = edges.resolve_source_csv(run, source_csv)
+    sha = sha256_file(Path(csv))
+    if sha != record.get("source_csv_sha256"):
+        raise ValueError(
+            f"{run.run_id}: {csv} is not the CSV the clusters were computed from "
+            f"(sha256 {sha[:12]} vs {str(record.get('source_csv_sha256'))[:12]}). {rerun}"
+        )
+    return Path(csv)
+
+
+
 def read_clusters(out_dir: Path, *, run_ids: list[str]) -> tuple[pd.DataFrame, dict]:
     """The clusters CSV and its manifest, checked against the runs asking for them."""
     csv, manifest = out_dir / CLUSTERS_CSV, out_dir / MANIFEST_NAME
