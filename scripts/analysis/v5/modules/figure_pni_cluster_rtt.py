@@ -18,9 +18,14 @@ linear from 0 ms.
 ## Whiskers are p5 and p95
 
 As in `figure_cost_box`: boxes are drawn from precomputed percentiles
-(`Axes.bxp`), whiskers p5/p95, hinges p25/p75, no fliers. The min and max are
-in the CSV. A Tukey whisker moves with the IQR, so its end is not a
-percentile anyone can quote.
+(`Axes.bxp`), whiskers p5/p95, hinges p25/p75. A Tukey whisker moves with the
+IQR, so its end is not a percentile anyone can quote.
+
+Every TG whose smallest RTT falls outside its cluster's p5/p95 is drawn as an
+open circle (`outliers`), so the min and max are on the figure as well as in
+the CSV. By the whisker's definition that is about a tenth of each cluster's
+TGs, and replicas at one site share an RTT, so circles overlap; `n_outliers`
+in the CSV counts them.
 
 ## What is checked before drawing
 
@@ -90,6 +95,9 @@ MEDIAN_LABEL_CLEARANCE_PT = 4.0
 
 #: Both sides are the same float off the same CSV; this absorbs rounding only.
 RTT_MATCH_TOL_MS = 1e-6
+
+#: Outlier circle diameter, in points. Open, so overlapping replicas stay legible.
+OUTLIER_MS_PT = 2.0
 
 
 def _checked_run(run: RunPaths, pni_csv: Path, record: dict, source_csv: Path | None) -> pd.DataFrame:
@@ -172,35 +180,64 @@ def stats_table(pairs: pd.DataFrame, tgs: pd.DataFrame, cluster_meta: dict) -> p
     """
     n_sites = {c["cluster"]: c["n_sites"] for c in cluster_meta["clusters"]}
     total_tgs, total_sites = cluster_meta["n_tgs"], cluster_meta["n_sites"]
-    floors = pairs.groupby(["run_id", "tg_id", P.CLUSTER_COL], as_index=False).rtt_ms.min()
     rows = []
-    for c, block in floors.groupby(P.CLUSTER_COL):
-        stats = cost_stats(block.rtt_ms.to_numpy())
+    for c, rtt in _floors(pairs).items():
+        stats = cost_stats(rtt)
         rows.append(
             {
-                P.CLUSTER_COL: int(c),
+                P.CLUSTER_COL: c,
                 "n_tgs": (n := int(stats.pop("n"))),
                 "tgs_pct": P.share_pct(n, total_tgs),
-                "n_sites": int(n_sites[int(c)]),
-                "sites_pct": P.share_pct(n_sites[int(c)], total_sites),
+                "n_sites": int(n_sites[c]),
+                "sites_pct": P.share_pct(n_sites[c], total_sites),
                 **{f"{k}_ms": v for k, v in stats.items()},
+                "n_outliers": len(_outside(rtt, stats["p5"], stats["p95"])),
             }
         )
     return pd.DataFrame(rows)
 
 
-def plot(stats: pd.DataFrame, *, total_tgs: int, total_sites: int, out_png: Path) -> Path:
+def _floors(pairs: pd.DataFrame) -> dict[int, np.ndarray]:
+    """Each cluster's TGs' smallest RTTs, one value per `(run_id, tg_id)`."""
+    floors = pairs.groupby(["run_id", "tg_id", P.CLUSTER_COL], as_index=False).rtt_ms.min()
+    return {int(c): block.rtt_ms.to_numpy() for c, block in floors.groupby(P.CLUSTER_COL)}
+
+
+def _outside(rtt: np.ndarray, lo: float, hi: float) -> list[float]:
+    """The values beyond the whiskers, sorted."""
+    return sorted(float(v) for v in rtt if v < lo or v > hi)
+
+
+def outliers(pairs: pd.DataFrame, stats: pd.DataFrame) -> dict[int, list[float]]:
+    """Per cluster, the TG floors outside that cluster's p5/p95 whiskers."""
+    floors = _floors(pairs)
+    return {int(r[P.CLUSTER_COL]): _outside(floors[int(r[P.CLUSTER_COL])], r["p5_ms"], r["p95_ms"])
+            for _, r in stats.iterrows()}
+
+
+def plot(
+    stats: pd.DataFrame,
+    *,
+    total_tgs: int,
+    total_sites: int,
+    out_png: Path,
+    fliers: dict[int, list[float]] | None = None,
+) -> Path:
+    """Boxes per cluster; `fliers` (from `outliers`) are drawn as open circles."""
     stats = stats.sort_values(P.CLUSTER_COL).reset_index(drop=True)
     clusters = stats[P.CLUSTER_COL].tolist()
     fig, ax = plt.subplots(figsize=FIGSIZE)
-    boxes = [bxp_stats({k: r[f"{k}_ms"] for k in ("p5", "p25", "p50", "p75", "p95")})
-             for _, r in stats.iterrows()]
+    boxes = [{**bxp_stats({k: r[f"{k}_ms"] for k in ("p5", "p25", "p50", "p75", "p95")}),
+              "fliers": (fliers or {}).get(c, [])}
+             for c, (_, r) in zip(clusters, stats.iterrows())]
     art = ax.bxp(boxes, positions=range(1, len(clusters) + 1), widths=0.5, patch_artist=True,
-                 showfliers=False, medianprops={"color": INK, "lw": 0.9},
+                 showfliers=True, medianprops={"color": INK, "lw": 0.9},
                  whiskerprops={"color": INK_2, "lw": 0.6}, capprops={"color": INK_2, "lw": 0.6})
-    for patch, c in zip(art["boxes"], clusters):
+    for patch, flier, c in zip(art["boxes"], art["fliers"], clusters):
         hue, _ = cluster_style(c)
         patch.set(facecolor=hue, alpha=0.6, edgecolor=hue, linewidth=0.6)
+        flier.set(marker="o", markersize=OUTLIER_MS_PT, markerfacecolor="none",
+                  markeredgecolor=hue, markeredgewidth=0.5, linestyle="none")
     # TGs then sites, the scatter legend's order. Sites are the count that says
     # how much evidence a box rests on: replicas are one observation repeated.
     ax.set_xticks(
@@ -245,7 +282,10 @@ def _manifest(cluster_meta: dict, stats: pd.DataFrame) -> str:
                 for r in cluster_meta["runs"]
             ],
             "quantity": "each TG's smallest RTT over the fleet, i.e. its S-P VP's RTT",
-            "boxes": "whiskers p5/p95, hinges p25/p75, line = median; no fliers. min/max in the CSV.",
+            "boxes": (
+                "whiskers p5/p95, hinges p25/p75, line = median; every TG outside "
+                "p5/p95 drawn as an open circle (n_outliers in the CSV)."
+            ),
             "replicas_note": (
                 "~20 TGs share a site's VP geometry; n_sites, not n_tgs, is the "
                 "number of independent observations per cluster."
@@ -261,7 +301,7 @@ def _write(pairs: pd.DataFrame, tgs: pd.DataFrame, meta: dict, out_dir: Path) ->
     stats.to_csv(out_dir / CSV_NAME, index=False)
     (out_dir / MANIFEST_NAME).write_text(_manifest(meta, stats))
     return plot(stats, total_tgs=meta["n_tgs"], total_sites=meta["n_sites"],
-                out_png=out_dir / PNG_NAME)
+                out_png=out_dir / PNG_NAME, fliers=outliers(pairs, stats))
 
 
 def build_for_runs(

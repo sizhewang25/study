@@ -1273,7 +1273,8 @@ def plot_pni_cluster_rtt_cmd(
 
     Reads the clusters CSV off disk rather than re-clustering, and refuses it
     if the run set, any run's PNI list or edge CSV sha256, the TG set or any
-    TG's smallest RTT no longer matches. Whiskers p5/p95, no fliers.
+    TG's smallest RTT no longer matches. Whiskers p5/p95; TGs beyond them
+    are drawn as open circles.
 
     Writes `pni_cluster_rtt.{png,csv,manifest.json}` beside the clusters.
     """

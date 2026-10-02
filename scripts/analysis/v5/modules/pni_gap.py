@@ -114,6 +114,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from matplotlib.scale import SymmetricalLogTransform
+from scipy.stats import spearmanr
 from sklearn.cluster import AgglomerativeClustering, KMeans
 from sklearn.metrics import adjusted_rand_score, silhouette_samples, silhouette_score
 
@@ -479,7 +480,11 @@ def cluster_summary(tgs: pd.DataFrame, pts: pd.DataFrame) -> pd.DataFrame:
         sp_rtt_min_ms=(SP_RTT, "min"),
         sp_rtt_max_ms=(SP_RTT, "max"),
     )
-    out = by_pt.join(by_tg).reset_index()
+    rho = pd.DataFrame(
+        {"rho_tgs": tgs.groupby(CLUSTER_COL).apply(spearman_rho, include_groups=False),
+         "rho_points": pts.groupby(CLUSTER_COL).apply(spearman_rho, include_groups=False)}
+    )
+    out = by_pt.join(by_tg).join(rho).reset_index()
     out.insert(out.columns.get_loc("n_tgs") + 1, "tgs_pct",
                [share_pct(n, len(tgs)) for n in out.n_tgs])
     out.insert(out.columns.get_loc("n_sites") + 1, "sites_pct",
@@ -492,6 +497,19 @@ def cluster_summary(tgs: pd.DataFrame, pts: pd.DataFrame) -> pd.DataFrame:
 PER_RUN = "per-run"
 POOLED = "pooled"
 LAYOUTS = (PER_RUN, POOLED)
+
+
+def spearman_rho(frame: pd.DataFrame) -> float:
+    """Spearman's rho of the gap against `d_pni`, over `frame`'s rows.
+
+    Over TGs, each point counts once per replica, i.e. ρ over points weighted
+    by `n_tgs` (ties ranked jointly). No p-value: replicas are not independent,
+    so n would be TGs where the evidence is ~1 per site. NaN if either axis is
+    constant or there are fewer than two rows.
+    """
+    if len(frame) < 2 or frame[GAP].nunique() < 2 or frame[D_PNI].nunique() < 2:
+        return float("nan")
+    return float(spearmanr(frame[D_PNI], frame[GAP]).statistic)
 
 
 def output_dir(run_id: str, pni_csv: Path, *, analysis_root: Path | None = None) -> Path:
@@ -640,6 +658,18 @@ def write(tgs: pd.DataFrame, pts: pd.DataFrame, meta: dict, out_dir: Path) -> di
         "points_csv": POINTS_CSV,
         "clusters": json.loads(summary.round(3).to_json(orient="records")),
         "clusters_by_run": clusters_by_run(tgs),
+        "spearman": {
+            "x": D_PNI,
+            "y": GAP,
+            "rho_tgs": round(spearman_rho(tgs), 3),
+            "rho_points": round(spearman_rho(pts), 3),
+            "note": (
+                "Overall here; per cluster as rho_tgs / rho_points in `clusters`. "
+                "rho_tgs ranks every TG (a point weighted by its replicas); rho_points "
+                "ranks each distinct (site, gap) point once. No p-value: replicas "
+                "are not independent samples. NaN (null) where an axis is constant."
+            ),
+        },
         "unit": (
             "The clustering groups distinct (site, gap) points, unweighted; every TG "
             "inherits its point's cluster. Clusters are numbered by site count "

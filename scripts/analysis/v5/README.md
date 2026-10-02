@@ -502,7 +502,10 @@ renumbered by site count descending (ties: TGs, then centroid gap), so `C1` is
 always the cluster covering the most sites. The manifest carries the
 silhouette curve, the count of negative-silhouette points, and the other
 method's ARI at the same k with the ids of the points it would move (k-means
-adds its 20-seed stability check).
+adds its 20-seed stability check). It also carries Spearman's ρ of the gap against
+`d_pni`, overall (`spearman`) and per cluster (`clusters[].rho_tgs`,
+`rho_points`): over TGs, i.e. points weighted by replicas, and over distinct
+points. No p-value, since replicas are not independent.
 
 Why Ward: per AS the two methods agree exactly, but pooled over as01-03
 k-means puts one 7-replica AS03 point in a 5-point cluster, away from the
@@ -532,7 +535,8 @@ that no path through the listed PNIs could produce.
 **`plot-pni-cluster-rtt`** reads `pni_gap_clusters.csv` off disk rather than
 re-clustering, and draws one box per cluster over its TGs' **smallest RTT**
 (each TG's S-P VP RTT, the delay no VP avoids), on a linear y axis from
-0 ms. Whiskers are p5/p95, as in `plot-cost-box`. It refuses the clusters if the manifest names another run, the edge CSV's sha256 changed,
+0 ms. Whiskers are p5/p95, as in `plot-cost-box`; every TG beyond them is an
+open circle (`n_outliers` in the CSV). It refuses the clusters if the manifest names another run, the edge CSV's sha256 changed,
 the TG sets differ, or any TG's floor disagrees with the recorded `sp_rtt_ms`.
 
 Neither output carries a coordinate or a PNI id (ids name cities).

@@ -500,6 +500,37 @@ class TestTheRealPooledMeshes:
         assert ward["n_negative_silhouette_points"] == 0
 
 
+class TestSpearman:
+    def test_manifest_rho_is_scipys_over_the_written_csvs(self, pni_inputs, tmp_path):
+        from scipy.stats import spearmanr
+
+        run, edge_csv, pni_csv, _, _ = pni_inputs
+        tgs, pts, meta = P.compute(run, pni_csv, source_csv=edge_csv)
+        paths = P.write(tgs, pts, meta, tmp_path)
+        body = json.loads(paths["manifest"].read_text())
+        written = pd.read_csv(paths["clusters"])
+        assert body["spearman"]["rho_tgs"] == pytest.approx(
+            spearmanr(written[P.D_PNI], written[P.GAP]).statistic, abs=1e-3)
+        for c in body["clusters"]:
+            block = written[written[P.CLUSTER_COL] == c["cluster"]]
+            want = P.spearman_rho(block)
+            if np.isnan(want):
+                assert c["rho_tgs"] is None
+            else:
+                assert c["rho_tgs"] == pytest.approx(want, abs=1e-3)
+
+    def test_rho_over_tgs_is_rho_over_points_weighted_by_replicas(self):
+        pop = _pop([(1.0, 10.0, 5.0), (2.0, 300.0, 40.0), (3.0, 900.0, 20.0)], replicas=3)
+        pop.loc[pop.index[:2], P.GAP] = 700.0   # site 1 splits: a 2-replica point
+        pts = P.points(pop)
+        expanded = pts.loc[pts.index.repeat(pts.n_tgs)]
+        assert P.spearman_rho(pop) == pytest.approx(P.spearman_rho(expanded))
+
+    def test_a_constant_axis_has_no_rho(self):
+        pop = _pop([(1.0, 10.0, 0.0), (2.0, 300.0, 0.0)], replicas=2)
+        assert np.isnan(P.spearman_rho(pop))
+
+
 class TestShares:
     def test_count_label_prints_the_count_and_its_rounded_share(self):
         assert P.count_label(600, 1269, "TGs") == "600 TGs (47%)"

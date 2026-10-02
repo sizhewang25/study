@@ -79,6 +79,22 @@ class TestConsumesTheWrittenClusters:
         box = R.bxp_stats({k: 1.0 * i for i, k in enumerate(("p5", "p25", "p50", "p75", "p95"))})
         assert (box["whislo"], box["whishi"], box["fliers"]) == (0.0, 4.0, [])
 
+    def test_outliers_are_exactly_the_floors_beyond_the_whiskers(self, clustered):
+        run, edge_csv, pni_csv, _, root, _ = clustered
+        pairs, tgs, meta, _ = R.load(run, pni_csv, analysis_root=root, source_csv=edge_csv)
+        pairs = pairs.assign(rtt_ms=pairs.rtt_ms + pairs.groupby("tg_id").ngroup())
+        stats = R.stats_table(pairs, tgs, meta).set_index("cluster")
+        out = R.outliers(pairs, stats.reset_index())
+        floors = pairs.groupby(["tg_id", "cluster"]).rtt_ms.min().reset_index()
+        for c, block in floors.groupby("cluster"):
+            lo, hi = stats.loc[c, "p5_ms"], stats.loc[c, "p95_ms"]
+            want = sorted(v for v in block.rtt_ms if v < lo or v > hi)
+            assert out[c] == pytest.approx(want)
+            assert stats.loc[c, "n_outliers"] == len(want)
+            # The extremes are among them whenever the whiskers cut anything.
+            if want:
+                assert block.rtt_ms.min() in want or block.rtt_ms.max() in want
+
 
 class TestStaleClustersAreRefused:
     def test_no_clusters_yet_is_a_missing_artifact(self, pni_inputs):

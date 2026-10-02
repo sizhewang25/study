@@ -122,8 +122,9 @@ def plot(pts: pd.DataFrame, summary: pd.DataFrame, *, meta: dict, out_png: Path)
 
     # "Interconnect", not "PNI": the lists hold private interconnects *and*
     # settlement-free peering locations. Code keeps the `pni_*` names.
-    ax.set_xlabel(r"$d(\mathrm{TG},\ \mathrm{nearest\ interconnect})$ (km)", fontsize=8)
-    ax.set_ylabel(r"$d_\mathrm{sp}-d_\mathrm{geo}$ (km)", fontsize=8)
+    # X is the paper's symbol for the interconnect.
+    ax.set_xlabel(r"$d(\mathrm{TG},\ \mathrm{nearest}\ X)$ (km)", fontsize=8)
+    ax.set_ylabel(r"$\Delta_\mathrm{VP} = d_\mathrm{sp}-d_\mathrm{geo}$ (km)", fontsize=8)
     ax.tick_params(labelsize=7.5, length=3)
     ax.tick_params(which="minor", length=1.8)
     ax.grid(alpha=0.25, lw=0.4)
