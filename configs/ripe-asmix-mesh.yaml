@@ -152,11 +152,23 @@ analysis:
     resolution: [128]
     dataset_label: RIPE-MESH AS-MIX
 
-  plot-bipartite-graph:
-    no_flow_voronoi: true
+  # One block per v5 plotting command that create_analysis_artifacts.sh runs.
+  # `combo_ids` narrows a figure to the methods it names (S-P included only
+  # when `shortest_ping` is listed); an empty block draws every combo on disk.
+  # `--method` on the CLI still wins.
 
-  plot-spotter-normality:
-    # The paper's claim is about the landmark that PERFORMED the measurement,
-    # and here that is unambiguously the VP.
-    group_by: vp_id
-    n_permutations: 200
+  plot-answer-space: {}
+
+  plot-bipartite-graph: {}
+
+  plot-error-cdf: {}
+
+  plot-champion-upset: {}
+
+  plot-pni-gap: {}
+
+  plot-pni-cluster-rtt: {}
+
+  plot-outcome-bars: {}
+
+  plot-outcome-map: {}

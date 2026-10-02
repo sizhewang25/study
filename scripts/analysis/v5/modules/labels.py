@@ -31,7 +31,16 @@ already reads the same way.
 the output tree records where an operator peers. `declared` walks any key
 path; `declared_pni_csv` is the one other caller.
 
-## Never raises
+## Also: which methods a figure draws
+
+`analysis.<command>.combo_ids` narrows one command's figure to the methods it
+names -- a paper figure can drop OCT-S while the run still holds it. The tree
+records what was *scored*; which of those a figure is *about* is an editorial
+choice nothing can derive, so it is the third declared value. Read by
+`declared_combo_ids`; `cli._methods_for` decides precedence and checks the
+names against the tree.
+
+## Never raises (except a malformed `combo_ids`)
 
 Every break in the chain falls back to the run id, which is unique by
 construction and so is always a correct-if-verbose label. The breaks are real,
@@ -124,6 +133,14 @@ def declared(run_id: str, key_path: tuple[str, ...], root: Path | str = DEFAULT_
     key, or a non-scalar value. A non-scalar would be carried into a filename
     or a CSV column, so it is refused the same way an absent one is.
     """
+    node = _node(run_id, key_path, root)
+    if node is None or isinstance(node, (dict, list)):
+        return None
+    return node
+
+
+def _node(run_id: str, key_path: tuple[str, ...], root: Path | str = DEFAULT_OUTPUTS_ROOT):
+    """The raw value at `key_path` in the run's config, or None if any link breaks."""
     path = config_path(run_id, root)
     if path is None:
         return None
@@ -135,8 +152,6 @@ def declared(run_id: str, key_path: tuple[str, ...], root: Path | str = DEFAULT_
         if not isinstance(node, dict):
             return None
         node = node.get(key)
-    if node is None or isinstance(node, (dict, list)):
-        return None
     return node
 
 
@@ -154,3 +169,31 @@ def declared_pni_csv(run_id: str, root: Path | str = DEFAULT_OUTPUTS_ROOT) -> Pa
     """
     value = declared(run_id, PNI_CSV_PATH, root)
     return None if value is None else _under_repo(str(value))
+
+
+#: The key, inside a command's own `analysis.<command>:` block, naming the
+#: methods that command's figures draw.
+COMBO_IDS_KEY = "combo_ids"
+
+
+def declared_combo_ids(
+    run_id: str, command: str, root: Path | str = DEFAULT_OUTPUTS_ROOT
+) -> list[str] | None:
+    """The run's `analysis.<command>.combo_ids`, or None for "draw everything".
+
+    None when nothing declares it -- no config, no block, an empty `{}`
+    placeholder, or an explicit `null`. Unlike the scalars above, a value that
+    IS there but malformed raises: falling back to every method would draw the
+    very combo the author meant to leave out, and the figure would not say so.
+    """
+    value = _node(run_id, ("analysis", command, COMBO_IDS_KEY), root)
+    if value is None:
+        return None
+    where = f"{run_id}: analysis.{command}.{COMBO_IDS_KEY}"
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{where} must be a non-empty list of combo ids, got {value!r}")
+    if not all(isinstance(v, str) and v for v in value):
+        raise ValueError(f"{where} must hold combo id strings, got {value!r}")
+    if len(set(value)) != len(value):
+        raise ValueError(f"{where} names a combo twice: {value!r}")
+    return list(value)

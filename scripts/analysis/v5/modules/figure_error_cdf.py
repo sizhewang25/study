@@ -89,6 +89,7 @@ from scripts.analysis.v5.modules.methods import (
     method_label,
     method_order,
     method_term_table,
+    methods_source,
 )
 from scripts.analysis.v5.modules.paths import (
     CLASSIFY_KIND,
@@ -704,6 +705,7 @@ def _manifest(
     policy: str = EXCLUDE,
     sentinel_km: float = SENTINEL_KM,
     per_run: dict[str, int] | None = None,
+    source: str = "all",
 ) -> str:
     order = curve_order(table)
     censored = policy == SENTINEL
@@ -714,6 +716,7 @@ def _manifest(
         "runs": list(run_ids),
         "dataset": cross.dataset_slug(run_ids),
         "methods": order,
+        "methods_source": source,
         "method_terms": method_term_table(order),
         "baseline": SHORTEST_PING,
         "dist_column": DIST_COLUMN,
@@ -847,6 +850,7 @@ def _write(
     policy: str = EXCLUDE,
     sentinel_km: float = SENTINEL_KM,
     per_run: dict[str, int] | None = None,
+    source: str = "all",
 ) -> Path:
     """Table, CSV twin, PNG and manifest for one layout. Returns the PNG.
 
@@ -871,7 +875,7 @@ def _write(
         _manifest(
             layout, table, drawn, run_ids=run_ids, nside=nside, png_name=png_name,
             csv_name=csv_name, min_x_km=min_x_km, max_x_km=max_x_km,
-            policy=policy, sentinel_km=sentinel_km, per_run=per_run,
+            policy=policy, sentinel_km=sentinel_km, per_run=per_run, source=source,
         )
     )
     return png
@@ -901,8 +905,13 @@ def build_for_run(
     max_x_km: float | None = None,
     unanswered: str = EXCLUDE,
     sentinel_km: float = SENTINEL_KM,
+    source: str | None = None,
 ) -> Path:
-    """One run's CDF, written into `classify/`, beside its `healpix-<n>/` rungs."""
+    """One run's CDF, written into `classify/`, beside its `healpix-<n>/` rungs.
+
+    `source` is where `methods` came from (`methods.METHODS_SOURCES`), for the
+    manifest; inferred from `methods` when not given.
+    """
     loaded = load_errors(run, nside, methods=methods, analysis_root=analysis_root)
     return _write(
         loaded,
@@ -918,6 +927,7 @@ def build_for_run(
         max_x_km=resolve_x_max(unanswered, max_x_km, sentinel_km),
         policy=unanswered,
         sentinel_km=sentinel_km,
+        source=methods_source(methods, source),
     )
 
 
@@ -932,6 +942,7 @@ def build_for_runs(
     max_x_km: float | None = None,
     unanswered: str = EXCLUDE,
     sentinel_km: float = SENTINEL_KM,
+    source: str | None = None,
 ) -> list[Path]:
     """Render the requested layouts; returns the PNG paths, layout-major.
 
@@ -962,7 +973,7 @@ def build_for_runs(
                 build_for_run(
                     run, nside=nside, methods=methods, analysis_root=analysis_root,
                     min_x_km=min_x_km, max_x_km=max_x_km,
-                    unanswered=unanswered, sentinel_km=sentinel_km,
+                    unanswered=unanswered, sentinel_km=sentinel_km, source=source,
                 )
                 for run in runs
             )
@@ -987,6 +998,7 @@ def build_for_runs(
                 policy=unanswered,
                 sentinel_km=sentinel_km,
                 per_run=per_run,
+                source=methods_source(methods, source),
             )
         )
     return out

@@ -44,11 +44,13 @@ DEFAULT_GROUP=(
   pro-as03-mesh
 )
 
-# No command here restricts its methods. Each discovers what to score or draw
-# from the benchmark output tree -- `combo_ids` globs
-# `fold_*/<combo>/targets.parquet` -- which is the single place to decide it.
-# An allow-list here would have to be edited every time a combo is added, and
-# until it was, the new combo would be silently unscored.
+# No command here passes `--method`. `classify` scores every combo the
+# benchmark output tree holds -- `combo_ids` globs
+# `fold_*/<combo>/targets.parquet` -- so a new combo is never silently
+# unscored. Which of those a FIGURE draws is the run config's call, not this
+# script's: `analysis.<command>.combo_ids` in each run's config, resolved by
+# `cli._methods_for` (an empty block, or none, draws everything on disk). Runs
+# drawn together in one cross-dataset figure must declare the same list.
 
 # `RUN_GROUPS`, not `GROUPS`: bash owns `GROUPS` as the caller's unix group
 # ids, and assigning to it is silently ignored. Every group read back as a

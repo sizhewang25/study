@@ -83,7 +83,7 @@ from scripts.analysis.v5.modules import grid as G
 from scripts.analysis.v5.modules.answer_space import BENCHMARK_TG_COLUMNS
 from scripts.analysis.v5.modules.geodesy import haversine_km
 from scripts.analysis.v5.modules.mapping import INK, INK_2, MUTED
-from scripts.analysis.v5.modules.methods import method_label, method_term_table
+from scripts.analysis.v5.modules.methods import method_label, method_term_table, methods_source
 from scripts.analysis.v5.modules.paths import MissingArtifactError, RunPaths
 from scripts.analysis.v5.modules.status import SHORTEST_PING, solved_mask
 
@@ -506,6 +506,7 @@ def _manifest(meta: dict, cohort: str, measures: list[str],
         "n_vp_per_tg_median": meta["n_vp_per_tg_median"],
         "n_cohort_per_method": {method_label(m): int(v) for m, v in n_per.items()},
         "row_order": [method_label(m) for m in order],
+        "methods_source": meta.get("methods_source", "all"),
         "method_terms": method_term_table(meta["methods"]),
         "policy": {
             "cohort_selection": (
@@ -558,8 +559,12 @@ def build_for_runs(
     nside: int = SOURCE_NSIDE,
     analysis_root: Path | None = None,
     source_csv: dict[str, Path] | None = None,
+    source: str | None = None,
 ) -> list[Path]:
-    """PNG, stats CSV and manifest per cohort. Returns the PNGs."""
+    """PNG, stats CSV and manifest per cohort. Returns the PNGs.
+
+    `source` is where `methods` came from, for the manifest.
+    """
     measures = [m for m, on in ((GEO, geo), (SPING, sping)) if on]
     if not measures:
         raise ValueError("nothing to draw: --no-geo and --no-sping cannot both be set.")
@@ -571,6 +576,7 @@ def build_for_runs(
     nside = G.validate_nside(nside)
     long, meta = load(runs, methods=methods, nside=nside, analysis_root=analysis_root,
                       source_csv=source_csv)
+    meta["methods_source"] = methods_source(methods, source)
     out_dir = output_dir(meta["run_ids"], analysis_root=analysis_root)
     written = []
     for cohort in cohorts:

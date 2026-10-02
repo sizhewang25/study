@@ -73,6 +73,7 @@ from scripts.analysis.v5.modules.methods import (  # noqa: E402
     method_label,
     method_order,
     method_term_table,
+    methods_source,
 )
 from scripts.analysis.v5.modules.paths import COST_KIND, RunPaths  # noqa: E402
 from scripts.analysis.v5.modules.status import SHORTEST_PING, solved_mask  # noqa: E402
@@ -335,7 +336,7 @@ def plot_boxes(
 
 def _manifest(
     layout: str, *, names: dict[str, str], table: pd.DataFrame, run_ids: list[str],
-    memory: str, rows: str, per_run: dict[str, int],
+    memory: str, rows: str, per_run: dict[str, int], source: str = "all",
 ) -> str:
     pipe = table[table["stage"] == C.PIPELINE]
     methods = method_order(pipe["method"].unique())
@@ -346,6 +347,7 @@ def _manifest(
         "dataset": cross.dataset_slug(run_ids),
         "artifacts": names,
         "methods": methods,
+        "methods_source": source,
         "method_terms": method_term_table(methods),
         "excluded": {
             SHORTEST_PING: "not a combo: no LTD/MTL/CTR stage is timed or measured",
@@ -403,7 +405,7 @@ def _manifest(
 
 def _write(
     frames: dict[str, pd.DataFrame], out_dir: Path, layout: str, *,
-    run_ids: list[str], memory: str, rows: str, subtitle: str,
+    run_ids: list[str], memory: str, rows: str, subtitle: str, source: str = "all",
 ) -> dict[str, Path]:
     names = artifact_names(layout, memory, rows)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -421,7 +423,7 @@ def _write(
     per_run = {str(k): int(v) for k, v in any_frame["run_id"].value_counts().sort_index().items()}
     written["manifest"].write_text(
         _manifest(layout, names=names, table=table, run_ids=run_ids,
-                  memory=memory, rows=rows, per_run=per_run)
+                  memory=memory, rows=rows, per_run=per_run, source=source)
     )
     return written
 
@@ -433,6 +435,7 @@ def _subtitle(name: str, n: int, rows: str) -> str:
 def build_for_run(
     run: RunPaths, *, memory: str = DEFAULT_MEMORY, rows: str = DEFAULT_ROWS,
     methods: list[str] | None = None, analysis_root: Path | None = None,
+    source: str | None = None,
 ) -> dict[str, Path]:
     """One run's figure, CSV and manifest, into `<run>/cost/`."""
     validate(memory, rows)
@@ -442,6 +445,7 @@ def build_for_run(
         frames, run.analysis_dir(COST_KIND, root=analysis_root), PER_RUN,
         run_ids=[run.run_id], memory=memory, rows=rows,
         subtitle=_subtitle(cross.short_dataset(run.run_id), n, rows),
+        source=methods_source(methods, source),
     )
 
 
@@ -449,6 +453,7 @@ def build_for_runs(
     runs: list[RunPaths], *, layouts: tuple[str, ...] = (PER_RUN,),
     memory: str = DEFAULT_MEMORY, rows: str = DEFAULT_ROWS,
     methods: list[str] | None = None, analysis_root: Path | None = None,
+    source: str | None = None,
 ) -> list[dict[str, Path]]:
     """Render the requested layouts; one artifact set per figure, layout-major."""
     ordered = tuple(dict.fromkeys(layouts)) or (PER_RUN,)
@@ -462,7 +467,7 @@ def build_for_runs(
         if layout == PER_RUN:
             out.extend(
                 build_for_run(run, memory=memory, rows=rows, methods=methods,
-                              analysis_root=analysis_root)
+                              analysis_root=analysis_root, source=source)
                 for run in runs
             )
             continue
@@ -477,6 +482,7 @@ def build_for_runs(
                 frames, cross.cross_dir(run_ids, analysis_root=analysis_root, kind=COST_KIND),
                 POOLED, run_ids=run_ids, memory=memory, rows=rows,
                 subtitle=_subtitle(f"{cross.dataset_slug(run_ids).upper()} pooled", n, rows),
+                source=methods_source(methods, source),
             )
         )
     return out

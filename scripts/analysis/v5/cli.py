@@ -80,6 +80,7 @@ from scripts.analysis.v5.modules.paths import (
     discover_runs,
     resolve_run,
 )
+from scripts.analysis.v5.modules.status import SHORTEST_PING
 
 app = typer.Typer(
     add_completion=False,
@@ -105,6 +106,118 @@ def _nsides(values: list[int] | None) -> tuple[int, ...]:
         return tuple(sorted({G.validate_nside(v) for v in values}, reverse=True))
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+
+
+#: Commands whose figures have a method axis, and so honour a config's
+#: `analysis.<command>.combo_ids`. `plot-pni-gap`'s `--method` is a clustering
+#: method and the pairwise figures pick theirs with `--method-a/-b`, so they
+#: are absent -- and `_refuse_combo_ids` rejects the key there rather than
+#: letting a config author believe it took effect.
+COMBO_COMMANDS = frozenset({
+    "plot-outcome-bars",
+    "plot-outcome-map",
+    "plot-error-cdf",
+    "plot-champion-upset",
+    "plot-cost-box",
+    "plot-vp-proximity",
+    "plot-vp-dist-gap",
+    "plot-vp-distance-cdf",
+    "plot-ripe-vs-databases",
+    "plot-mtl-map",
+    "plot-ltd-model",
+    "report-cohort-overlap",
+})
+
+
+def _declared_methods(command: str, runs, outputs_root: Path) -> dict[str, list[str] | None]:
+    """Each run's `analysis.<command>.combo_ids`, checked against its own tree.
+
+    A name the run does not hold is refused here, once for every command:
+    left to the modules, `plot-outcome-bars` filters with `isin` and would
+    silently drop the bar of a misspelled combo.
+    """
+    from scripts.analysis.v5.modules.labels import declared_combo_ids
+
+    out: dict[str, list[str] | None] = {}
+    for run in runs:
+        try:
+            ids = declared_combo_ids(run.run_id, command, outputs_root)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        if ids is not None:
+            have = {*run.combo_ids, SHORTEST_PING}
+            if missing := [m for m in ids if m not in have]:
+                raise typer.BadParameter(
+                    f"{run.run_id}: analysis.{command}.combo_ids names {missing}, "
+                    f"which the run does not hold; it has {sorted(have)}."
+                )
+        out[run.run_id] = ids
+    return out
+
+
+def _methods_for(
+    command: str, runs, given: list[str] | None, outputs_root: Path
+) -> tuple[list[str] | None, str]:
+    """`(methods, source)` for one figure drawn over `runs` together.
+
+    `--method` wins, then the config's `combo_ids`, then everything on disk
+    (None). Runs drawn together must agree -- same list, or none at all -- so
+    a pooled figure cannot quietly compare different method sets.
+    """
+    if given:
+        return list(given), "cli"
+    declared = _declared_methods(command, runs, outputs_root)
+    distinct = {tuple(v) if v else None for v in declared.values()}
+    if len(distinct) > 1:
+        raise typer.BadParameter(
+            f"analysis.{command}.combo_ids differs across the runs this figure "
+            f"draws together: {declared}. Declare one list in every run's "
+            f"config (or in none), or pass --method."
+        )
+    only = next(iter(distinct), None)
+    return (list(only), "config") if only else (None, "all")
+
+
+def _layout_calls(command: str, runs, given, layouts, per_run: str, outputs_root: Path):
+    """`[(runs, layouts, methods, source)]`, one build call each, in layout order.
+
+    A `per_run` layout draws each run alone, so each run takes its own list and
+    runs that disagree are simply built in separate calls. Every other layout
+    draws the runs together and goes through `_methods_for`'s agreement rule.
+    """
+    calls = []
+    for layout in layouts:
+        if layout != per_run:
+            calls.append((runs, (layout,), *_methods_for(command, runs, given, outputs_root)))
+            continue
+        if given:
+            calls.append((runs, (layout,), list(given), "cli"))
+            continue
+        declared = _declared_methods(command, runs, outputs_root)
+        groups: dict[tuple[str, ...], list] = {}
+        for run in runs:
+            groups.setdefault(tuple(declared[run.run_id] or ()), []).append(run)
+        calls.extend(
+            (group, (layout,), list(key) or None, "config" if key else "all")
+            for key, group in groups.items()
+        )
+    return calls
+
+
+def _refuse_combo_ids(command: str, run_ids, outputs_root: Path) -> None:
+    """Reject `combo_ids` in the block of a command that has no method axis."""
+    from scripts.analysis.v5.modules.labels import declared_combo_ids
+
+    for rid in run_ids:
+        try:
+            ids = declared_combo_ids(rid, command, outputs_root)
+        except ValueError:
+            ids = True
+        if ids is not None:
+            raise typer.BadParameter(
+                f"{rid}: analysis.{command}.combo_ids has no effect -- {command} "
+                f"draws no per-method axis. Remove it."
+            )
 
 
 @app.command("build-answer-space")
@@ -136,8 +249,13 @@ def classify_cmd(
     outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
     analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
 ) -> None:
-    """Label every prediction with its ring and its cell."""
+    """Label every prediction with its ring and its cell.
+
+    Always scores every combo: which ones a figure draws is decided at plot
+    time, by `--method` or the figure's own `combo_ids`.
+    """
     for run in _runs(run_id, all_runs, outputs_root):
+        _refuse_combo_ids("classify", [run.run_id], outputs_root)
         long = classify.score_for_run(
             run,
             nsides=_nsides(nside),
@@ -180,6 +298,7 @@ def plot_answer_space_cmd(
     if extent and all(v is not None for v in extent):
         chosen = tuple(float(v) for v in extent)
     for run in _runs(run_id, all_runs, outputs_root):
+        _refuse_combo_ids("plot-answer-space", [run.run_id], outputs_root)
         frame = chosen or (
             mapping.US_MAINLAND_EXTENT
             if us_only
@@ -244,14 +363,16 @@ def plot_outcome_bars_cmd(
             f"unknown --mode {bad}; pick from {list(figure_outcome_bars.MODES)}"
         )
     runs = [resolve_run(r, outputs_root) for r in run_id]
+    chosen, source = _methods_for("plot-outcome-bars", runs, method, outputs_root)
     try:
         pngs = figure_outcome_bars.build_for_runs(
             runs,
             nsides=_nsides(nside),
-            methods=list(method) if method else None,
+            methods=chosen,
             layouts=layouts,
             modes=modes,
             analysis_root=analysis_root,
+            source=source,
         )
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -308,14 +429,17 @@ def plot_outcome_map_cmd(
     """
     if not run_id:
         raise typer.BadParameter("pass at least one --run-id; this figure compares named datasets")
+    runs = [resolve_run(r, outputs_root) for r in run_id]
+    chosen, source = _methods_for("plot-outcome-map", runs, method, outputs_root)
     try:
         pngs = figure_outcome_map.build_for_runs(
-            [resolve_run(r, outputs_root) for r in run_id],
+            runs,
             cohorts=list(cohort) if cohort else None,
-            methods=list(method) if method else None,
+            methods=chosen,
             extent=tuple(extent),
             nside=nside,
             analysis_root=analysis_root,
+            source=source,
         )
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -398,6 +522,7 @@ def plot_contest_map_cmd(
     """
     if not run_id:
         raise typer.BadParameter("pass at least one --run-id; this figure compares named datasets")
+    _refuse_combo_ids("plot-contest-map", run_id, outputs_root)
     try:
         png = figure_contest_map.build_for_runs(
             [resolve_run(r, outputs_root) for r in run_id],
@@ -449,6 +574,7 @@ def plot_peripherality_cmd(
     """
     if not run_id:
         raise typer.BadParameter("pass at least one --run-id; this figure pools named datasets")
+    _refuse_combo_ids("plot-peripherality", run_id, outputs_root)
     try:
         png = figure_peripherality.build_for_runs(
             [resolve_run(r, outputs_root) for r in run_id],
@@ -510,6 +636,7 @@ def plot_stability_cmd(
     """
     if not run_id:
         raise typer.BadParameter("pass at least one --run-id; this figure pools named datasets")
+    _refuse_combo_ids("plot-stability", run_id, outputs_root)
     try:
         pngs = figure_stability.build_for_runs(
             [resolve_run(r, outputs_root) for r in run_id],
@@ -559,6 +686,7 @@ def plot_error_diff_cmd(
     """
     if not run_id:
         raise typer.BadParameter("pass at least one --run-id; this figure pools named datasets")
+    _refuse_combo_ids("plot-error-diff", run_id, outputs_root)
     try:
         png = figure_error_diff.build_for_runs(
             [resolve_run(r, outputs_root) for r in run_id],
@@ -609,6 +737,7 @@ def plot_exclusive_error_cmd(
     """
     if not run_id:
         raise typer.BadParameter("pass at least one --run-id; this figure pools named datasets")
+    _refuse_combo_ids("plot-exclusive-error", run_id, outputs_root)
     try:
         png = figure_exclusive_error.build_for_runs(
             [resolve_run(r, outputs_root) for r in run_id],
@@ -699,11 +828,12 @@ def plot_ripe_vs_databases_cmd(
             f"unknown --database {unknown}; pick from {list(ripe_vs_databases.DATABASES)}"
         )
     run = resolve_run(run_id, outputs_root)
+    chosen, _ = _methods_for("plot-ripe-vs-databases", [run], method, outputs_root)
     try:
         png = ripe_vs_databases.build_for_run(
             run,
             nside=nside,
-            methods=list(method) if method else None,
+            methods=chosen,
             databases=list(database) if database else None,
             db_dir=db_dir,
             analysis_root=analysis_root,
@@ -814,18 +944,26 @@ def plot_error_cdf_cmd(
     )
     if not runs:
         raise typer.BadParameter("pass at least one --run-id, or --all-runs")
+    calls = _layout_calls(
+        "plot-error-cdf", runs, method, layouts, figure_error_cdf.PER_RUN, outputs_root
+    )
     try:
-        pngs = figure_error_cdf.build_for_runs(
-            runs,
-            layouts=layouts,
-            nside=nside,
-            methods=list(method) if method else None,
-            analysis_root=analysis_root,
-            min_x_km=min_x_km,
-            max_x_km=max_x_km,
-            unanswered=unanswered,
-            sentinel_km=sentinel_km,
-        )
+        pngs = [
+            png
+            for group, lays, chosen, source in calls
+            for png in figure_error_cdf.build_for_runs(
+                group,
+                layouts=lays,
+                nside=nside,
+                methods=chosen,
+                analysis_root=analysis_root,
+                min_x_km=min_x_km,
+                max_x_km=max_x_km,
+                unanswered=unanswered,
+                sentinel_km=sentinel_km,
+                source=source,
+            )
+        ]
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     for png in pngs:
@@ -895,15 +1033,24 @@ def plot_champion_upset_cmd(
     )
     if not runs:
         raise typer.BadParameter("pass at least one --run-id, or --all-runs")
+    calls = _layout_calls(
+        "plot-champion-upset", runs, method, layouts, figure_champion_upset.PER_RUN,
+        outputs_root,
+    )
     try:
-        sets = figure_champion_upset.build_for_runs(
-            runs,
-            layouts=layouts,
-            nside=nside,
-            methods=list(method) if method else None,
-            analysis_root=analysis_root,
-            tie_km=tie_km,
-        )
+        sets = [
+            written
+            for group, lays, chosen, source in calls
+            for written in figure_champion_upset.build_for_runs(
+                group,
+                layouts=lays,
+                nside=nside,
+                methods=chosen,
+                analysis_root=analysis_root,
+                tie_km=tie_km,
+                source=source,
+            )
+        ]
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     for written in sets:
@@ -967,15 +1114,23 @@ def plot_cost_box_cmd(
     )
     if not runs:
         raise typer.BadParameter("pass at least one --run-id, or --all-runs")
+    calls = _layout_calls(
+        "plot-cost-box", runs, method, layouts, figure_cost_box.PER_RUN, outputs_root
+    )
     try:
-        sets = figure_cost_box.build_for_runs(
-            runs,
-            layouts=layouts,
-            memory=memory,
-            rows=rows,
-            methods=list(method) if method else None,
-            analysis_root=analysis_root,
-        )
+        sets = [
+            written
+            for group, lays, chosen, source in calls
+            for written in figure_cost_box.build_for_runs(
+                group,
+                layouts=lays,
+                memory=memory,
+                rows=rows,
+                methods=chosen,
+                analysis_root=analysis_root,
+                source=source,
+            )
+        ]
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     for written in sets:
@@ -1022,15 +1177,18 @@ def plot_vp_proximity_cmd(
     """
     if not run_id:
         raise typer.BadParameter("pass at least one --run-id")
+    runs = [resolve_run(r, outputs_root) for r in run_id]
+    chosen, source = _methods_for("plot-vp-proximity", runs, method, outputs_root)
     try:
         pngs = figure_vp_proximity.build_for_runs(
-            [resolve_run(r, outputs_root) for r in run_id],
+            runs,
             cohorts=list(cohort) if cohort else None,
-            methods=list(method) if method else None,
+            methods=chosen,
             geo=geo,
             sping=sping,
             nside=nside,
             analysis_root=analysis_root,
+            source=source,
         )
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -1087,10 +1245,12 @@ def plot_vp_dist_gap_cmd(
     """
     if not run_id:
         raise typer.BadParameter("pass at least one --run-id")
+    runs = [resolve_run(r, outputs_root) for r in run_id]
+    chosen, _ = _methods_for("plot-vp-dist-gap", runs, method, outputs_root)
     try:
         pngs = figure_vp_dist_gap.build_for_runs(
-            [resolve_run(r, outputs_root) for r in run_id],
-            methods=list(method) if method else None,
+            runs,
+            methods=chosen,
             reference=reference,
             cohorts=tuple(cohort) if cohort else figure_vp_dist_gap.DEFAULT_COHORTS,
             nside=nside,
@@ -1142,10 +1302,12 @@ def plot_vp_distance_cdf_cmd(
     """
     if not run_id:
         raise typer.BadParameter("pass at least one --run-id")
+    runs = [resolve_run(r, outputs_root) for r in run_id]
+    chosen, _ = _methods_for("plot-vp-distance-cdf", runs, method, outputs_root)
     try:
         pngs = figure_vp_distance_cdf.build_for_runs(
-            [resolve_run(r, outputs_root) for r in run_id],
-            methods=list(method) if method else None,
+            runs,
+            methods=chosen,
             nside=nside,
             analysis_root=analysis_root,
         )
@@ -1248,6 +1410,7 @@ def plot_pni_gap_cmd(
     `plot-pni-cluster-rtt` reads), `pni_gap_points.csv`, `pni_gap.manifest.json`
     and `pni_gap_scatter.png`. Needs no `classify`.
     """
+    _refuse_combo_ids("plot-pni-gap", run_id or [], outputs_root)
     try:
         runs, pni_csvs, layouts, source_csvs = _pni_inputs(run_id, layout, pni_csv, source_csv, outputs_root)
         pngs = figure_pni_gap.build_for_runs(
@@ -1278,6 +1441,7 @@ def plot_pni_cluster_rtt_cmd(
 
     Writes `pni_cluster_rtt.{png,csv,manifest.json}` beside the clusters.
     """
+    _refuse_combo_ids("plot-pni-cluster-rtt", run_id or [], outputs_root)
     try:
         runs, pni_csvs, layouts, source_csvs = _pni_inputs(run_id, layout, pni_csv, source_csv, outputs_root)
         pngs = figure_pni_cluster_rtt.build_for_runs(
@@ -1405,6 +1569,7 @@ def plot_rtt_cdf_cmd(
     """
     if not run_id:
         raise typer.BadParameter("pass at least one --run-id")
+    _refuse_combo_ids("plot-rtt-cdf", run_id, outputs_root)
     try:
         pngs = figure_rtt_cdf.build_for_runs(
             [resolve_run(r, outputs_root) for r in run_id],
@@ -1477,11 +1642,13 @@ def report_cohort_overlap_cmd(
     """
     if not run_id:
         raise typer.BadParameter("pass at least one --run-id")
+    runs = [resolve_run(r, outputs_root) for r in run_id]
+    chosen, _ = _methods_for("report-cohort-overlap", runs, method, outputs_root)
     try:
         paths = cohort_overlap.build_for_runs(
-            [resolve_run(r, outputs_root) for r in run_id],
+            runs,
             cohorts=list(cohort) if cohort else None,
-            methods=list(method) if method else None,
+            methods=chosen,
             reference=reference,
             margin_km=margin_km,
             nside=nside,
@@ -1574,7 +1741,8 @@ def plot_mtl_map_cmd(
 
     try:
         run = resolve_run(run_id, outputs_root)
-        methods = list(method) or [*run.combo_ids, map_mtl.SHORTEST_PING]
+        chosen, _ = _methods_for("plot-mtl-map", [run], method, outputs_root)
+        methods = chosen or [*run.combo_ids, map_mtl.SHORTEST_PING]
         rendered = map_mtl.build_for_run(
             run,
             methods=methods,
@@ -1697,7 +1865,7 @@ def plot_ltd_model_cmd(
         try:
             written, skipped = figure_ltd_model.build_for_run(
                 run,
-                methods=list(method) or None,
+                methods=_methods_for("plot-ltd-model", [run], method, outputs_root)[0],
                 fold_ids=list(fold) or None,
                 analysis_root=analysis_root,
                 inputs_root=root_in,

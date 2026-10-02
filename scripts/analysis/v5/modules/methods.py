@@ -149,3 +149,18 @@ def method_order(methods) -> list[str]:
 def method_colors(methods) -> dict[str, str]:
     """Method id -> hue, stable under filtering."""
     return {m: LABEL_HUES.get(method_label(m), OTHER_HUE) for m in methods}
+
+
+#: Where a figure's method list came from, as its manifest records it. The
+#: filtered figure overwrites the unfiltered one under the same filename, so
+#: this is what tells a deliberate omission from a combo that never ran.
+METHODS_SOURCES: tuple[str, ...] = ("all", "config", "cli")
+
+
+def methods_source(methods, source: str | None = None) -> str:
+    """`source` validated, or inferred: no list is `all`, a bare list is `cli`."""
+    if source is None:
+        return "cli" if methods else "all"
+    if source not in METHODS_SOURCES:
+        raise ValueError(f"unknown methods source {source!r}; pick from {list(METHODS_SOURCES)}")
+    return source

@@ -92,6 +92,7 @@ from scripts.analysis.v5.modules import classify as C
 from scripts.analysis.v5.modules import cross
 from scripts.analysis.v5.modules import grid as G
 from scripts.analysis.v5.modules import methods
+from scripts.analysis.v5.modules.methods import methods_source
 from scripts.analysis.v5.modules.paths import MissingArtifactError, RunPaths, grid_slug
 
 #: Ring tiers bottom-up, then the ungraded slot. `unanswered` is a cell label
@@ -818,7 +819,7 @@ def _targets_sources(runs, nside, *, analysis_root=None) -> dict[str, str | None
 
 def _manifest(
     layout, table, nside, png_name, csv_name, *, run_ids, mode=BOUNDED, per_run=None,
-    targets_sources=None,
+    targets_sources=None, source="all",
 ) -> str:
     body = {
         "figure": png_name,
@@ -839,6 +840,7 @@ def _manifest(
         "runs": run_ids,
         "answer_space_targets_source": targets_sources or {},
         "methods": method_order(table),
+        "methods_source": source,
         "panel_order": {ds: panel_order(table, ds) for ds in sorted(table["dataset"].unique())},
         "method_terms": {
             m: {"term": method_label(m), "name": methods.METHOD_TERMS.get(method_label(m))}
@@ -889,8 +891,12 @@ def build_for_runs(
     layouts: tuple[str, ...] = LAYOUTS,
     modes: tuple[str, ...] = (BOUNDED,),
     analysis_root: Path | None = None,
+    source: str | None = None,
 ) -> list[Path]:
-    """One figure, CSV twin and manifest per layout x mode x rung. Returns the PNGs."""
+    """One figure, CSV twin and manifest per layout x mode x rung. Returns the PNGs.
+
+    `source` is where `methods` came from, for the manifest.
+    """
     unknown = [x for x in layouts if x not in LAYOUTS]
     if unknown:
         raise ValueError(f"unknown layout {unknown}; pick from {list(LAYOUTS)}")
@@ -925,6 +931,7 @@ def build_for_runs(
                         layout, table, nside, png.name, names["csv"],
                         run_ids=run_ids, mode=mode, per_run=per_run,
                         targets_sources=_targets_sources(runs, nside, analysis_root=analysis_root),
+                        source=methods_source(methods, source),
                     )
                 )
                 written.append(png)

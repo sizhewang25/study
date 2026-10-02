@@ -49,6 +49,34 @@ prose. The lookup table is `methods.METHOD_TERMS`:
 Each outcome-bar figure prints the terms it uses under its panels, and its
 manifest records them.
 
+### Choosing methods per figure
+
+`classify` scores every combo the run holds. To limit a figure to a subset,
+for example to leave OCT-S out of the paper's error CDF, add `combo_ids` to
+that command's block in the run config:
+
+```yaml
+analysis:
+  plot-error-cdf:
+    combo_ids: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, spotter_cbg]
+  plot-outcome-bars: {}        # empty or absent: every combo on disk
+```
+
+- **Precedence:** `--method` on the CLI, then `combo_ids`, then every scored
+  method.
+- **S-P is not implicit.** It is drawn only if `shortest_ping` is listed.
+- **Names are checked against the run's tree.** A combo the run does not hold
+  is refused, never skipped.
+- **Runs drawn together must agree.** A pooled or cross-dataset figure refuses
+  runs whose configs declare different lists, or a list in some configs and
+  none in others. `per-run` layouts take each run's own list.
+- **Same filename.** A filtered figure replaces the unfiltered one. Its
+  manifest records `methods` and `methods_source` (`config`, `cli` or `all`).
+- **Only on a method axis.** The key is honoured by the commands in
+  `cli.COMBO_COMMANDS`. On a command without one (the answer-space and
+  bipartite maps, the PNI figures, the RTT CDF, the `--method-a/-b`
+  pairwise figures, `classify`) it is an error, not a no-op.
+
 ## The two labels
 
 | label | values | bounded by |

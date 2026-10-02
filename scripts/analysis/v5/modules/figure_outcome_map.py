@@ -116,6 +116,7 @@ from scripts.analysis.v5.modules.methods import (  # noqa: E402
     method_label,
     method_order,
     method_term_table,
+    methods_source,
 )
 from scripts.analysis.v5.modules.paths import MissingArtifactError, RunPaths  # noqa: E402
 from scripts.analysis.v5.modules.status import solved_mask  # noqa: E402
@@ -731,6 +732,7 @@ def _manifest(
     extent: tuple[float, float, float, float],
     png_name: str,
     csv_name: str,
+    source: str = "all",
 ) -> str:
     body = {
         "figure": png_name,
@@ -742,6 +744,7 @@ def _manifest(
         "source_nside": data.nside,
         "extent": dict(zip(("lon_min", "lon_max", "lat_min", "lat_max"), extent)),
         "row_order": [method_label(m) for m in data.methods],
+        "methods_source": source,
         "column_order": [cross.short_dataset(r) for r in data.run_ids],
         "method_terms": method_term_table(data.methods),
         "panels": counts,
@@ -809,8 +812,12 @@ def build_for_runs(
     extent: tuple[float, float, float, float] = DEFAULT_EXTENT,
     nside: int = SOURCE_NSIDE,
     analysis_root: Path | None = None,
+    source: str | None = None,
 ) -> list[Path]:
-    """PNG, CSV twin and manifest per cohort. Returns the PNGs."""
+    """PNG, CSV twin and manifest per cohort. Returns the PNGs.
+
+    `source` is where `methods` came from, for the manifest.
+    """
     wanted = list(dict.fromkeys(cohorts or COHORTS))
     for c in wanted:
         # Before the parquets are read: loading three meshes costs seconds.
@@ -829,6 +836,7 @@ def build_for_runs(
             _manifest(
                 data, counts, cohort=cohort, extent=extent,
                 png_name=names["png"], csv_name=names["csv"],
+                source=methods_source(methods, source),
             )
         )
         written.append(png)

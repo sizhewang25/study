@@ -91,6 +91,7 @@ from scripts.analysis.v5.modules.methods import (  # noqa: E402
     method_label,
     method_order,
     method_term_table,
+    methods_source,
 )
 from scripts.analysis.v5.modules.paths import CLASSIFY_KIND, RunPaths  # noqa: E402
 from scripts.analysis.v5.modules.status import SHORTEST_PING  # noqa: E402
@@ -501,6 +502,7 @@ def _manifest(
     origin: pd.Series,
     tie_km: float,
     nside: int,
+    source: str = "all",
 ) -> str:
     degree = mask.sum(axis=1)
     order = list(mask.columns)
@@ -512,6 +514,7 @@ def _manifest(
         "runs": list(run_ids),
         "dataset": cross.dataset_slug(run_ids),
         "methods": order,
+        "methods_source": source,
         "method_terms": method_term_table(order),
         "baseline": SHORTEST_PING,
         "dist_column": E.DIST_COLUMN,
@@ -594,6 +597,7 @@ def _write(
     tie_km: float,
     nside: int,
     subtitle: str,
+    source: str = "all",
 ) -> dict[str, Path]:
     """The three tables, the per-TG audit, the PNG and the manifest for one layout."""
     names = artifact_names(layout, tie_km)
@@ -633,7 +637,7 @@ def _write(
     written["manifest"].write_text(
         _manifest(
             layout, names=names, mask=mask, sets=sets, run_ids=run_ids,
-            origin=origin, tie_km=tie_km, nside=nside,
+            origin=origin, tie_km=tie_km, nside=nside, source=source,
         )
     )
     return written
@@ -650,8 +654,12 @@ def build_for_run(
     methods: list[str] | None = None,
     analysis_root: Path | None = None,
     tie_km: float = DEFAULT_TIE_KM,
+    source: str | None = None,
 ) -> dict[str, Path]:
-    """One run's artifact set, written into `classify/` beside `error_cdf.png`."""
+    """One run's artifact set, written into `classify/` beside `error_cdf.png`.
+
+    `source` is where `methods` came from, for the manifest.
+    """
     tie_km = validate_tie(tie_km)
     errors, sites = load_run(run, nside, methods=methods, analysis_root=analysis_root)
     origin = pd.Series(run.run_id, index=errors.index, name="run_id")
@@ -661,6 +669,7 @@ def build_for_run(
         PER_RUN,
         run_ids=[run.run_id], tie_km=tie_km, nside=nside,
         subtitle=_subtitle(run.run_id, len(errors), tie_km),
+        source=methods_source(methods, source),
     )
 
 
@@ -672,6 +681,7 @@ def build_for_runs(
     methods: list[str] | None = None,
     analysis_root: Path | None = None,
     tie_km: float = DEFAULT_TIE_KM,
+    source: str | None = None,
 ) -> list[dict[str, Path]]:
     """Render the requested layouts; one artifact set per figure, layout-major."""
     ordered = tuple(dict.fromkeys(layouts)) or (PER_RUN,)
@@ -688,7 +698,7 @@ def build_for_runs(
             out.extend(
                 build_for_run(
                     run, nside=nside, methods=methods,
-                    analysis_root=analysis_root, tie_km=tie_km,
+                    analysis_root=analysis_root, tie_km=tie_km, source=source,
                 )
                 for run in runs
             )
@@ -707,6 +717,7 @@ def build_for_runs(
                 subtitle=_subtitle(
                     f"{cross.dataset_slug(run_ids).upper()} pooled", len(errors), tie_km
                 ),
+                source=methods_source(methods, source),
             )
         )
     return out

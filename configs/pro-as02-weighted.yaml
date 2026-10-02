@@ -98,25 +98,25 @@ analysis:
     pni_csv: datasets/pni/as15169.csv
     peer_asn: 15169
 
-  plot-bipartite-graph:
-    no_flow_voronoi: true
+  # One block per v5 plotting command that create_analysis_artifacts.sh runs.
+  # `combo_ids` narrows a figure to the methods it names (S-P included only
+  # when `shortest_ping` is listed); an empty block draws every combo on disk.
+  # `--method` on the CLI still wins.
 
-  plot-spotter-normality:
-    group_by: vp_id
-    n_permutations: 200
+  plot-answer-space: {}
 
-  build-pni-feasibility:
-    decoy_trials: 200
+  plot-bipartite-graph: {}
 
-  compare-pni-linearity:
-    holdout_only: true
+  plot-error-cdf:
+    combo_ids: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, spotter_cbg]
 
-  plot-pni-delay:
-    rtt_col: rtt_ms
-    pni_prefix: sel_pni
-    tg_prefix: target
-    where: is_holdout
-    x_max: 5000
-    x_tick: 1000
-    y_max: 100
-    y_tick: 20
+  plot-champion-upset:
+    combo_ids: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, spotter_cbg]
+
+  plot-pni-gap: {}
+
+  plot-pni-cluster-rtt: {}
+
+  plot-outcome-bars: {}
+
+  plot-outcome-map: {}
