@@ -44,13 +44,17 @@ DEFAULT_GROUP=(
   pro-as03-mesh
 )
 
-# No command here passes `--method`. `classify` scores every combo the
-# benchmark output tree holds -- `combo_ids` globs
-# `fold_*/<combo>/targets.parquet` -- so a new combo is never silently
-# unscored. Which of those a FIGURE draws is the run config's call, not this
-# script's: `analysis.<command>.combo_ids` in each run's config, resolved by
+# `classify` scores every combo the benchmark output tree holds -- `combo_ids`
+# globs `fold_*/<combo>/targets.parquet` -- so a new combo is never silently
+# unscored. Which of those a FIGURE draws is the run config's call by default:
+# `analysis.<command>.combo_ids` in each run's config, resolved by
 # `cli._methods_for` (an empty block, or none, draws everything on disk). Runs
 # drawn together in one cross-dataset figure must declare the same list.
+#
+# The exception is the pooled figures that need a different set from their
+# per-run twins. A config block is per command, not per layout, so it cannot
+# say that; those calls pass `--method` instead, built by `methods_except`
+# from the tree rather than spelled out here, so a new combo is not dropped.
 
 # `RUN_GROUPS`, not `GROUPS`: bash owns `GROUPS` as the caller's unix group
 # ids, and assigning to it is silently ignored. Every group read back as a
@@ -111,6 +115,32 @@ declared_pni_csv() {
 from scripts.analysis.v5.modules.labels import declared_pni_csv
 p = declared_pni_csv(sys.argv[1])
 print(p or "")' "$1"
+}
+
+# `--method` flags for every method the run holds -- its combos and S-P, the
+# set `classify` scored -- minus any named after it. Answers in the global
+# METHOD_ARGS, like `present` below. Naming a method the run does not hold
+# fails: a misspelled exclusion would otherwise exclude nothing.
+METHOD_ARGS=()
+methods_except() {
+  local out
+  METHOD_ARGS=()
+  out=$(python - "$@" <<'PY'
+import sys
+
+from scripts.analysis.v5.modules.map_mtl import SHORTEST_PING
+from scripts.analysis.v5.modules.paths import resolve_run
+
+run_id, drop = sys.argv[1], set(sys.argv[2:])
+have = [*resolve_run(run_id).combo_ids, SHORTEST_PING]
+if unknown := sorted(drop - set(have)):
+    sys.exit(f"methods_except: {run_id} holds no {unknown}; it has {sorted(have)}")
+for m in have:
+    if m not in drop:
+        print("--method", m, sep="\n")
+PY
+) || return 1
+  mapfile -t METHOD_ARGS <<<"$out"
 }
 
 # Drop run ids with no benchmark tree, recording each as a skip. Answers in the
@@ -245,10 +275,18 @@ cross_group() {
     --layout pooled --layout compare --mode bounded --mode unbounded "${args[@]}"
 
   # The pooled error distribution, beside the pooled bars. Both unanswered
-  # policies again, for the same reason as the per-run pass.
+  # policies again, for the same reason as the per-run pass. The sentinel
+  # variant draws every method whatever the configs narrow to: it is the
+  # figure that shows each method's refusal rate, so none is left off it.
+  # Methods are read off the group's first run; a run missing one fails the
+  # pooled load rather than pooling a subset.
   run plot-error-cdf-pooled $V5 plot-error-cdf --layout pooled "${args[@]}"
-  run plot-error-cdf-pooled[sentinel] \
-    $V5 plot-error-cdf --layout pooled --unanswered sentinel "${args[@]}"
+  if methods_except "$1"; then
+    run plot-error-cdf-pooled[sentinel] \
+      $V5 plot-error-cdf --layout pooled --unanswered sentinel "${METHOD_ARGS[@]}" "${args[@]}"
+  else
+    FAILED+=("$R :: plot-error-cdf-pooled[sentinel] (could not list $1's methods)")
+  fi
   run plot-champion-upset-pooled \
     $V5 plot-champion-upset --layout pooled "${args[@]}"
 
