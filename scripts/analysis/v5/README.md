@@ -120,6 +120,8 @@ outputs/analysis/v5/<run>/pni-gap/<pni-stem>/pni_gap_{clusters,points}.csv, pni_
 outputs/analysis/v5/<run>/pni-gap/<pni-stem>/pni_cluster_rtt.{png,csv,manifest.json}
 outputs/analysis/v5/_cross/pni-gap/<n>-runs-<hash>/pni_gap_*, pni_cluster_rtt.*   # --layout pooled
 outputs/analysis/v5/<run>|_cross/pni-gap/.../sp_interconnect_rtt.png, sp_interconnect_tgs.csv, sp_interconnect.report.json
+outputs/analysis/v5/<run>|_cross/pni-gap/.../sp_pni_cells_tgs.csv, sp_pni_cells.report.json
+outputs/analysis/v5/<run>|_cross/pni-gap/.../x_cell_rtt.{png,csv,manifest.json}
 outputs/analysis/v5/_cross/cost/<n>-runs-<hash>/cost_box.pooled.<heap|alloc>[.solved].*
 outputs/analysis/v5/<run>/mtl-map/healpix-128/mtl_map.<method>.html
 outputs/analysis/v5/<run>/mtl-map/regions/<method>/<tg>.json          # replay cache, rung-free
@@ -560,6 +562,37 @@ The interconnect lists must hold private interconnects **and** settlement-free
 peering locations: on PNI-only lists, AS03 grew a spurious cluster and RTTs
 that no path through the listed PNIs could produce.
 
+**`report-sp-pni-cells`** carries that claim onto `classify`'s cell axis. Each
+interconnect goes in its nearest seed's cell, by the rule `classify` uses for
+predictions. Then, per TG, it asks whether S-P's prediction is in the cell of
+X, the interconnect nearest the TG, which is chosen without S-P; whether it is
+in any interconnect's cell; and whether the TG's own cell holds X. If S-P
+answers X, that last flag *is* S-P's `cell_label`, so `rule` reports how often
+the two agree and `rule_misses` lists every point where they do not. Each
+share has a random-VP baseline: the share of a TG's measuring VPs in the same
+cell. "Any interconnect's cell" is weak evidence, since about half the cells
+hold one, and the report shows that baseline beside it. K, the interconnect
+nearest the S-P VP, is reported too, but it is chosen from the S-P VP and so
+is near-circular. Seeds sit only at target sites, so an interconnect in a
+metro without TGs takes a distant cell; `cells.per_run` gives each list's
+interconnect-to-seed distance. The S-P coordinate is `classify`'s. Where it
+differs from the clustered S-P VP, it must tie the TG's minimum RTT exactly
+(5 of 1,269 TGs on the meshes), or the command refuses. It needs `classify`
+and `plot-pni-gap`, takes the same options, and writes beside the clusters.
+
+**`plot-x-cell-rtt`** asks whether that has-X / no-X split shows in the RTTs,
+the only input a method sees. Per content network it draws two boxes, has-X
+beside no-X, over each TG's **smallest RTT** (one value per TG, not a site
+median), on a log y axis with whiskers p5/p95 and TGs beyond them as open
+circles. Tick labels carry the site count beside the TG count, since a
+whisker end can be one site's ~20 replicas. A dotted line at 3 ms is a
+reading aid, counted per box as `n_le_split`; it is not fitted. The flag is
+`tg_cell_holds_x`, computed through `report-sp-pni-cells`'s loader, and the
+RTT through `plot-pni-cluster-rtt`'s, so both commands' staleness checks
+run. The manifest counts TGs where "holds X" and "holds any interconnect"
+disagree. Pooled, the CSV adds a `run_id = all` row per side. Same options,
+same inputs, written beside the clusters.
+
 **`plot-pni-cluster-rtt`** reads `pni_gap_clusters.csv` off disk rather than
 re-clustering, and draws one box per cluster over its TGs' **smallest RTT**
 (each TG's S-P VP RTT, the delay no VP avoids), on a linear y axis from
@@ -657,6 +690,10 @@ python -m scripts.analysis.v5.cli plot-rtt-cdf --x-scale linear --x-max 100 --x-
 python -m scripts.analysis.v5.cli plot-pni-gap         --run-id pro-as01-mesh   # PNI list from the config
 python -m scripts.analysis.v5.cli plot-pni-cluster-rtt --run-id pro-as01-mesh
 python -m scripts.analysis.v5.cli plot-sp-interconnect --layout per-run --layout pooled \
+    --run-id pro-as01-mesh --run-id pro-as02-mesh --run-id pro-as03-mesh
+python -m scripts.analysis.v5.cli report-sp-pni-cells --layout per-run --layout pooled \
+    --run-id pro-as01-mesh --run-id pro-as02-mesh --run-id pro-as03-mesh
+python -m scripts.analysis.v5.cli plot-x-cell-rtt --layout pooled \
     --run-id pro-as01-mesh --run-id pro-as02-mesh --run-id pro-as03-mesh
 python -m scripts.analysis.v5.cli plot-pni-gap \
     --run-id as01-260728-260802-mesh --pni-csv datasets/pni/as01-us-pni.approx.csv

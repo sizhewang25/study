@@ -189,6 +189,8 @@ fi
 #   plot-pni-gap         needs only the edge CSV and the config's PNI list
 #   plot-pni-cluster-rtt needs plot-pni-gap
 #   plot-sp-interconnect needs plot-pni-gap
+#   report-sp-pni-cells  needs plot-pni-gap and classify
+#   plot-x-cell-rtt      needs plot-pni-gap and classify
 #
 # Every cross-dataset figure below reads `classify` output, so this loop must
 # finish for every run in a group before that group's section runs.
@@ -244,6 +246,10 @@ for R in "${ALL[@]}"; do
       run plot-pni-cluster-rtt $V5 plot-pni-cluster-rtt --run-id "$R" --pni-csv "$pni"
       # Fig. B of the S-P subsection, and the report holding every number it quotes.
       run plot-sp-interconnect $V5 plot-sp-interconnect --run-id "$R" --pni-csv "$pni"
+      # Whether S-P's cell label follows from the TG sharing a cell with its interconnect.
+      run report-sp-pni-cells $V5 report-sp-pni-cells --run-id "$R" --pni-csv "$pni"
+      # Each TG's smallest RTT, has-X beside no-X: the split is visible in latency.
+      run plot-x-cell-rtt $V5 plot-x-cell-rtt --run-id "$R" --pni-csv "$pni"
     fi
   else
     SKIPPED+=("$R :: plot-pni-gap (config declares no analysis.common.pni_csv)")
@@ -309,6 +315,8 @@ cross_group() {
     if run plot-pni-gap-pooled $V5 plot-pni-gap --layout pooled "${args[@]}"; then
       run plot-pni-cluster-rtt-pooled $V5 plot-pni-cluster-rtt --layout pooled "${args[@]}"
       run plot-sp-interconnect-pooled $V5 plot-sp-interconnect --layout pooled "${args[@]}"
+      run report-sp-pni-cells-pooled $V5 report-sp-pni-cells --layout pooled "${args[@]}"
+      run plot-x-cell-rtt-pooled $V5 plot-x-cell-rtt --layout pooled "${args[@]}"
     fi
   else
     SKIPPED+=("$R :: plot-pni-gap-pooled (no analysis.common.pni_csv in: ${undeclared[*]})")

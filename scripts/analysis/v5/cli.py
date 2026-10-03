@@ -65,12 +65,14 @@ from scripts.analysis.v5.modules import (
     figure_vp_dist_gap,
     figure_vp_distance_cdf,
     figure_vp_proximity,
+    figure_x_cell_rtt,
     map_answer_space,
     map_mtl,
     mapping,
     octant_finetuning,
     pni_gap,
     ripe_vs_databases,
+    sp_pni_cells,
 )
 from scripts.analysis.v5.modules import grid as G
 from scripts.analysis.v5.modules.paths import (
@@ -1478,6 +1480,74 @@ def plot_sp_interconnect_cmd(
     try:
         runs, pni_csvs, layouts, source_csvs = _pni_inputs(run_id, layout, pni_csv, source_csv, outputs_root)
         pngs = figure_sp_interconnect.build_for_runs(
+            runs, pni_csvs, layouts=layouts,
+            analysis_root=analysis_root, source_csvs=source_csvs,
+        )
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for png in pngs:
+        typer.echo(f"wrote {png}")
+
+
+@app.command("report-sp-pni-cells")
+def report_sp_pni_cells_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Run (repeatable): the set `plot-pni-gap` clustered."),
+    layout: list[str] = typer.Option(None, "--layout", help=_PNI_LAYOUT_HELP),
+    pni_csv: Path = typer.Option(None, "--pni-csv", help=_PNI_CSV_HELP + " One --run-id only."),
+    source_csv: Path = typer.Option(None, "--source-csv", help="Override the run's edge CSV. One --run-id only."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """Does S-P land in its interconnect's cell? S-P's cell accuracy per `plot-pni-gap` cluster.
+
+    Puts each interconnect in its nearest seed's cell, then per TG asks whether
+    S-P's prediction is in the cell of the interconnect nearest the TG (X), in
+    any interconnect's cell, and whether the TG's own cell holds X -- the rule
+    that predicts S-P's `cell_label`. Each share comes with its random-VP
+    baseline, plus the contingency table, the rule's agreement and every point
+    it misses.
+
+    Writes `sp_pni_cells.report.json` and `sp_pni_cells_tgs.csv` beside the
+    clusters. Needs `classify` and `plot-pni-gap`; refuses the clusters if any
+    input changed, or if `classify`'s S-P VP is not a lowest-RTT VP.
+    """
+    _refuse_combo_ids("report-sp-pni-cells", run_id or [], outputs_root)
+    try:
+        runs, pni_csvs, layouts, source_csvs = _pni_inputs(run_id, layout, pni_csv, source_csv, outputs_root)
+        reports = sp_pni_cells.build_for_runs(
+            runs, pni_csvs, layouts=layouts,
+            analysis_root=analysis_root, source_csvs=source_csvs,
+        )
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for path in reports:
+        typer.echo(f"wrote {path}")
+
+
+@app.command("plot-x-cell-rtt")
+def plot_x_cell_rtt_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Run (repeatable): the set `plot-pni-gap` clustered."),
+    layout: list[str] = typer.Option(None, "--layout", help=_PNI_LAYOUT_HELP),
+    pni_csv: Path = typer.Option(None, "--pni-csv", help=_PNI_CSV_HELP + " One --run-id only."),
+    source_csv: Path = typer.Option(None, "--source-csv", help="Override the run's edge CSV. One --run-id only."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """Each TG's smallest RTT, has-X beside no-X, per content network.
+
+    has-X is `report-sp-pni-cells`'s flag: the TG's own cell holds X, the
+    interconnect nearest it. Boxes are over TGs (whiskers p5/p95, TGs beyond
+    them as open circles) on a log axis, with a dotted reading line at
+    3 ms; tick labels carry the site count beside the TG count. Runs every
+    staleness check of `report-sp-pni-cells` and `plot-pni-cluster-rtt`.
+
+    Writes `x_cell_rtt.{png,csv,manifest.json}` beside the clusters. Needs
+    `classify` and `plot-pni-gap`.
+    """
+    _refuse_combo_ids("plot-x-cell-rtt", run_id or [], outputs_root)
+    try:
+        runs, pni_csvs, layouts, source_csvs = _pni_inputs(run_id, layout, pni_csv, source_csv, outputs_root)
+        pngs = figure_x_cell_rtt.build_for_runs(
             runs, pni_csvs, layouts=layouts,
             analysis_root=analysis_root, source_csvs=source_csvs,
         )
