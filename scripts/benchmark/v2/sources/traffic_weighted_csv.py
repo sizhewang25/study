@@ -62,7 +62,9 @@ Source kwargs:
                        of a larger universe (the mesh itself samples top targets
                        per location) and need not sum to 1; renormalizing by the
                        mesh total is what makes the fraction meaningful.
-  k / seed / asn_bucket_top_n / min_obs — as `GenericCSVSource`.
+  k / seed / asn_bucket_top_n / min_obs / fold_by — as `GenericCSVSource`.
+                       With `fold_by: site`, a fold whose site keeps no
+                       weighted flow raises at load (no eval targets).
 """
 
 from __future__ import annotations
@@ -101,6 +103,7 @@ class TrafficWeightedCSVSource(GenericCSVSource):
         seed: int = 42,
         asn_bucket_top_n: int = 20,
         min_obs: Optional[int] = None,
+        fold_by: str = "distgeo",
         eval_pair_weight_min: Optional[float] = None,
         eval_kept_traffic_fraction: Optional[float] = None,
     ) -> None:
@@ -144,6 +147,7 @@ class TrafficWeightedCSVSource(GenericCSVSource):
         super().__init__(
             slice, setup, mesh_csv_path,
             k=k, seed=seed, asn_bucket_top_n=asn_bucket_top_n, min_obs=min_obs,
+            fold_by=fold_by,
         )
         self._weighted_csv_path = (
             Path(weighted_csv_path) if weighted_csv_path is not None else None

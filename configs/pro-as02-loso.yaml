@@ -1,0 +1,127 @@
+# Leave-one-site-out twin of configs/pro-as02-mesh.yaml: identical combos and
+# CSV, but `fold_by: site` with k = 22 sites, so every fold holds out one
+# site (all of its IP replicas) and calibrates on the other 21.
+# Compare against the K-fold mesh with `report-loso-delta`; never pool the
+# two (same tg_ids).
+run_id: pro-as02-loso
+
+benchmark:
+  source: generic_csv
+  setup: anchors_to_probes
+  slices: [fold_0, fold_1, fold_2, fold_3, fold_4, fold_5, fold_6, fold_7, fold_8, fold_9, fold_10, fold_11, fold_12, fold_13, fold_14, fold_15, fold_16, fold_17, fold_18, fold_19, fold_20, fold_21]
+
+  source_kwargs:
+    csv_path: datasets/final/as02-20260728-20260802.mainland.sanitized.csv
+    k: 22  # = number of target sites -> leave-one-site-out
+    fold_by: site
+    seed: 42
+    asn_bucket_top_n: 20
+
+  enable_fallback: true
+  seed: 42
+
+  combos:
+    - combo_id: vanilla_cbg
+      ltd: low_envelope
+      mtl: planar_circle
+      ctr: geometric_centroid
+      mtl_kwargs:
+        n_pts: 64
+        enable_circle_filter: true
+
+    - combo_id: million_scale_cbg
+      ltd: speed_of_internet
+      mtl: planar_circle
+      ctr: geometric_centroid
+      ltd_kwargs:
+        speed_ratio: 0.6667
+      mtl_kwargs:
+        n_pts: 64
+        enable_circle_filter: true
+
+    - combo_id: octant_cbg_hull
+      ltd: bounded_spline
+      mtl: planar_annulus_weighted
+      ctr: monte_carlo_medoid
+      ltd_kwargs:
+        fit_spline: false
+        cutoff_min_points: 5
+        bin_size_ms: 5.0
+      mtl_kwargs:
+        n_pts: 64
+        enable_circle_filter: true
+        weight_mode: inv_power
+        weight_k: 2
+        highest_weight_only: true
+      ctr_kwargs:
+        n_samples: 1024
+
+    - combo_id: octant_cbg_spl
+      ltd: bounded_spline
+      mtl: planar_annulus_weighted
+      ctr: monte_carlo_medoid
+      ltd_kwargs:
+        fit_spline: true
+        spline_n_knots: 4
+        target_coverage: 0.9
+        cutoff_min_points: 5
+        bin_size_ms: 5.0
+      mtl_kwargs:
+        n_pts: 64
+        enable_circle_filter: true
+        weight_mode: inv_power
+        weight_k: 2
+        highest_weight_only: true
+      ctr_kwargs:
+        n_samples: 1024
+
+    - combo_id: spotter_cbg
+      ltd: normal_dist
+      mtl: gaussian_density
+      ctr: density_argmax
+      ltd_kwargs:
+        deg_mu: 3
+        deg_sigma: 2
+        cutoff_min_points: 5
+      mtl_kwargs:
+        grid: healpix
+        resolution: 128
+        coarse_resolution: 16
+        top_k: 8
+        neighbor_ring: 1
+
+
+analysis:
+  common:
+    # The dataset this run belongs to, for v5's cross-dataset figures.
+    # Declared rather than parsed: v5 used to split the run id on its first
+    # hyphen, which reads `pro` for every run here.
+    dataset_label: PRO-LOSO AS-2
+    grid: healpix
+    resolution: [128]
+
+    pni_csv: datasets/pni/as02-us-pni.approx.csv
+    # peer_asn: <fill from the dashboard; not recoverable from this repo>
+
+  # One block per v5 plotting command that create_analysis_artifacts.sh runs.
+  # `combo_ids` narrows a figure to the methods it names (S-P included only
+  # when `shortest_ping` is listed); an empty block draws every combo on disk.
+  # `--method` on the CLI still wins.
+
+  plot-answer-space: {}
+
+  plot-bipartite-graph: {}
+
+  plot-error-cdf:
+    combo_ids: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
+
+  plot-champion-upset:
+    combo_ids: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, spotter_cbg]
+
+  plot-pni-gap: {}
+
+  plot-pni-cluster-rtt: {}
+
+  plot-outcome-bars: {}
+
+  plot-outcome-map: {}

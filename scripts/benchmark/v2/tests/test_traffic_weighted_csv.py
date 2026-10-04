@@ -567,3 +567,35 @@ class TestGenericCSVRejectsWeightKwargs(unittest.TestCase):
     def test_generic_csv_raises_on_weight_kwargs(self) -> None:
         with self.assertRaises(TypeError):
             GenericCSVSource(slice="all", csv_path="x.csv", eval_pair_weight_min=1.0)
+
+
+class TestTrafficWeightedCSV_FoldBySite(unittest.TestCase):
+    """`fold_by` is forwarded to `GenericCSVSource`: with one target per site
+    (t1..t4 at lat 40..43) and k=4, fold_i holds exactly t{i+1}."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.csv_path = Path(self.tmp.name) / "eval_mask.csv"
+        self.csv_path.write_text(_EVAL_MASK_CSV)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _make(self, slice: str) -> TrafficWeightedCSVSource:
+        src = TrafficWeightedCSVSource(
+            slice=slice, setup="anchors_to_probes", mesh_csv_path=self.csv_path,
+            k=4, fold_by="site", eval_pair_weight_min=10.0,
+        )
+        src._ensure_loaded()
+        return src
+
+    def test_site_fold_forwarded(self) -> None:
+        src = self._make("fold_0")
+        self.assertEqual(src._eval_targets, {"t1"})
+        self.assertEqual(src._fit_targets, {"t2", "t3", "t4"})
+
+    def test_site_without_weighted_flow_raises(self) -> None:
+        """t2's only flow weighs 5 < 10, so its leave-one-site-out fold has no
+        eval target left -- the documented load-time refusal."""
+        with self.assertRaises(ValueError):
+            self._make("fold_1")

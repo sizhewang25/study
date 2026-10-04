@@ -28,11 +28,22 @@ Slicing (`--slice`):
   all        — every row, no fit/eval split (smoke-test mode; leaks for stateful LTDs).
   head<k>    — keep the k targets that sort first by target_id (deterministic
                smoke slice; same no-stratification semantics as `all`).
-  fold_N     — K-fold partition driven by `DistGeoStratification`. Eval = the
-               targets in fold N; fit = the targets in the other K-1 folds.
-               Deterministic in (k, seed, asn_bucket_top_n) source_kwargs.
-               When `target_asn` is absent / missing, those targets land in
-               the `asn_none` bucket and still round-robin into the K folds.
+  fold_N     — K-fold partition. Eval = the targets in fold N; fit = the
+               targets in the other K-1 folds. The partition is chosen by
+               `fold_by`:
+                 * `distgeo` (default) — `DistGeoStratification` over single
+                   targets. Deterministic in (k, seed, asn_bucket_top_n).
+                   When `target_asn` is absent / missing, those targets land
+                   in the `asn_none` bucket and still round-robin into the K
+                   folds. Targets sharing a coordinate (IP replicas of one
+                   site) are spread across folds, so a test target's site
+                   is usually in its own fit set.
+                 * `site` — every target sharing a coordinate (a *site*,
+                   lat/lon rounded to `SITE_DECIMALS`) lands in one fold.
+                   Sites are sorted by (lat, lon) and dealt round-robin, so
+                   `k == n_sites` is leave-one-site-out and `k < n_sites` is
+                   grouped K-fold. `k > n_sites` is refused: it would leave
+                   folds empty. `seed` and `asn_bucket_top_n` are unused.
 
 Source kwargs (defaults match the prior VultrCSVSource):
   csv_path           : Path | str   — required; canonical-schema CSV path.
@@ -40,6 +51,7 @@ Source kwargs (defaults match the prior VultrCSVSource):
   seed               : int = 42     — DistGeo RNG seed.
   asn_bucket_top_n   : int = 20     — DistGeo bucket cap.
   min_obs            : int = None   — drop targets with fewer VP observations.
+  fold_by            : str = "distgeo" — `distgeo` or `site`; see `fold_N`.
 
 This source is weight-AWARE but never weight-FILTERING: it reads and validates
 an optional `weight` column and carries it into `obs_weights` (so the required
@@ -103,9 +115,18 @@ _OPTIONAL_STR = (
 
 _FOLD_SLICE_RE = re.compile(r"^fold_(\d+)$")
 
+#: `fold_by` values: who `fold_N` partitions.
+FOLD_BY = ("distgeo", "site")
+
+#: Decimals a target coordinate is rounded to before it names a site. Matches
+#: v5's `sites.SITE_DECIMALS`; kept here rather than imported, so this source
+#: stays on the libs layer. Replicas carry byte-identical coordinates, so any
+#: rounding from 2 to 6 decimals gives the same sites on today's datasets.
+SITE_DECIMALS = 6
+
 
 class GenericCSVSource(DataSource):
-    """CSV-backed source with a fixed canonical schema + DistGeo K-fold stratification.
+    """CSV-backed source with a fixed canonical schema + K-fold stratification (DistGeo or by site).
 
     See module docstring for the column contract and slice grammar.
     """
@@ -122,7 +143,10 @@ class GenericCSVSource(DataSource):
         seed: int = 42,
         asn_bucket_top_n: int = 20,
         min_obs: Optional[int] = None,
+        fold_by: str = "distgeo",
     ) -> None:
+        if fold_by not in FOLD_BY:
+            raise ValueError(f"unknown fold_by {fold_by!r}; expected one of {FOLD_BY}")
         if setup not in DataSource.ALLOWED_SETUPS:
             raise ValueError(
                 f"unknown setup {setup!r}; expected one of {DataSource.ALLOWED_SETUPS}"
@@ -156,6 +180,7 @@ class GenericCSVSource(DataSource):
         self._seed = seed
         self._asn_bucket_top_n = asn_bucket_top_n
         self._min_obs = min_obs
+        self._fold_by = fold_by
         # Set by `_normalize_weight`: whether the CSV carried a real `weight`
         # column, as opposed to the synthesized 1.0 default. Subclasses that
         # filter on traffic need this to refuse a weightless mesh.
@@ -347,10 +372,68 @@ class GenericCSVSource(DataSource):
         )
 
     def _apply_stratification(self) -> None:
-        """Stratify unique target_ids into K folds via DistGeo and cache
-        the eval / fit target-id sets."""
+        """Partition unique target_ids into K folds (`fold_by`) and cache the
+        eval / fit target-id sets."""
         assert self._df is not None and self._fold_index is not None
         unique = self._df.drop_duplicates("target_id")
+        if self._fold_by == "site":
+            fold_by_id = self._site_fold_assignments(unique)
+        else:
+            fold_by_id = self._distgeo_fold_assignments(unique)
+
+        eval_targets: set[str] = set()
+        fit_targets: set[str] = set()
+        for tg_id, fold in fold_by_id.items():
+            (eval_targets if fold == self._fold_index else fit_targets).add(tg_id)
+        if self._fold_by == "site" and not (eval_targets and fit_targets):
+            # Unreachable while 2 <= k <= n_sites; a guard, not a policy.
+            raise ValueError(
+                f"fold_by='site' fold_{self._fold_index}: empty "
+                f"{'eval' if not eval_targets else 'fit'} set"
+            )
+        self._eval_targets = eval_targets
+        self._fit_targets = fit_targets
+        logger.info(
+            "stratified %d targets (fold_by=%s) into K=%d folds: eval=fold_%d "
+            "(%d targets), fit=union of %d other folds (%d targets)",
+            len(fold_by_id), self._fold_by, self._k, self._fold_index,
+            len(eval_targets), self._k - 1, len(fit_targets),
+        )
+
+    def _site_fold_assignments(self, unique: pd.DataFrame) -> dict[str, int]:
+        """`target_id -> fold`, one site per fold slot, sites dealt round-robin.
+
+        A site is a target coordinate rounded to `SITE_DECIMALS`. Sites are
+        ranked by (lat, lon), so the assignment depends on the coordinates
+        alone -- not on row order, target ids, or a seed.
+        """
+        if self._k < 2:
+            raise ValueError(f"fold_by='site' needs k >= 2; got k={self._k}")
+        lat = unique["target_lat"].astype(float).round(SITE_DECIMALS)
+        lon = unique["target_lon"].astype(float).round(SITE_DECIMALS)
+        sites = sorted(set(zip(lat, lon)))
+        if self._k > len(sites):
+            raise ValueError(
+                f"fold_by='site' with k={self._k} but the CSV holds only "
+                f"{len(sites)} sites; k > n_sites would leave folds empty. "
+                f"Use k={len(sites)} for leave-one-site-out."
+            )
+        fold_of_site = {s: r % self._k for r, s in enumerate(sites)}
+        assignments = {
+            str(tg): fold_of_site[(la, lo)]
+            for tg, la, lo in zip(unique["target_id"], lat, lon)
+        }
+        if self._fold_index is not None:
+            held = [s for s, f in fold_of_site.items() if f == self._fold_index]
+            logger.info(
+                "fold_by=site: %d sites over K=%d folds; fold_%d holds %s",
+                len(sites), self._k, self._fold_index,
+                ", ".join(f"({la:g},{lo:g})" for la, lo in held),
+            )
+        return assignments
+
+    def _distgeo_fold_assignments(self, unique: pd.DataFrame) -> dict[str, int]:
+        """`target_id -> fold` via `DistGeoStratification` over single targets."""
         targets: list[AnchorInfo] = []
         for _, row in unique.iterrows():
             asn = row.get("target_asn")
@@ -369,20 +452,7 @@ class GenericCSVSource(DataSource):
             seed=self._seed,
             asn_bucket_top_n=self._asn_bucket_top_n,
         )
-        fold_by_id = algo.compute_fold_assignments(targets)
-
-        eval_targets: set[str] = set()
-        fit_targets: set[str] = set()
-        for tg_id, fold in fold_by_id.items():
-            (eval_targets if fold == self._fold_index else fit_targets).add(tg_id)
-        self._eval_targets = eval_targets
-        self._fit_targets = fit_targets
-        logger.info(
-            "stratified %d targets into K=%d folds: eval=fold_%d (%d targets), "
-            "fit=union of %d other folds (%d targets)",
-            len(targets), self._k, self._fold_index,
-            len(eval_targets), self._k - 1, len(fit_targets),
-        )
+        return algo.compute_fold_assignments(targets)
 
     def _apply_min_obs_filter(self) -> None:
         assert self._df is not None and self._min_obs is not None

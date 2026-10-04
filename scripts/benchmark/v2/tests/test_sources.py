@@ -191,6 +191,96 @@ class TestGenericCSVSource_Stratified(unittest.TestCase):
         self.assertEqual(len(fit_targets), 6)
 
 
+def _site_csv() -> str:
+    """4 sites x (3, 2, 3, 1) replica targets x 2 VPs. One replica of site B
+    carries float noise below `SITE_DECIMALS`, which must not split the site."""
+    sites = {
+        "A": (40.0, -100.0, ["a1", "a2", "a3"]),
+        "B": (41.5, -90.25, ["b1", "b2"]),
+        "C": (35.0, -80.0, ["c1", "c2", "c3"]),
+        "D": (47.0, -122.0, ["d1"]),
+    }
+    rows = ["vp_id,vp_lat,vp_lon,target_id,target_lat,target_lon,target_asn,rtt_ms"]
+    for vp, (vlat, vlon) in {"v1": (33.0, -84.0), "v2": (45.0, -110.0)}.items():
+        for lat, lon, tgs in sites.values():
+            for i, tg in enumerate(tgs):
+                jitter = 1e-9 if tg == "b2" else 0.0
+                rows.append(f"{vp},{vlat},{vlon},{tg},{lat + jitter},{lon},7018,{10 + i}")
+    return "\n".join(rows) + "\n"
+
+
+#: Sites of `_site_csv`, in the (lat, lon) order `fold_by='site'` ranks them.
+_SITES_SORTED = [{"c1", "c2", "c3"}, {"a1", "a2", "a3"}, {"b1", "b2"}, {"d1"}]
+
+
+class TestGenericCSVSource_FoldBySite(unittest.TestCase):
+    """`fold_by='site'`: every replica of a site in one fold, sites dealt
+    round-robin by (lat, lon) rank."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.csv_path = Path(self.tmpdir.name) / "sites.csv"
+        self.csv_path.write_text(_site_csv())
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def _make(self, slice: str = "fold_0", k: int = 4, **kw) -> GenericCSVSource:
+        src = GenericCSVSource(
+            slice=slice, setup="anchors_to_probes", csv_path=self.csv_path,
+            k=k, fold_by="site", **kw,
+        )
+        src._ensure_loaded()
+        return src
+
+    def test_leave_one_site_out(self) -> None:
+        """k == n_sites: each fold's eval set is exactly one whole site, and
+        its fit set is every other target."""
+        everyone = set().union(*_SITES_SORTED)
+        for i, site in enumerate(_SITES_SORTED):
+            src = self._make(f"fold_{i}", k=4)
+            self.assertEqual(src._eval_targets, site)
+            self.assertEqual(src._fit_targets, everyone - site)
+
+    def test_fit_samples_exclude_held_out_site(self) -> None:
+        src = self._make("fold_1", k=4)  # site A at lat 40.0
+        lats = {fs.probe_coord.lat for fs in src.iter_fit_samples()}
+        self.assertNotIn(40.0, lats)
+        self.assertEqual({t.target_id for t in src.iter_eval_targets()}, _SITES_SORTED[1])
+
+    def test_grouped_kfold_keeps_sites_whole(self) -> None:
+        """k < n_sites: ranks 0 and 2 share fold_0, ranks 1 and 3 fold_1."""
+        f0, f1 = self._make("fold_0", k=2), self._make("fold_1", k=2)
+        self.assertEqual(f0._eval_targets, _SITES_SORTED[0] | _SITES_SORTED[2])
+        self.assertEqual(f1._eval_targets, _SITES_SORTED[1] | _SITES_SORTED[3])
+        self.assertFalse(f0._eval_targets & f1._eval_targets)
+
+    def test_assignment_ignores_seed(self) -> None:
+        a = self._make("fold_2", k=4, seed=1)._eval_targets
+        b = self._make("fold_2", k=4, seed=99)._eval_targets
+        self.assertEqual(a, b)
+
+    def test_k_above_site_count_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "only 4 sites"):
+            self._make("fold_0", k=5)
+
+    def test_k_below_two_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            self._make("fold_0", k=1)
+
+    def test_unknown_fold_by_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "fold_by"):
+            GenericCSVSource(slice="fold_0", csv_path=self.csv_path, k=2, fold_by="metro")
+
+    def test_default_is_distgeo(self) -> None:
+        """No `fold_by` gives the same partition as an explicit 'distgeo'."""
+        kw = dict(slice="fold_0", setup="anchors_to_probes", csv_path=self.csv_path, k=2)
+        a, b = GenericCSVSource(**kw), GenericCSVSource(**kw, fold_by="distgeo")
+        a._ensure_loaded(); b._ensure_loaded()
+        self.assertEqual(a._eval_targets, b._eval_targets)
+        self.assertEqual(a._fit_targets, b._fit_targets)
+
+
 class TestRipeAtlasSourceCoordLoad(unittest.TestCase):
     def test_load_coords_from_synthetic_json(self) -> None:
         # _load_coords runs before _apply_holdout, so the partition file
