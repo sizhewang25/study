@@ -43,9 +43,11 @@ METHOD_LABELS: dict[str, str] = {
     "million_scale_cbg": "SOI",
     "vanilla_cbg": "VAN",
     "octant_cbg_hull": "OCT-H",
+    "octant_cbg_hull_geo": "OCT-H-GEO",
     # Both spellings of the one paper variant: the as0* runs name it
     # `octant_cbg_spl`, the as7018 run `octant_cbg`. One term, so one hue.
     "octant_cbg_spl": "OCT-S",
+    "octant_cbg_spl_geo": "OCT-S-GEO",
     "octant_cbg": "OCT-S",
     "spotter_cbg": "SPO",
     # Not published variants, and not in the lookup table: named so they stay

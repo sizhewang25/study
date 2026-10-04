@@ -23,15 +23,17 @@ from scripts.analysis.v4.modules.classify import SHORTEST_PING
 #: says everything but the baseline is a CBG variant, and "Octant-Spline CBG"
 #: does not fit on a circle holding 20% of the population.
 METHOD_LABELS: dict[str, str] = {
-    SHORTEST_PING: "Shortest-Ping",
-    "million_scale_cbg": "SoI",
-    "vanilla_cbg": "Vanilla",
-    "octant_cbg_hull": "Octant-Hull",
+    SHORTEST_PING: "S-P",
+    "million_scale_cbg": "SOI",
+    "vanilla_cbg": "VAN",
+    "octant_cbg_hull": "OCT-H",
+    "octant_cbg_hull_geo": "OCT-H-GEO",
     # Both spellings of the one paper variant: the as0* runs name it
     # `octant_cbg_spl`, the as7018 run `octant_cbg`. Mapping them onto one
     # label is also what puts them on one hue below.
-    "octant_cbg_spl": "Octant-Spline",
-    "octant_cbg": "Octant-Spline",
+    "octant_cbg_spl": "OCT-S",
+    "octant_cbg_spl_geo": "OCT-S-GEO",
+    "octant_cbg": "Octant",
     "spotter_cbg": "Spotter",
     "spotter_hybrid_cbg": "Spotter-Hybrid",
     # The density MTL on its previous H3 grid, preserved on disk by

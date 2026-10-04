@@ -69,6 +69,40 @@ benchmark:
       ctr_kwargs:
         n_samples: 1024
 
+    # The two Octant arms with geometric_centroid instead of monte_carlo_medoid:
+    # identical LTD/MTL, so any difference is the centroid choice.
+    - combo_id: octant_cbg_hull_geo
+      ltd: bounded_spline
+      mtl: planar_annulus_weighted
+      ctr: geometric_centroid
+      ltd_kwargs:
+        fit_spline: false
+        cutoff_min_points: 5
+        bin_size_ms: 5.0
+      mtl_kwargs:
+        n_pts: 64
+        enable_circle_filter: true
+        weight_mode: inv_power
+        weight_k: 2
+        highest_weight_only: true
+
+    - combo_id: octant_cbg_spl_geo
+      ltd: bounded_spline
+      mtl: planar_annulus_weighted
+      ctr: geometric_centroid
+      ltd_kwargs:
+        fit_spline: true
+        spline_n_knots: 4
+        target_coverage: 0.9
+        cutoff_min_points: 5
+        bin_size_ms: 5.0
+      mtl_kwargs:
+        n_pts: 64
+        enable_circle_filter: true
+        weight_mode: inv_power
+        weight_k: 2
+        highest_weight_only: true
+
     - combo_id: spotter_cbg
       ltd: normal_dist
       mtl: gaussian_density
@@ -90,7 +124,7 @@ analysis:
     # The dataset this run belongs to, for v5's cross-dataset figures.
     # Declared rather than parsed: v5 used to split the run id on its first
     # hyphen, which reads `pro` for every run here.
-    dataset_label: PRO-MESH AS-3
+    dataset_label: PRO-MESH AS-C
     grid: healpix
     resolution: [128]
 
