@@ -7,8 +7,7 @@ grid to draw -- correctness was containment in a grid -- so v3's Voronoi layer
 was deleted there. v5 grades against both partitions, so both go on the map.
 
 Ink is v4's validated pair: `TARGET_FILL` for TG grids (filled), and
-v4's VP blue is unused here: the answer space has no VP side, and the
-landmass outline it once drew is gone with the landmass.
+`VP_COLOR` for the VP side, which only the bipartite maps draw.
 """
 
 from __future__ import annotations
@@ -26,10 +25,11 @@ _PAD_FRAC = 0.08
 TARGET_FILL = "#eb6834"
 TARGET_EDGE = "#b8451c"
 
-#: Unused since the landmass was retired, and kept for one reason: this blue
-#: and `TARGET_FILL` were validated all-pairs together (worst CVD dE 24.7),
-#: and that validation is why `TARGET_FILL` is the hue it is.
-LANDMASS_EDGE = "#2a78d6"
+#: The VP hue, on the bipartite maps. Validated all-pairs with `TARGET_FILL`
+#: (worst CVD dE 24.7), which is why `TARGET_FILL` is the hue it is; it was the
+#: landmass outline until the landmass was retired.
+VP_COLOR = "#2a78d6"
+LANDMASS_EDGE = VP_COLOR
 
 #: The unoccupied grid lattice.
 LATTICE_EDGE = "#dedcd3"
@@ -133,6 +133,53 @@ def frame_grids(
         & (centres[:, 0] <= lat_max + pad)
     )
     return idx[keep]
+
+
+#: Vertices per great-circle flow line. Continental edges bow by ~1.3 deg off
+#: their lon/lat chord; 9 points put the drawn line within a pixel of the arc.
+DEFAULT_SEGMENT_POINTS = 9
+
+
+def great_circle_segments(
+    lat_a, lon_a, lat_b, lon_b, *, n_points: int = DEFAULT_SEGMENT_POINTS
+) -> np.ndarray:
+    """Great-circle polylines for paired endpoints, as `(E, n_points, 2)` lon/lat.
+
+    Ported from v3. A slerp between the endpoints' unit vectors, so the path is
+    the true great circle with no projection entering. Done here rather than by
+    handing cartopy `ccrs.Geodetic()`, which densifies per artist and is far too
+    slow at tens of thousands of edges. Coincident endpoints (a VP measuring a
+    TG at its own coordinate) are interpolated linearly instead of dividing by
+    `sin(0)`.
+
+    Longitudes follow `grid.grid_rings`' rule -- every vertex within half a turn
+    of its polyline's first -- so an edge crossing the antimeridian is drawn as
+    one line slightly outside [-180, 180] rather than smeared across the map.
+    """
+    from scripts.analysis.v5.modules.geodesy import unit_vectors
+
+    a = unit_vectors(lat_a, lon_a)
+    b = unit_vectors(lat_b, lon_b)
+    if a.shape != b.shape:
+        raise ValueError(f"endpoint arrays disagree: {a.shape} vs {b.shape}")
+
+    omega = np.arccos(np.clip(np.einsum("ij,ij->i", a, b), -1.0, 1.0))
+    sin_omega = np.sin(omega)
+    degenerate = sin_omega < 1e-12
+    safe = np.where(degenerate, 1.0, sin_omega)[:, None]
+
+    t = np.linspace(0.0, 1.0, int(n_points))[None, :]
+    w_a = np.where(degenerate[:, None], 1.0 - t, np.sin((1.0 - t) * omega[:, None]) / safe)
+    w_b = np.where(degenerate[:, None], t, np.sin(t * omega[:, None]) / safe)
+
+    pts = w_a[:, :, None] * a[:, None, :] + w_b[:, :, None] * b[:, None, :]
+    norm = np.linalg.norm(pts, axis=2, keepdims=True)
+    pts = pts / np.where(norm == 0.0, 1.0, norm)
+
+    lat = np.degrees(np.arcsin(np.clip(pts[:, :, 2], -1.0, 1.0)))
+    lon = np.degrees(np.arctan2(pts[:, :, 1], pts[:, :, 0]))
+    lon = lon[:, :1] + ((lon - lon[:, :1] + 180.0) % 360.0) - 180.0
+    return np.stack([lon, lat], axis=2)
 
 
 def draw_basemap(ax) -> None:

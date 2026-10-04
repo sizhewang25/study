@@ -109,6 +109,8 @@ Complete linkage caps the group **diameter**. Single linkage would chain sites
 
 ```
 outputs/analysis/v5/<run>/answer-space/healpix-128/{grids,sites,seeds,tgs}.csv, meta.json
+outputs/analysis/v5/<run>/bipartite-graph/healpix-128/{vp,tg}_nodes.csv, edge_segments.csv, edge_length_cdf.csv, pairwise_distance_cdf.csv, meta.json
+outputs/analysis/v5/<run>/bipartite-graph/healpix-128/bipartite_{nodes,flows}_map.png
 outputs/analysis/v5/<run>/classify/healpix-128/accuracy.csv, <method>_tgs.parquet, manifest.json
 outputs/analysis/v5/<run>/classify/error_cdf[.sentinel].{png,csv,manifest.json}
 outputs/analysis/v5/_cross/classify/<datasets>@<arm>/outcome_bars.*, error_cdf.pooled[.sentinel].*
@@ -516,6 +518,22 @@ its own sweep script, `create_ltd_modeling_html.sh`, for the reason
 rather than once per method, because the per-method failure isolation is already
 inside `build_for_run` and a run's methods share one per-fold scatter cache.
 
+**`build-bipartite-graph`** reads the VP roster (`vps.csv`) and the run's
+canonical edge CSV, and writes §7.3's dataset geometry against the answer
+space's grid: edge density and connected components over `|VP| x |TG|`,
+nearest-VP distance and edge length each as an **observed** (measured edges)
+and **latent** (all pairs) pair, `measured_nearest_vp_ratio` per TG, angular
+gap and circular variance over measured VPs, and occupied-grid counts per side.
+No RTT enters beyond the CSV's `rtt_ms > 0` filter. Ported from v3 with grids
+in place of H3 cells and `tg_*` names. A traffic-weighted run keeps its mesh's
+TG universe, so TGs the filter dropped sit at degree 0 and are counted in
+`n_with_no_edge` (and inflate `n_components`).
+
+**`plot-bipartite-graph`** draws two maps from it: topology (TG grids filled,
+VP grids outlined in blue, cells, sites, seeds, VPs) and flows (one
+great-circle line per distinct VP/TG coordinate pair, width by multiplicity).
+v3's `distance_cdf.png` is not ported; its curves remain in the two CDF CSVs.
+
 **`plot-pni-gap`** asks whether the S-P gap (`d_sp - d_geo`) follows where the
 operator interconnects. It takes an operator PNI list (`--pni-csv`: `pni_id,
 pni_lat, pni_lon`), which is not a benchmark artifact: the file is validated,
@@ -658,6 +676,8 @@ out H3's 705 monotonicity violations is no longer exercised by a test.
 python -m scripts.analysis.v5.cli build-answer-space --run-id as01-260728-260802-mesh
 python -m scripts.analysis.v5.cli classify           --run-id as01-260728-260802-mesh
 python -m scripts.analysis.v5.cli plot-answer-space  --run-id as01-260728-260802-mesh
+python -m scripts.analysis.v5.cli build-bipartite-graph --run-id as01-260728-260802-mesh
+python -m scripts.analysis.v5.cli plot-bipartite-graph  --run-id as01-260728-260802-mesh --no-flow-cells
 python -m scripts.analysis.v5.cli plot-outcome-bars \
     --run-id as01-260728-260802-mesh \
     --run-id as02-260728-260802-mesh \

@@ -4,6 +4,8 @@
     python -m scripts.analysis.v5.cli classify           --run-id as01-260728-260802-mesh
 
     python -m scripts.analysis.v5.cli plot-answer-space  --run-id as01-260728-260802-mesh
+    python -m scripts.analysis.v5.cli build-bipartite-graph --run-id as01-260728-260802-mesh
+    python -m scripts.analysis.v5.cli plot-bipartite-graph  --run-id as01-260728-260802-mesh
     python -m scripts.analysis.v5.cli plot-mtl-map       --run-id as01-260728-260802-mesh -m vanilla_cbg
     python -m scripts.analysis.v5.cli plot-outcome-bars \
         --run-id as01-260728-260802-mesh \
@@ -31,7 +33,8 @@
         --run-id as02-260728-260802-mesh \
         --run-id as03-260728-260802-mesh
 
-`classify`, `plot-answer-space` and `plot-mtl-map` need the answer space; `plot-outcome-bars`
+`classify`, `plot-answer-space`, `build-bipartite-graph` and `plot-mtl-map` need the
+answer space; `plot-bipartite-graph` needs `build-bipartite-graph`; `plot-outcome-bars`
 `plot-error-cdf`, `plot-champion-upset`, `plot-vp-proximity` and `report-cohort-overlap` need
 `classify` on every run.
 `plot-outcome-map` needs both. Everything writes under `outputs/analysis/v5/`.
@@ -45,6 +48,7 @@ import typer
 
 from scripts.analysis.v5.modules import (
     answer_space,
+    bipartite,
     classify,
     cohort_overlap,
     figure_champion_upset,
@@ -67,6 +71,7 @@ from scripts.analysis.v5.modules import (
     figure_vp_proximity,
     figure_x_cell_rtt,
     map_answer_space,
+    map_bipartite,
     map_mtl,
     mapping,
     octant_finetuning,
@@ -311,6 +316,113 @@ def plot_answer_space_cmd(
         except MissingArtifactError as exc:
             raise typer.BadParameter(str(exc)) from exc
         typer.echo(f"wrote {png}")
+
+
+@app.command("build-bipartite-graph")
+def build_bipartite_graph_cmd(
+    run_id: str = typer.Option(None, help="Run to describe."),
+    all_runs: bool = typer.Option(False, "--all-runs", help="Every run under the root."),
+    nside: list[int] = typer.Option(None, "--nside", "-n", help=_NSIDE_HELP),
+    source_csv: Path = typer.Option(
+        None,
+        help="Canonical (vp_id, target_id, rtt_ms) CSV. Defaults to the path the "
+             "run's eval_stats.json records.",
+    ),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """VP nodes, TG nodes and measured edges -- the §7.3 dataset geometry.
+
+    Writes vp_nodes.csv, tg_nodes.csv, edge_segments.csv, the two CDF CSVs and
+    meta.json into bipartite-graph/healpix-<nside>/. No RTT enters beyond the
+    canonical CSV's own `rtt_ms > 0` filter.
+    """
+    if all_runs and source_csv is not None:
+        raise typer.BadParameter("--source-csv cannot be combined with --all-runs")
+    for run in _runs(run_id, all_runs, outputs_root):
+        for n in _nsides(nside):
+            try:
+                graph, out_dir = bipartite.build_for_run(
+                    run, nside=n, analysis_root=analysis_root, source_csv=source_csv
+                )
+            except (ValueError, MissingArtifactError) as exc:
+                raise typer.BadParameter(str(exc)) from exc
+            e = graph.meta["edges"]
+            vp_disp = graph.meta["nodes"]["vps"]["dispersion"]
+            typer.echo(
+                f"{run.run_id}: {graph.n_vps} VPs in {vp_disp['effective_count']} grids "
+                f"(occupancy {vp_disp['occupancy_ratio']:.2f}) · {graph.n_tgs} TGs · "
+                f"{e['n_edges']:,} edges (density {e['edge_density']:.3f}, "
+                f"{e['connected_components']['n_components']} component(s)) -> {out_dir}"
+            )
+
+
+@app.command("plot-bipartite-graph")
+def plot_bipartite_graph_cmd(
+    run_id: str = typer.Option(None, help="Run to map."),
+    all_runs: bool = typer.Option(False, "--all-runs", help="Every run under the root."),
+    nside: list[int] = typer.Option(None, "--nside", "-n", help=_NSIDE_HELP),
+    us_only: bool = typer.Option(
+        True,
+        "--us-only/--auto-extent",
+        help="Frame the continental US (default), or derive the frame from the "
+             "run's sites and VPs together.",
+    ),
+    extent: tuple[float, float, float, float] = typer.Option(
+        (None, None, None, None),
+        "--extent",
+        help="LON_MIN LON_MAX LAT_MIN LAT_MAX. Overrides --us-only/--auto-extent.",
+    ),
+    vp_size: float = typer.Option(22.0, help="VP marker size on the topology map."),
+    no_cells: bool = typer.Option(
+        False, "--no-cells", help="Skip the cell boundaries on BOTH maps."
+    ),
+    no_flow_cells: bool = typer.Option(
+        False,
+        "--no-flow-cells",
+        help="Skip the cell boundaries on the flow map only. They share the flow "
+             "lines' ink, and the flow map is already saturated with it.",
+    ),
+    no_vp_grids: bool = typer.Option(
+        False, "--no-vp-grids", help="Skip the VP-occupied grid outlines on the topology map."
+    ),
+    max_segments: int = typer.Option(
+        None,
+        help="Cap the flow map's distinct lines, sampled deterministically. Unset "
+             "draws them all.",
+    ),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """Topology map and flow map of the bipartite graph.
+
+    Writes bipartite_nodes_map.png and bipartite_flows_map.png into
+    bipartite-graph/healpix-<nside>/. Needs `build-bipartite-graph`.
+    """
+    chosen = None
+    if extent and all(v is not None for v in extent):
+        chosen = tuple(float(v) for v in extent)
+    elif us_only:
+        chosen = mapping.US_MAINLAND_EXTENT
+    for run in _runs(run_id, all_runs, outputs_root):
+        _refuse_combo_ids("plot-bipartite-graph", [run.run_id], outputs_root)
+        for n in _nsides(nside):
+            try:
+                nodes, flows, graph = map_bipartite.build_for_run(
+                    run,
+                    nside=n,
+                    extent=chosen,
+                    analysis_root=analysis_root,
+                    vp_size=vp_size,
+                    cells=not no_cells,
+                    flow_cells=not no_flow_cells,
+                    vp_grids=not no_vp_grids,
+                    max_segments=max_segments,
+                )
+            except MissingArtifactError as exc:
+                raise typer.BadParameter(str(exc)) from exc
+            typer.echo(f"wrote {nodes}")
+            typer.echo(f"wrote {flows}")
 
 
 @app.command("plot-outcome-bars")

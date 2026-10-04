@@ -902,20 +902,8 @@ def replay_mtl(
 # ---- run inputs -------------------------------------------------------------
 
 
-def load_vps(run: RunPaths) -> pd.DataFrame:
-    """`vps.csv` -- the run's vantage points, shared across every fold.
-
-    Lives here rather than in a module of its own: v5 dropped v4's `bipartite`,
-    and this viewer is the only thing left that needs the VP roster.
-    """
-    path = run.setup_dir / "vps.csv"
-    if not path.exists():
-        raise MissingArtifactError(f"{path} missing; cannot draw the VP side")
-    vps = pd.read_csv(path)
-    missing = {"vp_id", "vp_lat", "vp_lon"} - set(vps.columns)
-    if missing:
-        raise ValueError(f"{path} is missing {sorted(missing)}")
-    return vps
+# `vps.csv` lives with the bipartite graph, the other reader of the VP roster.
+from scripts.analysis.v5.modules.bipartite import load_vps  # noqa: E402
 
 
 def load_rung(run: RunPaths, nside: int, *, analysis_root: Path | None = None) -> AnswerSpace:

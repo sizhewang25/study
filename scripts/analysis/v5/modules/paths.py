@@ -5,8 +5,9 @@ own root `outputs/analysis/v5/` so v4's artifacts survive for comparison. The
 layout is v4's: one rung per `healpix-<nside>/` directory, with the merged
 cross-rung file one level above it.
 
-Two kinds per run: `answer-space/` (grid and cell partitions) and `classify/`
-(per-TG labels and per-method counts).
+The core kinds per run are `answer-space/` (grid and cell partitions) and
+`classify/` (per-TG labels and per-method counts); the rest are figures and
+dataset descriptions that read them.
 """
 
 from __future__ import annotations
@@ -38,6 +39,9 @@ RIPE_VS_DATABASES_KIND = "ripe-vs-databases"
 #: Per-TG runtime and memory (`cost.py`). Rung-free: no answer space enters a
 #: stage timing or a heap peak.
 COST_KIND = "cost"
+#: VP nodes, TG nodes and the measured edges between them (`bipartite.py`).
+#: Rung-slugged: the dispersion block counts occupied grids at one nside.
+BIPARTITE_KIND = "bipartite-graph"
 #: `d_pni` vs the S-P gap, k-means clusters, and the RTT boxes that read them
 #: (`pni_gap.py`). Rung-free, and keyed below on the PNI list's file stem.
 PNI_GAP_KIND = "pni-gap"
@@ -154,6 +158,10 @@ class RunPaths:
 
     def classify_dir(self, nside: int, *, root: Path | None = None) -> Path:
         return self.rung_dir(CLASSIFY_KIND, nside, root=root)
+
+    def bipartite_dir(self, nside: int, *, root: Path | None = None) -> Path:
+        """`<root>/<run_id>/bipartite-graph/healpix-<nside>/`, created."""
+        return self.rung_dir(BIPARTITE_KIND, nside, root=root)
 
     def mtl_map_dir(self, nside: int, *, root: Path | None = None) -> Path:
         """`<root>/<run_id>/mtl-map/healpix-<nside>/` -- the rendered viewers.

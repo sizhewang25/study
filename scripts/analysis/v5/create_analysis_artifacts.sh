@@ -183,6 +183,8 @@ fi
 #
 #   build-answer-space   first; everything else reads it
 #   plot-answer-space    needs build-answer-space
+#   build-bipartite-graph needs build-answer-space and the edge CSV
+#   plot-bipartite-graph needs build-bipartite-graph
 #   classify             needs build-answer-space
 #   plot-error-cdf       needs classify
 #   plot-champion-upset  needs classify
@@ -208,6 +210,16 @@ for R in "${ALL[@]}"; do
   # and what it writes should be readable here rather than inferred from the
   # CLI's defaults.
   run plot-answer-space  $V5 plot-answer-space  --run-id "$R" --us-only
+
+  # The VP side beside it: VP and TG nodes, the measured edges, and the §7.3
+  # geometry (density, nearest-VP distance observed vs latent, angular gap),
+  # then the topology and flow maps. The flow map drops the cell boundaries:
+  # they share the flow lines' ink, and the topology map keeps them. Plotted
+  # only if the build just succeeded, so a failed build cannot redraw a stale
+  # graph.
+  if run build-bipartite-graph $V5 build-bipartite-graph --run-id "$R"; then
+    run plot-bipartite-graph $V5 plot-bipartite-graph --run-id "$R" --us-only --no-flow-cells
+  fi
 
   # Both labels per prediction: the uncapped grid offset and the nearest-seed
   # cell verdict.
