@@ -124,6 +124,7 @@ outputs/analysis/v5/_cross/pni-gap/<n>-runs-<hash>/pni_gap_*, pni_cluster_rtt.* 
 outputs/analysis/v5/<run>|_cross/pni-gap/.../sp_interconnect_rtt.png, sp_interconnect_tgs.csv, sp_interconnect.report.json
 outputs/analysis/v5/<run>|_cross/pni-gap/.../sp_pni_cells_tgs.csv, sp_pni_cells.report.json
 outputs/analysis/v5/<run>|_cross/pni-gap/.../x_cell_rtt.{png,csv,manifest.json}
+outputs/analysis/v5/_cross/loso-delta/<n>-runs-<hash>/loso_delta{,.by_distance,.by_has_x,.transitions,.membership}.csv, loso_delta.manifest.json
 outputs/analysis/v5/_cross/cost/<n>-runs-<hash>/cost_box.pooled.<heap|alloc>[.solved].*
 outputs/analysis/v5/<run>/mtl-map/healpix-128/mtl_map.<method>.html
 outputs/analysis/v5/<run>/mtl-map/regions/<method>/<tg>.json          # replay cache, rung-free
@@ -637,6 +638,45 @@ exist is a failure, not a skip. The RTT boxes run only if the clustering in
 the same pass succeeded, and they refuse clusters built from a PNI list whose
 content has changed since.
 
+## Seen sites vs unseen sites: `report-loso-delta`
+
+The mesh runs split folds per IP (DistGeo), and ~20 IP replicas share every
+site, so a test TG's own site is almost always in its calibration set. A
+**leave-one-site-out (LOSO) twin** answers the other question, a site never
+seen. It is the same config with `source_kwargs.fold_by: site` and `k` = the
+number of sites, so each `fold_N` holds out one whole site
+(`configs/pro-as0{1,2,3}-loso.yaml`; see `generic_csv`'s docstring). Every
+v5 command runs on a LOSO run as on any other. Give it its own
+`dataset_label`, and never pool it with its mesh: they share every `tg_id`,
+and the pooling guards refuse that.
+
+**`report-loso-delta --pair BASE:LOSO`** (repeatable; pooled when there is
+more than one pair) joins each method's `classify` frames from the two runs
+on `tg_id`. It refuses the pair unless the TGs, coordinates and `tg_seed_id`
+are identical and the parameter-free methods (S-P, SOI) predict identically
+in both runs: they fit nothing, so a difference means the runs saw different
+inputs. Per method it reports:
+- cell accuracy in each run and `d_acc`;
+- error p50/p90 on solved rows and `d_p50_km`;
+- unanswered shares;
+- correct→wrong and wrong→correct transitions, with their site counts;
+- a **paired, site-clustered bootstrap** CI on `d_acc` and `d_p50_km`: sites
+  are resampled, and each drawn site brings all of its TGs in both runs.
+
+Breakdowns: by each site's distance to its nearest other site in the same run
+(`<50`, `50-200`, `200-400`, `>=400` km), and by has-X / no-X
+(`report-sp-pni-cells`' `tg_cell_holds_x`) when the base run has exactly one
+`sp_pni_cells_tgs.csv`. The flag is used rather than the cluster id, because
+each run numbers its clusters independently. The per-TG `membership`
+table and the manifest record the guards and bootstrap settings.
+`--method` narrows the methods; `--n-boot 0` skips the CI.
+
+The LOSO configs carry no `report-loso-delta` block: the v3 CLI that the
+benchmark's dataset inspection calls refuses any unknown `analysis.<command>`
+key (it already refuses `plot-champion-upset`). So run that stage's
+`target_space` and `eval_source` rules on their own, then the benchmark with
+`CBG_SKIP_INSPECT=1`.
+
 ## Guarantees
 
 - `pred_dist_to_tg_km` matches v4's `error_km` row for row on all three meshes,
@@ -715,6 +755,9 @@ python -m scripts.analysis.v5.cli report-sp-pni-cells --layout per-run --layout 
     --run-id pro-as01-mesh --run-id pro-as02-mesh --run-id pro-as03-mesh
 python -m scripts.analysis.v5.cli plot-x-cell-rtt --layout pooled \
     --run-id pro-as01-mesh --run-id pro-as02-mesh --run-id pro-as03-mesh
+python -m scripts.analysis.v5.cli report-loso-delta \
+    --pair pro-as01-mesh:pro-as01-loso --pair pro-as02-mesh:pro-as02-loso \
+    --pair pro-as03-mesh:pro-as03-loso
 python -m scripts.analysis.v5.cli plot-pni-gap \
     --run-id as01-260728-260802-mesh --pni-csv datasets/pni/as01-us-pni.approx.csv
 python -m scripts.analysis.v5.cli plot-pni-gap --layout pooled \
