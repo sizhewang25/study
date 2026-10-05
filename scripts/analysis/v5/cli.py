@@ -57,6 +57,7 @@ from scripts.analysis.v5.modules import (
     classify,
     cohort_overlap,
     figure_champion_upset,
+    figure_correct_upset,
     figure_contest_map,
     figure_cost_box,
     figure_error_cdf,
@@ -132,6 +133,7 @@ COMBO_COMMANDS = frozenset({
     "plot-outcome-map",
     "plot-error-cdf",
     "plot-champion-upset",
+    "plot-correct-upset",
     "plot-cost-box",
     "plot-pareto",
     "plot-vp-proximity",
@@ -1185,6 +1187,78 @@ def plot_champion_upset_cmd(
                 analysis_root=analysis_root,
                 tie_km=tie_km,
                 source=source,
+            )
+        ]
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for written in sets:
+        typer.echo(f"wrote {written['png']}")
+
+
+@app.command("plot-correct-upset")
+def plot_correct_upset_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Run (repeatable)."),
+    all_runs: bool = typer.Option(
+        False, "--all-runs", help="Every run under --outputs-root (per-run only)."
+    ),
+    layout: list[str] = typer.Option(
+        None,
+        "--layout",
+        help=(
+            f"{figure_correct_upset.PER_RUN} (one figure per run) or "
+            f"{figure_correct_upset.POOLED} (every run's TGs as one population). "
+            f"Repeatable; default: {figure_correct_upset.PER_RUN}."
+        ),
+    ),
+    metric: str = typer.Option(
+        figure_correct_upset.DEFAULT_METRIC,
+        "--metric",
+        help=f"Which correctness: {sorted(figure_correct_upset.METRICS)}.",
+    ),
+    method: list[str] = typer.Option(None, "--method", "-m", help="Only these methods."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """UpSet of per-TG cell correctness: the outcome bars, paired.
+
+    On each TG, the exact set of methods whose prediction falls in the TG's cell
+    (answered rows only; `--metric bounded` also requires the prediction within
+    the pixel bound). `(none)` is every method wrong. Combinations under 1% of
+    the TGs share one column in the figure; the tables keep all. `per-run`
+    writes `correct_upset.<metric>.*` into `classify/`; `pooled` writes the
+    `.pooled.` set into `_cross/classify/<n>-runs-<hash>/`. Needs `classify`.
+    """
+    if all_runs and run_id:
+        raise typer.BadParameter("pass --run-id or --all-runs, not both")
+    layouts = tuple(dict.fromkeys(layout or ())) or (figure_correct_upset.PER_RUN,)
+    unknown = [x for x in layouts if x not in figure_correct_upset.LAYOUTS]
+    if unknown:
+        raise typer.BadParameter(
+            f"unknown --layout {unknown}; pick from {list(figure_correct_upset.LAYOUTS)}"
+        )
+    if all_runs and figure_correct_upset.POOLED in layouts:
+        raise typer.BadParameter(
+            f"--layout {figure_correct_upset.POOLED} needs explicit --run-id: which "
+            "datasets form one population is the caller's call"
+        )
+    runs = (
+        discover_runs(outputs_root)
+        if all_runs
+        else [resolve_run(r, outputs_root) for r in (run_id or [])]
+    )
+    if not runs:
+        raise typer.BadParameter("pass at least one --run-id, or --all-runs")
+    calls = _layout_calls(
+        "plot-correct-upset", runs, method, layouts, figure_correct_upset.PER_RUN,
+        outputs_root,
+    )
+    try:
+        sets = [
+            written
+            for group, lays, chosen, source in calls
+            for written in figure_correct_upset.build_for_runs(
+                group, layouts=lays, metric=metric, methods=chosen,
+                analysis_root=analysis_root, source=source,
             )
         ]
     except (ValueError, MissingArtifactError) as exc:

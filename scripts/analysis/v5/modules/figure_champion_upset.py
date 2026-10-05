@@ -359,15 +359,23 @@ def plot_upset(
     mask: pd.DataFrame,
     out_path: Path,
     *,
-    title: str,
-    subtitle: str,
+    title: str | None,
+    subtitle: str | None,
     figsize: tuple[float, float] = FIGSIZE,
     dpi: int = 300,
+    set_label: str = SET_LABEL,
+    min_share: float | None = None,
+    wspace: float = 0.20,
 ) -> Path:
     """Intersection bars over a dot matrix, set-size bars to its left.
 
     Drawn on three plain axes rather than through `upsetplot`, which drops a
     category with no members -- and a method that never wins is a result.
+
+    `title=None` draws no title or subtitle (the paper's caption names the
+    figure). `min_share` lumps every exact combination below that share of
+    the TGs into one last column with no dots, labelled with how many
+    combinations it holds; the set-size bars still count every TG.
     """
     import matplotlib as mpl
 
@@ -386,6 +394,13 @@ def plot_upset(
         patterns.items(),
         key=lambda kv: (-kv[1], sum(kv[0]), tuple(not b for b in kv[0])),
     )
+    n_lumped = 0
+    if min_share is not None and n:
+        kept = [(p, c) for p, c in columns if c / n >= min_share]
+        rest = [(p, c) for p, c in columns if c / n < min_share]
+        if len(rest) > 1:
+            n_lumped = len(rest)
+            columns = kept + [(None, sum(c for _, c in rest))]
     n_cols, n_rows = len(columns), len(order)
     totals = values.sum(axis=0)
 
@@ -395,7 +410,7 @@ def plot_upset(
         2, 2,
         width_ratios=(1.25, max(n_cols, 3) * 0.42),
         height_ratios=(1.7, max(n_rows, 2) * 0.24),
-        wspace=0.20, hspace=0.04, top=0.86,
+        wspace=wspace, hspace=0.04, top=0.86 if title else 0.98,
     )
     ax_bar = fig.add_subplot(grid[0, 1])
     ax_dot = fig.add_subplot(grid[1, 1], sharex=ax_bar)
@@ -410,9 +425,13 @@ def plot_upset(
 
     # -- intersections
     for x, (pattern, count) in enumerate(columns):
-        members = [m for m, hit in zip(order, pattern) if hit]
         pct = 100.0 * count / n if n else 0.0
-        ax_bar.bar(x, pct, width=0.62, zorder=2, **_bar_style(members, colors))
+        if pattern is None:
+            ax_bar.bar(x, pct, width=0.62, zorder=2, color="white", edgecolor=TIE_INK,
+                       linewidth=0.8, linestyle=(0, (2, 1.5)))
+        else:
+            members = [m for m, hit in zip(order, pattern) if hit]
+            ax_bar.bar(x, pct, width=0.62, zorder=2, **_bar_style(members, colors))
         ax_bar.annotate(
             f"{pct:.1f}", xy=(x, pct), xytext=(0, 1.5), textcoords="offset points",
             ha="center", va="bottom", fontsize=E._GUIDE_PT, color=E._INK_2,
@@ -433,6 +452,10 @@ def plot_upset(
         if k % 2 == 0:
             ax_dot.axhspan(y - 0.5, y + 0.5, color=ROW_SHADE, zorder=0, linewidth=0)
     for x, (pattern, _) in enumerate(columns):
+        if pattern is None:
+            ax_dot.text(x, (n_rows - 1) / 2, f"{n_lumped} other\ncombinations", rotation=90,
+                        ha="center", va="center", fontsize=E._GUIDE_PT - 0.5, color=E._MUTED)
+            continue
         hit_y = [ys[k] for k, hit in enumerate(pattern) if hit]
         miss_y = [ys[k] for k, hit in enumerate(pattern) if not hit]
         ax_dot.scatter([x] * len(miss_y), miss_y, s=16, color=ABSENT_DOT, zorder=2, linewidths=0)
@@ -466,7 +489,7 @@ def plot_upset(
     # strip under the figure.
     ax_set.xaxis.tick_top()
     ax_set.xaxis.set_label_position("top")
-    ax_set.set_xlabel(SET_LABEL, fontsize=E._GUIDE_PT + 0.5, color=E._INK_2, labelpad=3)
+    ax_set.set_xlabel(set_label, fontsize=E._GUIDE_PT + 0.5, color=E._INK_2, labelpad=3)
     ax_set.tick_params(axis="y", left=False, labelleft=False)
     ax_set.tick_params(axis="x", colors=E._MUTED, labelsize=E._GUIDE_PT, pad=1.5)
     ax_set.grid(True, axis="x", color=E._GRID, linewidth=0.5, zorder=0)
@@ -477,10 +500,12 @@ def plot_upset(
 
     # Anchored to the gridspec's own top rather than to `suptitle`'s default,
     # which floats an inch above the bars at this aspect.
-    fig.text(0.5, 0.955, title, ha="center", va="bottom", fontsize=E._TITLE_PT,
-             fontweight="bold", color=E._INK)
-    fig.text(0.5, 0.925, subtitle, ha="center", va="bottom", fontsize=E._SUBTITLE_PT,
-             color=E._INK_2)
+    if title:
+        fig.text(0.5, 0.955, title, ha="center", va="bottom", fontsize=E._TITLE_PT,
+                 fontweight="bold", color=E._INK)
+    if subtitle:
+        fig.text(0.5, 0.925, subtitle, ha="center", va="bottom", fontsize=E._SUBTITLE_PT,
+                 color=E._INK_2)
 
     with mpl.rc_context({"hatch.color": E._INK_2, "hatch.linewidth": 0.6}):
         out_path.parent.mkdir(parents=True, exist_ok=True)
