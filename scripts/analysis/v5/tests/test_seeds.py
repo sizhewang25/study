@@ -82,3 +82,53 @@ def test_a_single_site_is_one_seed():
     ids, seeds = build_seeds(_sites([SEATTLE]), G.grid_km(128))
     assert ids.tolist() == [0]
     assert len(seeds) == 1 and np.isnan(seeds["nearest_seed_km"].iloc[0])
+
+
+class TestPeripheralSeeds:
+    """`peripheral_seeds`: the seeds on the spherical convex hull."""
+
+    def test_the_corners_of_a_square_are_peripheral_and_its_centre_is_not(self):
+        from scripts.analysis.v5.modules.seeds import peripheral_seeds
+
+        lat = [38.0, 38.0, 42.0, 42.0, 40.0]
+        lon = [-102.0, -98.0, -102.0, -98.0, -100.0]
+        assert peripheral_seeds(lat, lon).tolist() == [True, True, True, True, False]
+
+    def test_a_seed_on_a_hull_edge_is_peripheral(self):
+        """On a great circle between two hull vertices: its cell is an unbounded strip."""
+        from scripts.analysis.v5.modules.seeds import peripheral_seeds
+
+        lat = [0.0, 0.0, 0.0, 5.0, 2.0]  # the equator is a great circle
+        lon = [-10.0, 0.0, 10.0, 0.0, 0.0]
+        got = peripheral_seeds(lat, lon)
+        assert got[1] and not got[4]
+
+    def test_three_or_fewer_seeds_are_all_peripheral(self):
+        from scripts.analysis.v5.modules.seeds import peripheral_seeds
+
+        assert peripheral_seeds([40.0, 41.0, 42.0], [-100.0, -99.0, -101.0]).all()
+
+    def test_seeds_beyond_a_hemisphere_are_refused(self):
+        from scripts.analysis.v5.modules.seeds import peripheral_seeds
+
+        with pytest.raises(ValueError, match="hemisphere"):
+            peripheral_seeds([0.0, 0.0, 0.0, 0.0], [0.0, 90.0, 180.0, -90.0])
+
+    def test_build_seeds_carries_the_flag(self):
+        import pandas as pd
+
+        from scripts.analysis.v5.modules.seeds import build_seeds
+
+        sites = pd.DataFrame({
+            "site_id": range(5),
+            "site_lat": [38.0, 38.0, 42.0, 42.0, 40.0],
+            "site_lon": [-102.0, -98.0, -102.0, -98.0, -100.0],
+            "n_tgs": [20] * 5,
+        })
+        _, seeds = build_seeds(sites, 10.0)
+        assert seeds["peripheral"].sum() == 4
+
+    def test_seeds_on_one_great_circle_are_all_peripheral(self):
+        from scripts.analysis.v5.modules.seeds import peripheral_seeds
+
+        assert peripheral_seeds([0.0] * 5, [-20.0, -10.0, 0.0, 10.0, 20.0]).all()

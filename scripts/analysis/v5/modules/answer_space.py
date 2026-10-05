@@ -72,6 +72,10 @@ GLOSSARY: dict[str, str] = {
     "site": "unique location of TGs, keyed (run_id, tg_lat, tg_lon)",
     "seed": "spherical centroid of sites grouped by complete linkage, diameter <= grid_km",
     "cell": "Voronoi cell of a seed, unbounded; the serving region",
+    "peripheral": (
+        "a seed on the spherical convex hull of all seeds, i.e. whose cell is "
+        "unbounded within the footprint's hemisphere (seeds.peripheral_seeds)"
+    ),
     "answer_space": "the TG answer space: grid partition and cell partition at one rung",
     "*_dist_to_tg_km": "distance to the raw TG coordinate",
     "*_dist_to_seed_km": "distance to the TG's seed",
@@ -162,6 +166,8 @@ def load_answer_space(out_dir: Path) -> AnswerSpace:
         for col in ints:
             df[col] = df[col].astype("int64")
         frames[name] = df
+    if "peripheral" in frames[SEEDS_CSV].columns:  # absent from spaces built before it
+        frames[SEEDS_CSV]["peripheral"] = frames[SEEDS_CSV]["peripheral"].astype(bool)
     if SCORED_COL in frames[SITES_CSV].columns:
         frames[SITES_CSV][SCORED_COL] = frames[SITES_CSV][SCORED_COL].astype("int64")
     meta = json.loads((out_dir / META_JSON).read_text())
@@ -273,6 +279,12 @@ def build_answer_space(
         "tg_dist_to_seed_km": _describe(t["tg_dist_to_seed_km"]),
         "seed_diameter_km": _describe(seeds["seed_diameter_km"]),
         "nearest_seed_km": _describe(seeds["nearest_seed_km"]),
+        # The share of cells at the periphery of the footprint, which an
+        # unbounded cell credits for direction rather than distance.
+        "n_seeds_peripheral": int(seeds["peripheral"].sum()),
+        "peripheral_seed_share": (
+            round(float(seeds["peripheral"].mean()), 4) if len(seeds) else None
+        ),
         "glossary": GLOSSARY,
     }
     if provenance is not None:

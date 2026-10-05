@@ -27,6 +27,20 @@ A group depends only on the distances between sites and on `grid_km`. It does
 not depend on where the HEALPix grid boundaries fall: two sites in one grid can
 sit in two groups, and two sites in adjacent grids can share one. That
 independence is the point of having a second partition.
+
+## Peripheral seeds
+
+A seed is **peripheral** when its cell is unbounded within the footprint's
+hemisphere: in a Voronoi diagram, that holds exactly for the seeds on the
+convex hull of all seeds. The cells are built from great-circle distances, so
+the hull is the spherical one, computed in a gnomonic projection centred on
+the seeds' mean direction (great circles map to straight lines, so the planar
+hull there is the spherical hull). Seeds on a hull edge between two hull
+vertices count as peripheral too: their cells are unbounded strips. On the
+globe every cell is finite, but the peripheral ones are the cells that split
+the rest of the planet between them -- on the pro meshes, exactly the largest
+cells. A flat lat/lon projection would bend the hull and miss a nearly
+collinear seed.
 """
 
 from __future__ import annotations
@@ -71,12 +85,58 @@ def group_sites(site_lat, site_lon, diameter_km: float) -> np.ndarray:
     return np.array([first_seen[int(x)] for x in labels], dtype=np.int64)
 
 
+#: Tolerance (gnomonic plane units, ~radians near the centre) for a seed lying
+#: on a hull edge.
+_HULL_EDGE_TOL = 1e-9
+
+
+def peripheral_seeds(seed_lat, seed_lon) -> np.ndarray:
+    """Per seed, whether its cell is unbounded: on the spherical convex hull.
+
+    Three or fewer seeds, or seeds on one great circle, are all peripheral.
+    Refuses seeds that do not fit in
+    an open hemisphere, where "the footprint's outside" is undefined.
+    """
+    from scipy.spatial import ConvexHull
+
+    from scripts.analysis.v5.modules.geodesy import unit_vectors
+
+    lat = np.asarray(seed_lat, dtype=float)
+    lon = np.asarray(seed_lon, dtype=float)
+    n = len(lat)
+    if n <= 3:
+        return np.ones(n, dtype=bool)
+    u = unit_vectors(lat, lon)
+    centre = u.mean(axis=0)
+    centre /= np.linalg.norm(centre)
+    depth = u @ centre
+    if not (depth > 0).all():
+        raise ValueError("seeds do not fit in an open hemisphere; the hull is undefined")
+    east = np.cross([0.0, 0.0, 1.0], centre)
+    if np.linalg.norm(east) < 1e-12:  # centre at a pole
+        east = np.array([1.0, 0.0, 0.0])
+    east /= np.linalg.norm(east)
+    north = np.cross(centre, east)
+    xy = np.column_stack([(u @ east) / depth, (u @ north) / depth])
+    # All seeds on one great circle: every cell is an unbounded strip.
+    if np.linalg.matrix_rank(xy - xy.mean(axis=0), tol=_HULL_EDGE_TOL) < 2:
+        return np.ones(n, dtype=bool)
+    hull = ConvexHull(xy)
+    on = np.zeros(n, dtype=bool)
+    on[hull.vertices] = True
+    # Seeds on a hull edge between two vertices: distance to some facet ~ 0.
+    # `hull.equations` rows are (a, b, c) with a*x + b*y + c <= 0 inside.
+    slack = xy @ hull.equations[:, :2].T + hull.equations[:, 2]
+    on |= (np.abs(slack) <= _HULL_EDGE_TOL).any(axis=1)
+    return on
+
+
 def build_seeds(sites: pd.DataFrame, diameter_km: float) -> tuple[np.ndarray, pd.DataFrame]:
     """`(seed id per site, seeds frame)` from a `sites` frame.
 
     `sites` needs `site_id, site_lat, site_lon, n_tgs`, sorted by `site_id`.
     The seeds frame is `seed_id, seed_lat, seed_lon, n_sites, n_tgs,
-    seed_diameter_km, nearest_seed_km`.
+    seed_diameter_km, nearest_seed_km, peripheral` (`peripheral_seeds`).
     """
     seed_of_site = group_sites(sites["site_lat"], sites["site_lon"], diameter_km)
     rows = []
@@ -104,4 +164,5 @@ def build_seeds(sites: pd.DataFrame, diameter_km: float) -> tuple[np.ndarray, pd
         seeds["nearest_seed_km"] = np.round(mesh.min(axis=1), 3)
     else:
         seeds["nearest_seed_km"] = np.nan
+    seeds["peripheral"] = peripheral_seeds(seeds["seed_lat"], seeds["seed_lon"])
     return seed_of_site, seeds
