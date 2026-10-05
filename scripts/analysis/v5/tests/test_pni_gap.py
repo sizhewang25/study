@@ -556,3 +556,39 @@ class TestShares:
         assert summary.n_sites.tolist() == [1, 2]
         assert summary.sites_pct.sum() == pytest.approx(150.0)
         assert summary.tgs_pct.sum() == pytest.approx(100.0)
+
+
+class TestNormalizedScatter:
+    """The drawing changes unit; the clusters and CSVs stay in km."""
+
+    def test_ticks_are_zero_and_the_decades(self):
+        major, minor = F.norm_ticks(F.NORM_LINTHRESH, 1_000.0)
+        assert major == [0.0, 10.0, 100.0, 1_000.0]
+        assert 20.0 in minor and 900.0 in minor and 5.0 not in minor
+
+    def test_it_writes_the_norm_png_and_keeps_the_clusters(self, pni_two_runs):
+        two = pni_two_runs
+        bounds = (0.0, 4_000.0)
+        [km_png] = F.build_for_runs(two["runs"], two["pni_csvs"], layouts=(P.POOLED,),
+                                    analysis_root=two["root"], source_csvs=two["edge_csvs"])
+        km_tgs, _ = P.read_clusters(km_png.parent, run_ids=["run-a", "run-b"])
+        [png] = F.build_for_runs(
+            two["runs"], two["pni_csvs"], layouts=(P.POOLED,), analysis_root=two["root"],
+            source_csvs=two["edge_csvs"], dist_norm_km={"run-a": bounds, "run-b": bounds},
+        )
+        assert png.name == F.PNG_NAME_NORM and png.exists()
+        tgs, meta = P.read_clusters(png.parent, run_ids=["run-a", "run-b"])
+        assert meta["dist_norm_km"]["max"] == 4_000.0 and meta["scatter_png"] == F.PNG_NAME_NORM
+        cols = ["run_id", "tg_id", P.CLUSTER_COL, P.D_PNI, P.GAP]
+        pd.testing.assert_frame_equal(
+            tgs[cols].sort_values(["run_id", "tg_id"]).reset_index(drop=True),
+            km_tgs[cols].sort_values(["run_id", "tg_id"]).reset_index(drop=True),
+        )
+
+    def test_pooled_runs_must_agree_on_the_bounds(self, pni_two_runs):
+        two = pni_two_runs
+        with pytest.raises(ValueError, match="same analysis.common.dist_norm_km"):
+            F.build_for_runs(
+                two["runs"], two["pni_csvs"], layouts=(P.POOLED,), analysis_root=two["root"],
+                source_csvs=two["edge_csvs"], dist_norm_km={"run-a": (0.0, 4_000.0)},
+            )

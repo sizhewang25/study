@@ -187,3 +187,40 @@ class TestPlot:
         png = C.plot(pop, meta={"run_ids": ["r"], "n_tgs": 3},
                      out_png=tmp_path / "cdf.png")
         assert png.exists() and png.stat().st_size > 0
+
+
+class TestNormalized:
+    BOUNDS = (0.0, 1_000.0)
+
+    def test_distances_and_gap_become_thousandths(self):
+        pop = C.normalized(C.population(_long([10.0, 20.0], [10.0, 120.0], methods=1)), self.BOUNDS)
+        assert pop["geo_vp_dist_to_tg_km"].tolist() == pytest.approx([10.0, 20.0])
+        assert pop[C.GAP].tolist() == pytest.approx([0.0, 100.0])
+
+    def test_stats_columns_name_the_unit(self):
+        pop = C.normalized(C.population(_long([10.0, 20.0], [10.0, 120.0], methods=1)), self.BOUNDS)
+        cols = C.stats_table(pop, "norm_e3").columns
+        assert "p50_norm_e3" in cols and not any(c.endswith("_km") for c in cols)
+
+    def test_a_distance_beyond_the_max_is_refused(self):
+        with pytest.raises(ValueError, match="outside the declared"):
+            C.normalized(C.population(_long([10.0], [2_000.0], methods=1)), self.BOUNDS)
+
+    def test_the_names_take_a_norm_infix(self):
+        assert C.artifact_names(False) == (C.PNG_NAME, C.CSV_NAME, C.MANIFEST_NAME)
+        assert all(".norm." in n for n in C.artifact_names(True))
+
+    def test_the_normalized_panel_writes_a_png(self, tmp_path):
+        pop = C.normalized(C.population(_long([1.0, 2.0, 3.0], [1.0, 20.0, 33.0], methods=1)),
+                           self.BOUNDS)
+        png = C.plot(pop, meta={"run_ids": ["r"], "n_tgs": 3},
+                     out_png=tmp_path / "cdf.png", normalized=True)
+        assert png.exists() and png.stat().st_size > 0
+
+    def test_the_manifest_records_the_bounds_and_the_unit(self):
+        pop = C.normalized(C.population(_long([1.0, 2.0], [1.0, 20.0], methods=1)), self.BOUNDS)
+        body = json.loads(C._manifest({"run_ids": ["r"], "nside": 128}, pop,
+                                      C.stats_table(pop, "norm_e3"), self.BOUNDS))
+        assert body["x_axis"]["dist_norm_km"]["max"] == 1_000.0
+        assert "min_gap_norm_e3" in body["pointwise_inequality"]
+        assert body["figure"] == C.artifact_names(True)[0]

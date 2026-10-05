@@ -1479,18 +1479,22 @@ def plot_vp_distance_cdf_cmd(
     already carrying that share; read the left intercept as the share.
 
     Writes `vp_distance_cdf.{png,csv,manifest.json}` into
-    `_cross/vp-distance-cdf/<datasets>[@<arm>]/`. Needs `classify` on every run.
+    `_cross/vp-distance-cdf/<datasets>[@<arm>]/`, or the `.norm.` set when the
+    configs declare `analysis.common.dist_norm_km`. Needs `classify` on every run.
     """
     if not run_id:
         raise typer.BadParameter("pass at least one --run-id")
     runs = [resolve_run(r, outputs_root) for r in run_id]
     chosen, _ = _methods_for("plot-vp-distance-cdf", runs, method, outputs_root)
     try:
+        from scripts.analysis.v5.modules.labels import declared_dist_norm_km
+
         pngs = figure_vp_distance_cdf.build_for_runs(
             runs,
             methods=chosen,
             nside=nside,
             analysis_root=analysis_root,
+            dist_norm_km={r.run_id: declared_dist_norm_km(r.run_id, outputs_root) for r in runs},
         )
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -1589,14 +1593,19 @@ def plot_pni_gap_cmd(
 
     Writes `pni_gap_clusters.csv` (one row per TG, the file
     `plot-pni-cluster-rtt` reads), `pni_gap_points.csv`, `pni_gap.manifest.json`
-    and `pni_gap_scatter.png`. Needs no `classify`.
+    and `pni_gap_scatter.png` (`pni_gap_scatter.norm.png`, drawn in units of
+    1e-3, when the configs declare `analysis.common.dist_norm_km`; the
+    clustering and CSVs stay in km). Needs no `classify`.
     """
     _refuse_combo_ids("plot-pni-gap", run_id or [], outputs_root)
     try:
         runs, pni_csvs, layouts, source_csvs = _pni_inputs(run_id, layout, pni_csv, source_csv, outputs_root)
+        from scripts.analysis.v5.modules.labels import declared_dist_norm_km
+
         pngs = figure_pni_gap.build_for_runs(
             runs, pni_csvs, layouts=layouts, k=k, method=method,
             analysis_root=analysis_root, source_csvs=source_csvs,
+            dist_norm_km={r.run_id: declared_dist_norm_km(r.run_id, outputs_root) for r in runs},
         )
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc

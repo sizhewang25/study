@@ -111,6 +111,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from scripts.analysis.v5.modules import classify as C  # noqa: E402
 from scripts.analysis.v5.modules import cross
+from scripts.analysis.v5.modules import dist_norm as DN
 from scripts.analysis.v5.modules import grid as G
 from scripts.analysis.v5.modules.methods import (
     method_colors,
@@ -177,9 +178,9 @@ DEFAULT_X_MAX_KM = 10_000.0
 
 #: The normalized axis, in units of 10^-3 of (max - min): five decades like the
 #: km axis. The right edge is the declared max; any value beyond it is refused.
-NORM_SCALE = 1_000.0
-X_MIN_NORM = 0.01
-X_MAX_NORM = NORM_SCALE
+NORM_SCALE = DN.SCALE
+X_MIN_NORM = DN.X_MIN
+X_MAX_NORM = DN.X_MAX
 
 #: Percentile-column infix when normalized, in place of `_km_`.
 NORM_COLUMN = "pred_dist_to_tg_norm_e3"
@@ -480,45 +481,16 @@ def censor(
 
 
 def normalize(loaded: dict[str, dict], bounds: tuple[float, float]) -> dict[str, dict]:
-    """Every distance as (d - min) / (max - min) in units of 10^-3.
-
-    Refuses a value outside the bounds: the paper states that no method's
-    error exceeds D, and the axis ends there, so a value past it is either a
-    wrong declaration or a claim the text can no longer make.
-    """
-    lo, hi = (float(b) for b in bounds)
-    if not 0 <= lo < hi:
-        raise ValueError(f"normalization bounds need 0 <= min < max, got {bounds}")
-    out: dict[str, dict] = {}
-    for method, entry in loaded.items():
-        values = np.asarray(entry["errors"], dtype=float)
-        outside = (values < lo) | (values > hi)
-        if outside.any():
-            raise ValueError(
-                f"{method}: {int(outside.sum())} errors fall outside the declared "
-                f"analysis.common.dist_norm_km [{lo:g}, {hi:g}] km "
-                f"(range {values.min():,.1f}-{values.max():,.1f} km)"
-            )
-        out[method] = {**entry, "errors": (values - lo) / (hi - lo) * NORM_SCALE}
-    return out
+    """Every distance as (d - min) / (max - min) in units of 10^-3
+    (`dist_norm.distance`), which refuses a value outside the bounds."""
+    return {
+        method: {**entry, "errors": DN.distance(entry["errors"], bounds, what=method)}
+        for method, entry in loaded.items()
+    }
 
 
-def common_bounds(
-    run_ids: list[str], dist_norm_km: dict[str, tuple[float, float] | None] | None
-) -> tuple[float, float] | None:
-    """The one `(min, max)` every run in `run_ids` declares, None if none does;
-    mixed raises.
-
-    A pooled figure normalizes every run's distances by one pair of bounds, so
-    runs declaring different values, or some declaring none, cannot share it.
-    """
-    values = {r: (dist_norm_km or {}).get(r) for r in run_ids}
-    distinct = set(values.values())
-    if len(distinct) > 1:
-        raise ValueError(
-            f"pooled runs must declare the same analysis.common.dist_norm_km; got {values}"
-        )
-    return distinct.pop() if distinct else None
+#: Kept under this name for callers; the rule lives in `dist_norm`.
+common_bounds = DN.common_bounds
 
 
 def resolve_x_max(
@@ -690,13 +662,16 @@ def _style_axes(
     *,
     sentinel_km: float | None = None,
     x_label: str = X_LABEL,
+    power_ticks: bool = False,
 ) -> None:
     """Log x on the fixed range, `Y_TICKS` on y, and the quiet spines."""
     from matplotlib.ticker import FuncFormatter
 
     ax.set_xscale("log")
     # `%g`: a ScalarFormatter renders the 0.1 km decade as a bare "0".
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    # Normalized axes label decades as powers of ten (`dist_norm.power_label`).
+    label = DN.power_label if power_ticks else (lambda v: f"{v:g}")
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: label(v)))
     ax.set_xlim(min_x_km, max_x_km)
     ax.set_ylim(0, 1)
     ax.set_yticks(list(Y_TICKS))
@@ -734,6 +709,7 @@ def plot_cdf(
     sentinel_km: float | None = None,
     x_label: str = X_LABEL,
     guides: bool = True,
+    power_ticks: bool = False,
     figsize: tuple[float, float] = PAPER_FIGSIZE,
     dpi: int = 300,
     order: list[str] | None = None,
@@ -793,7 +769,8 @@ def plot_cdf(
         xs, ys = _cdf(values, min_x_km, loaded[method].get("n_total"))
         ax.plot(xs, ys, alpha=0.95, gid=method, **style(method))
 
-    _style_axes(ax, min_x_km, max_x_km, sentinel_km=sentinel_km, x_label=x_label)
+    _style_axes(ax, min_x_km, max_x_km, sentinel_km=sentinel_km, x_label=x_label,
+                power_ticks=power_ticks)
 
     handles = [
         Line2D(
@@ -1086,6 +1063,7 @@ def _write(
         min_x_km=min_x_km, max_x_km=max_x_km, sentinel_km=mark,
         x_label=X_LABEL_NORM if normalized else X_LABEL,
         guides=not normalized,
+        power_ticks=normalized,
     )
     (out_dir / manifest_name).write_text(
         _manifest(

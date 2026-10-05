@@ -180,6 +180,12 @@ _PANEL_W = 4.0
 #: extra height was white space above and below the panels.
 _FIG_H = 4.0
 
+#: The pooled layout's size, in inches: one panel the full canvas wide and
+#: short, so it prints as a single fat band across the page (the paper's
+#: classification figure). The per-dataset layout keeps `_PANEL_W` x `_FIG_H`.
+POOLED_PANEL_W = 8.0
+POOLED_FIG_H = 2.4
+
 #: Panel tags for the per-dataset layout, so the prose can cite "(a)". Drawn
 #: only when there is more than one panel -- a lone panel has nothing to cite
 #: against.
@@ -664,8 +670,13 @@ def render(
     png_name: str | None = None,
     mode: str = BOUNDED,
     dpi: int = 150,
+    panel_w: float = _PANEL_W,
+    fig_h: float = _FIG_H,
 ) -> Path:
-    """One panel per dataset, one bar per method, each panel ranked by itself."""
+    """One panel per dataset, one bar per method, each panel ranked by itself.
+
+    `panel_w` and `fig_h` (inches) size the panels and the canvas; the pooled
+    layout passes `POOLED_PANEL_W` x `POOLED_FIG_H`."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -673,12 +684,12 @@ def render(
 
     datasets = sorted(table["dataset"].unique())
     nd = ACCURACY_DECIMALS if decimals is None else decimals
-    panels_w = _PANEL_W * len(datasets)
+    panels_w = panel_w * len(datasets)
     fig_w = max(panels_w, _MIN_FIG_W)
 
     with plt.rc_context({"hatch.linewidth": _HATCH_PT}):
         fig, axes = plt.subplots(
-            1, len(datasets), figsize=(fig_w, _FIG_H), sharey=True, squeeze=False
+            1, len(datasets), figsize=(fig_w, fig_h), sharey=True, squeeze=False
         )
         axes = axes[0]
         fig.patch.set_facecolor(_SURFACE)
@@ -728,7 +739,7 @@ def render(
         legends = [
             fig.legend(
                 handles=h, loc="upper center", ncol=len(h), frameon=False, fontsize=9,
-                bbox_to_anchor=(0.5, 1 - (_LEGEND_TOP_IN + k * _LEGEND_ROW_IN) / _FIG_H),
+                bbox_to_anchor=(0.5, 1 - (_LEGEND_TOP_IN + k * _LEGEND_ROW_IN) / fig_h),
                 labelcolor=_INK_2, **({"handleheight": 1.2} if h is cells else {}),
             )
             for k, h in enumerate(h for h in (tiers, cells) if h)
@@ -747,7 +758,7 @@ def render(
             )
 
         inset = min((fig_w - panels_w) / 2 / fig_w, _MAX_INSET)
-        bottom = _BOTTOM_IN / _FIG_H
+        bottom = _BOTTOM_IN / fig_h
         # The panel titles belong `_LEGEND_GAP_IN` under the bottom legend row
         # -- which is the second row in `bounded` and the only one in
         # `unbounded`, so its panels climb into the space the second row would
@@ -755,7 +766,7 @@ def render(
         # pad on top of the `rect`, a visible band of white on a figure this
         # short. So lay out once, measure the miss, and give exactly that back.
         # Measuring beats modelling: the pad depends on matplotlib's version.
-        top = _measure()[0] - _LEGEND_GAP_IN / _FIG_H
+        top = _measure()[0] - _LEGEND_GAP_IN / fig_h
         fig.tight_layout(rect=(inset, bottom, 1 - inset, top))
         shift = top - _measure()[1]
         if abs(shift) > 0.002:
@@ -921,7 +932,10 @@ def build_for_runs(
                 table[[c for c in csv_columns(mode) if c in table.columns]].to_csv(
                     out_dir / names["csv"], index=False
                 )
-                png = render(table, nside, out_dir, png_name=names["png"], mode=mode)
+                size = (
+                    {"panel_w": POOLED_PANEL_W, "fig_h": POOLED_FIG_H} if layout == POOLED else {}
+                )
+                png = render(table, nside, out_dir, png_name=names["png"], mode=mode, **size)
                 per_run = (
                     _tgs_per_run(runs, nside, analysis_root=analysis_root)
                     if layout == POOLED else None
