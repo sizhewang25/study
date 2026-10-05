@@ -121,7 +121,7 @@ def test_each_curve_takes_its_methods_hue_and_names_its_cohort(tmp_path, monkeyp
     names = [txt.get_text() for txt in ax.get_legend().get_texts()]
     close(fig)
     assert colours == [LABEL_HUES["SPO"], LABEL_HUES["OCT-H"]]
-    assert names == ["SPO Correct Only", "OCT-H Correct Only"]
+    assert names == ["SPO only", "OCT-H only"]
 
 
 def test_each_curve_is_normalised_to_its_own_cohort(tmp_path, monkeypatch):
@@ -159,12 +159,13 @@ def test_the_end_markers_take_their_cohorts_hue(tmp_path, monkeypatch):
     assert by_text["8"] == LABEL_HUES["OCT-H"]
 
 
-def test_the_axis_says_it_is_symlog(tmp_path, monkeypatch):
-    """A log-looking axis that shows zero needs to say why it can."""
+def test_the_axis_names_the_pixel_distance(tmp_path, monkeypatch):
+    """The x axis uses the paper's term for the offset."""
     fig, close = _drawn(_both_cohorts(), monkeypatch, tmp_path / "say.png")
     label = fig.axes[0].get_xlabel()
     close(fig)
-    assert "symlog" in label.lower()
+    # The paper's term; the symlog scale itself is checked below.
+    assert "pixel distance" in label.lower()
 
 
 def test_the_axis_is_symlog_so_a_zero_offset_is_drawn(tmp_path, monkeypatch):

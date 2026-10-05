@@ -135,8 +135,14 @@ MANIFEST_NAME = "paired_{figure}.{pair}.manifest.json"
 #: Sized for a paper column. `test_the_axis_labels_fit` measures the labels
 #: against this canvas: the figure is saved at a fixed size, so a label that
 #: overruns is silently clipped rather than shrinking the axes.
-_FIG_W = 4.0
-_FIG_H = 3.0
+#: Printed at its own size as one of three panels in a row (~1/3 of the text
+#: width) beside the exclusive-error and peripherality figures.
+_FIG_W = 1.6
+_FIG_H = 1.75
+
+#: The ratio figure is not in the paper's row and keeps its standalone size:
+#: its x-label does not fit the row's narrow canvas.
+_RATIO_FIG_SIZE = (4.0, 3.0)
 
 #: The spread figure's whiskers. Percentiles, **not** matplotlib's default
 #: 1.5x IQR, and no outliers past them: the whisker ends are p5 and p95 and
@@ -158,11 +164,12 @@ _AXIS = "#c3c2b7"
 #: The ratio axis. A share, so it is the unit interval and nothing else.
 RATIO_BOUNDS = (0.0, 1.0)
 
-_CDF_PT = 1.8
+_CDF_PT = 1.1
 _BOX_W = 0.45
-_EDGE_PT = 0.9
-_MEDIAN_PT = 1.6
-_LABEL_PT = 8.5
+_EDGE_PT = 0.6
+_MEDIAN_PT = 1.1
+_LABEL_PT = 6.0
+_TICK_PT = 5.5
 
 #: Axis labels, in the wording the paper uses. Title case, unlike the repo's
 #: other figures -- these are the strings the section was written against.
@@ -170,7 +177,7 @@ _LABEL_PT = 8.5
 #: and the manifest states it outright.
 _RATIO_LABEL = "Fraction of Correct Predictions per Cell"
 _RATIO_Y_LABEL = "Fraction of Cells"
-_SPREAD_LABEL = "Std. Dev. of Grid Error Distance"
+_SPREAD_LABEL = "Std. dev. of pixel distance\nacross a site's replicas"
 
 
 def output_dir(run_ids: list[str], *, analysis_root: Path | None = None) -> Path:
@@ -399,8 +406,8 @@ def draw_spread(ax, series: list, inks: list[str]) -> None:
 def _finish(ax, labels: list[str] | None) -> None:
     if labels is not None:
         ax.set_xticks(range(1, len(labels) + 1), labels)
-    ax.tick_params(labelsize=_LABEL_PT, colors=_INK, length=3, width=0.7)
-    ax.grid(True, color=_GRID, linewidth=0.7)
+    ax.tick_params(labelsize=_TICK_PT, colors=_INK, length=2, width=0.6)
+    ax.grid(True, color=_GRID, linewidth=0.5)
     ax.set_axisbelow(True)
     ax.set_facecolor(_SURFACE)
     for side in ("top", "right"):
@@ -416,11 +423,16 @@ def render(
     figure: str,
     out_png: Path,
     *,
-    fig_size: tuple[float, float] = (_FIG_W, _FIG_H),
-    dpi: int = 150,
+    fig_size: tuple[float, float] | None = None,
+    dpi: int = 300,
 ) -> Path:
-    """One figure, one panel, no title -- the paper's caption names it."""
+    """One figure, one panel, no title -- the paper's caption names it.
+
+    `fig_size` defaults to the paper row's panel for the spread figure and to
+    `_RATIO_FIG_SIZE` for the ratio figure."""
     validate_figure(figure)
+    if fig_size is None:
+        fig_size = _RATIO_FIG_SIZE if figure == RATIO else (_FIG_W, _FIG_H)
     inks = [method_colors(methods_)[m] for m in methods_]
     labels = [method_label(m) for m in methods_]
 

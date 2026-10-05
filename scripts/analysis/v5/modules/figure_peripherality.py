@@ -122,7 +122,7 @@ MANIFEST_NAME = "peripherality.{pair}.manifest.json"
 #: saved at a fixed canvas, so it is silently clipped -- 4.6 in lost the last
 #: character. `test_the_axis_label_fits` measures it rather than trusting this
 #: number, so shortening or lengthening the label fails loudly.
-_FIG_W = 5.3
+_FIG_W = 1.9
 _FIG_H = 1.75
 
 _SURFACE = "#ffffff"
@@ -132,16 +132,19 @@ _GRID = "#e1e0d9"
 _AXIS = "#c3c2b7"
 
 _BOX_H = 0.55
-_BOX_EDGE_PT = 0.9
-_MEDIAN_PT = 1.6
-_WHISKER_PT = 0.9
+_BOX_EDGE_PT = 0.6
+_MEDIAN_PT = 1.1
+_WHISKER_PT = 0.6
+_LABEL_PT = 6.0
+_TICK_PT = 5.5
 
 #: Outliers as small open circles in the method's own hue: they are sites, not
 #: errors, and on a sample of twenty they are worth seeing individually.
-_FLIER_SIZE = 3.0
+_FLIER_SIZE = 2.0
 
 #: The figure's only text. The repo's axis labels are sentence case.
-_XLABEL = "normalized distance from the TG's seed to the centroid of all seeds"
+#: Two lines: the panel is printed at a third of the text width.
+_XLABEL = "Distance from the TG's seed to\nthe seeds' centroid (normalized)"
 
 
 def output_dir(run_ids: list[str], *, analysis_root: Path | None = None) -> Path:
@@ -248,7 +251,7 @@ def render(
     out_png: Path,
     *,
     fig_size: tuple[float, float] = (_FIG_W, _FIG_H),
-    dpi: int = 150,
+    dpi: int = 300,
 ) -> Path:
     """Two horizontal boxes on one normalised axis. No title -- the paper's
     caption names the figure, as `figure_outcome_bars` settled."""
@@ -274,16 +277,16 @@ def render(
         box.set_linewidth(_BOX_EDGE_PT)
         flier.set(
             marker="o", markersize=_FLIER_SIZE, markerfacecolor="none",
-            markeredgecolor=ink[category], markeredgewidth=0.8, linestyle="none",
+            markeredgecolor=ink[category], markeredgewidth=0.6, linestyle="none",
         )
 
     ax.set_yticks(range(1, len(DRAWN) + 1), [names[c] for c in DRAWN])
     ax.invert_yaxis()
     ax.set_xlim(-0.03, 1.03)
     ax.set_xticks(np.linspace(0.0, 1.0, 5))
-    ax.set_xlabel(_XLABEL, fontsize=8.5, color=_INK)
-    ax.tick_params(labelsize=8.5, colors=_INK, length=3, width=0.7)
-    ax.xaxis.grid(True, color=_GRID, linewidth=0.7)
+    ax.set_xlabel(_XLABEL, fontsize=_LABEL_PT, color=_INK)
+    ax.tick_params(labelsize=_TICK_PT, colors=_INK, length=2, width=0.6)
+    ax.xaxis.grid(True, color=_GRID, linewidth=0.5)
     ax.set_axisbelow(True)
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)

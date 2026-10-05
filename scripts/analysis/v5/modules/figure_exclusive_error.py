@@ -84,16 +84,20 @@ PNG_NAME = "exclusive_error_cdf.{pair}.png"
 CSV_NAME = "exclusive_error_cdf.{pair}.csv"
 MANIFEST_NAME = "exclusive_error_cdf.{pair}.manifest.json"
 
-_FIG_W = 4.0
-_FIG_H = 3.0
+#: Printed at its own size as one of three panels in a row (~1/3 of the text
+#: width) beside the peripherality and stability figures.
+_FIG_W = 1.9
+_FIG_H = 1.75
 
 _SURFACE = "#ffffff"
 _INK = "#0b0b0b"
 _GRID = "#e1e0d9"
 _AXIS = "#c3c2b7"
 
-_CDF_PT = 1.8
-_LABEL_PT = 8.5
+_CDF_PT = 1.1
+_LABEL_PT = 6.0
+_TICK_PT = 5.5
+_LEGEND_PT = 5.0
 
 #: `symlog`'s linear window. One grid, so the zeros are drawn at zero rather
 #: than pushed off a log axis or quietly dropped.
@@ -122,8 +126,9 @@ _END_PT = 1.0
 _HEADROOM = 0.12
 _END_LABEL_Y = 1.02
 
-_X_LABEL = "Grid Error Distance (symlog)"
-_Y_LABEL = "Fraction of Correct Predictions"
+#: The paper's terms: the offset is the pixel distance (\S answer space).
+_X_LABEL = "Pixel distance"
+_Y_LABEL = "CDF"
 
 
 def output_dir(run_ids: list[str], *, analysis_root: Path | None = None) -> Path:
@@ -142,8 +147,8 @@ def pair_slug(method_a: str, method_b: str) -> str:
 def cohort_labels(method_a: str, method_b: str) -> dict[str, str]:
     """`cohort -> legend label`."""
     return {
-        CT.COHORT_ONLY_A: f"{method_label(method_a)} Correct Only",
-        CT.COHORT_ONLY_B: f"{method_label(method_b)} Correct Only",
+        CT.COHORT_ONLY_A: f"{method_label(method_a)} only",
+        CT.COHORT_ONLY_B: f"{method_label(method_b)} only",
     }
 
 
@@ -237,7 +242,7 @@ def render(
     out_png: Path,
     *,
     fig_size: tuple[float, float] = (_FIG_W, _FIG_H),
-    dpi: int = 150,
+    dpi: int = 300,
 ) -> Path:
     """One step curve per exclusive cohort, each against its own denominator."""
     ink = cohort_ink(method_a, method_b)
@@ -273,7 +278,7 @@ def render(
         )
         ax.annotate(
             f"{int(end)}", xy=(end, _END_LABEL_Y), ha="center", va="bottom",
-            fontsize=8.0, color=ink[cohort],
+            fontsize=_TICK_PT, color=ink[cohort],
         )
 
     everything = np.concatenate(drawn)
@@ -287,10 +292,13 @@ def render(
     ax.set_xticks(ticks, [str(t) for t in ticks])
     ax.set_xlabel(_X_LABEL, fontsize=_LABEL_PT, color=_INK)
     ax.set_ylabel(_Y_LABEL, fontsize=_LABEL_PT, color=_INK)
-    ax.tick_params(labelsize=_LABEL_PT, colors=_INK, length=3, width=0.7)
-    ax.grid(True, color=_GRID, linewidth=0.7)
+    ax.tick_params(labelsize=_TICK_PT, colors=_INK, length=2, width=0.6)
+    ax.grid(True, color=_GRID, linewidth=0.5)
     ax.set_axisbelow(True)
-    ax.legend(fontsize=8.0, frameon=False, loc="upper left")
+    # Left of the 1-pixel riser, between the two curves' plateaus: the one
+    # region of the panel no curve or end line crosses.
+    ax.legend(fontsize=_LEGEND_PT, frameon=False, loc="center left",
+              bbox_to_anchor=(0.0, 0.45), handlelength=1.2, borderaxespad=0.2)
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
     for side in ("left", "bottom"):
