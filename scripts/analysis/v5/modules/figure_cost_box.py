@@ -134,11 +134,14 @@ OVERLAY_LABELS: dict[str, str] = {
     "octant_cbg_spl_geo": "OCT-S with GEO CTR",
 }
 
-#: The right axis's label. The channel (heap / alloc) is in the filename and
-#: the manifest; on the paper figure it is a measurement detail, not a label.
-MEMORY_AXIS_LABEL = "Peak memory per TG (MB)"
+#: The axis labels. "per TG" is the title's job (the paper's caption); on a
+#: short panel the longer labels do not fit the axis height. The memory channel
+#: (heap / alloc) is in the filename and the manifest.
+RUNTIME_AXIS_LABEL = "Runtime (ms)"
+MEMORY_AXIS_LABEL = "Peak memory (MB)"
 
-FIGSIZE: tuple[float, float] = (4.6, 3.0)
+#: Short and wide: one text-width row, like the has-X / no-X RTT boxes.
+FIGSIZE: tuple[float, float] = (5.45, 1.5)
 
 CSV_COLUMNS: tuple[str, ...] = (
     "run_id", "dataset", "rows", "method", "method_label", "overlay_on",
@@ -370,7 +373,7 @@ def plot_boxes(
     Slots run cheapest first (`cost_order`). A row whose `overlay_on` names a
     host is drawn on that host's slot as a dashed, unfilled frame. No title:
     the dataset and TG count are in the manifest, and the paper captions it.
-    The key sits top-left, where the cheap methods leave the plot empty.
+    The key sits on one row above the plot, clear of every box.
     """
     from matplotlib.patches import Patch
 
@@ -416,7 +419,7 @@ def plot_boxes(
             for ax, channel, dx in ((ax_rt, RUNTIME, -BOX_OFFSET), (ax_mem, memory, BOX_OFFSET)):
                 _overlay_box(ax, _box(block[(variant, channel)]), xs[i] + dx)
 
-    _style_log_axis(ax_rt, C.COST_SPECS[RUNTIME].axis_label, side="left")
+    _style_log_axis(ax_rt, RUNTIME_AXIS_LABEL, side="left")
     _style_log_axis(ax_mem, MEMORY_AXIS_LABEL, side="right")
     ax_rt.set_xlim(-0.6, len(methods) - 0.4)
     ax_rt.set_xticks(xs)
@@ -445,11 +448,11 @@ def plot_boxes(
               label=OVERLAY_LABELS.get(variant, method_label(variant)))
         for host, variant in overlay_of.items() if host in methods
     ]
-    # On the twin axis, which draws last, so the opaque key covers the gridlines.
+    # One row above the plot: on a short panel an inside key covers OCT-H's top.
     legend = ax_mem.legend(
-        handles=handles, loc="upper left", ncol=1, fontsize=E._LEGEND_PT,
-        frameon=True, facecolor=E._SURFACE, edgecolor="none", framealpha=1.0,
-        handlelength=1.4, borderaxespad=0.4,
+        handles=handles, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=len(handles),
+        fontsize=E._LEGEND_PT, frameon=False, handlelength=1.4, columnspacing=1.6,
+        borderaxespad=0.2,
     )
     for text in legend.get_texts():
         text.set_color(E._INK_2)
