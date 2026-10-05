@@ -162,6 +162,13 @@ analysis:
   plot-champion-upset:
     combo_ids: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, spotter_cbg]
 
+  # S-P has no cost and OCT-S costs what OCT-H does, so neither takes a slot.
+  # OCT-H's geometric-centroid twin is drawn dashed on OCT-H's slot: same LTD
+  # and MTL, so the gap between the two is what the Monte Carlo medoid costs.
+  plot-cost-box:
+    combo_ids: [million_scale_cbg, vanilla_cbg, octant_cbg_hull, spotter_cbg]
+    overlay: {octant_cbg_hull: octant_cbg_hull_geo}
+
   plot-pni-gap: {}
 
   plot-pni-cluster-rtt: {}

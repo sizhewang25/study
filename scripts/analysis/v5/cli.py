@@ -1192,6 +1192,27 @@ def plot_champion_upset_cmd(
         typer.echo(f"wrote {written['png']}")
 
 
+def _cost_box_overlays(runs, outputs_root: Path) -> dict[str, str]:
+    """The `analysis.plot-cost-box.overlay` the runs agree on, else refuse."""
+    from scripts.analysis.v5.modules.labels import declared_overlays
+
+    try:
+        declared = {
+            r.run_id: declared_overlays(r.run_id, "plot-cost-box", outputs_root) for r in runs
+        }
+        distinct = {tuple(sorted(v.items())) if v else None for v in declared.values()}
+        if len(distinct) > 1:
+            raise ValueError(
+                f"analysis.plot-cost-box.overlay differs across the runs this figure "
+                f"draws together: {declared}. Declare one in every run's config (or "
+                f"in none), or pass --overlay."
+            )
+        only = next(iter(distinct), None)
+        return figure_cost_box.parse_overlays([f"{h}={v}" for h, v in only or ()])
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
 @app.command("plot-cost-box")
 def plot_cost_box_cmd(
     run_id: list[str] = typer.Option(None, "--run-id", help="Run (repeatable)."),
@@ -1218,12 +1239,22 @@ def plot_cost_box_cmd(
         "--rows",
         help="all (every evaluated TG, FALLBACK included) or solved (solved_mask).",
     ),
+    overlay: list[str] = typer.Option(
+        None,
+        "--overlay",
+        help=(
+            "HOST=VARIANT: draw VARIANT as dashed frames on HOST's slot instead of "
+            "a slot of its own (e.g. octant_cbg_hull=octant_cbg_hull_geo). Repeatable; "
+            "overrides the configs' analysis.plot-cost-box.overlay."
+        ),
+    ),
     outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
     analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
 ) -> None:
     """Per-TG cost as paired boxes: runtime (left axis) and peak memory (right axis).
 
-    One slot per CBG combo; whiskers at p5/p95, hinges at p25/p75. Runtime sums
+    One slot per CBG combo, cheapest first (p50 runtime, then p50 memory);
+    whiskers at p5/p95, hinges at p25/p75. Runtime sums
     the three stages per TG, memory max-reduces them. S-P has no cost and is not
     drawn. `per-run` writes `cost_box.<heap|alloc>.*` into `<run>/cost/`;
     `pooled` writes the `.pooled.` set into `_cross/cost/<n>-runs-<hash>/`.
@@ -1249,9 +1280,23 @@ def plot_cost_box_cmd(
     )
     if not runs:
         raise typer.BadParameter("pass at least one --run-id, or --all-runs")
+    try:
+        given_overlays = figure_cost_box.parse_overlays(overlay)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     calls = _layout_calls(
         "plot-cost-box", runs, method, layouts, figure_cost_box.PER_RUN, outputs_root
     )
+    # `--overlay` wins, then the config's `overlay`. A per-run figure reads its
+    # own run's; runs drawn together must declare the same one.
+    if not given_overlays:
+        calls = [
+            (sub, lays, chosen, source)
+            for group, lays, chosen, source in calls
+            for sub in (
+                [[r] for r in group] if lays == (figure_cost_box.PER_RUN,) else [group]
+            )
+        ]
     try:
         sets = [
             written
@@ -1264,6 +1309,7 @@ def plot_cost_box_cmd(
                 methods=chosen,
                 analysis_root=analysis_root,
                 source=source,
+                overlays=given_overlays or _cost_box_overlays(group, outputs_root),
             )
         ]
     except (ValueError, MissingArtifactError) as exc:

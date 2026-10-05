@@ -253,3 +253,27 @@ def declared_combo_ids(
     if len(set(value)) != len(value):
         raise ValueError(f"{where} names a combo twice: {value!r}")
     return list(value)
+
+
+#: The key, inside `analysis.plot-cost-box:`, mapping a drawn method to the
+#: variant drawn on its slot (`figure_cost_box`'s overlays).
+OVERLAY_KEY = "overlay"
+
+
+def declared_overlays(
+    run_id: str, command: str, root: Path | str = DEFAULT_OUTPUTS_ROOT
+) -> dict[str, str] | None:
+    """The run's `analysis.<command>.overlay` as `{host: variant}`, or None.
+
+    Malformed raises, as for `combo_ids`: an overlay silently dropped would
+    leave the figure claiming a comparison it does not draw.
+    """
+    value = _node(run_id, ("analysis", command, OVERLAY_KEY), root)
+    if value is None:
+        return None
+    where = f"{run_id}: analysis.{command}.{OVERLAY_KEY}"
+    if not isinstance(value, dict) or not value:
+        raise ValueError(f"{where} must be a non-empty HOST: VARIANT mapping, got {value!r}")
+    if not all(isinstance(k, str) and k and isinstance(v, str) and v for k, v in value.items()):
+        raise ValueError(f"{where} must map combo ids to combo ids, got {value!r}")
+    return dict(value)

@@ -134,3 +134,78 @@ def test_every_artifact_is_written_and_the_manifest_reads_back(runs, tmp_path):
                & (csv["method"] == "octant_cbg_hull")]
     # ltd 1 + mtl 0..100 + ctr 1: p5 over two identical runs is 5 + 2.
     assert float(pipe["p5"].iloc[0]) == pytest.approx(7.0)
+
+
+def _ranked_run(root, run_id="rk"):
+    """Three combos whose cost order differs from TERM_ORDER (SOI, VAN, OCT-H)."""
+    shape = {  # combo -> (MTL ms, MTL heap MB)
+        "million_scale_cbg": (50.0, 1.0),
+        "vanilla_cbg": (10.0, 2.0),
+        "octant_cbg_hull": (10.0, 1.0),
+        "octant_cbg_hull_geo": (5.0, 0.5),
+    }
+    for combo, (ms, mb) in shape.items():
+        d = root / run_id / "generic_csv" / "setup" / "fold_0" / combo
+        d.mkdir(parents=True, exist_ok=True)
+        _frame(combo[:3], 21, ms=np.full(21, ms), heap_mb=np.full(21, mb)).to_parquet(
+            d / "targets.parquet"
+        )
+    return RunPaths(run_id, root, "generic_csv", "setup")
+
+
+def test_slots_rank_by_p50_runtime_then_memory(tmp_path):
+    run = _ranked_run(tmp_path / "bench")
+    overlays = {"octant_cbg_hull": "octant_cbg_hull_geo"}
+    table = B.stats_table(
+        B.load_run(run, memory="memory_heap", rows="all", overlays=overlays),
+        memory="memory_heap", overlays=overlays,
+    )
+    # OCT-H and VAN tie on runtime; OCT-H's lower memory puts it first. The
+    # cheaper overlay variant is not ranked at all.
+    assert B.cost_order(table, memory="memory_heap") == [
+        "octant_cbg_hull", "vanilla_cbg", "million_scale_cbg",
+    ]
+
+
+def test_overlay_variant_takes_no_slot_and_names_its_host(tmp_path):
+    run = _ranked_run(tmp_path / "bench")
+    overlays = {"octant_cbg_hull": "octant_cbg_hull_geo"}
+    assert B.drawn_methods(run, None, overlays)[-1] == "octant_cbg_hull_geo"
+    assert B.drawn_methods(run, None, overlays).count("octant_cbg_hull_geo") == 1
+    table = B.stats_table(
+        B.load_run(run, memory="memory_heap", rows="all", overlays=overlays),
+        memory="memory_heap", overlays=overlays,
+    )
+    hosts = table.groupby("method")["overlay_on"].first().to_dict()
+    assert hosts["octant_cbg_hull_geo"] == "octant_cbg_hull"
+    assert hosts["vanilla_cbg"] == ""
+
+
+def test_overlay_host_must_be_drawn(tmp_path):
+    run = _ranked_run(tmp_path / "bench")
+    with pytest.raises(ValueError, match="not a drawn method"):
+        B.drawn_methods(run, ["vanilla_cbg"], {"octant_cbg_hull": "octant_cbg_hull_geo"})
+    with pytest.raises(ValueError, match="holds no combo"):
+        B.drawn_methods(run, None, {"octant_cbg_hull": "spotter_cbg"})
+
+
+def test_parse_overlays():
+    assert B.parse_overlays(["a = b"]) == {"a": "b"}
+    assert B.parse_overlays(None) == {}
+    for bad, msg in ((["ab"], "HOST=VARIANT"), (["a=a"], "itself"),
+                     (["a=b", "a=c"], "two overlays"), (["a=b", "b=c"], "cannot also host")):
+        with pytest.raises(ValueError, match=msg):
+            B.parse_overlays(bad)
+
+
+def test_overlay_is_in_the_manifest_and_csv(tmp_path):
+    run = _ranked_run(tmp_path / "bench")
+    written = B.build_for_run(
+        run, analysis_root=tmp_path / "analysis",
+        overlays={"octant_cbg_hull": "octant_cbg_hull_geo"},
+    )
+    manifest = json.loads(written["manifest"].read_text())
+    assert manifest["methods"] == ["octant_cbg_hull", "vanilla_cbg", "million_scale_cbg"]
+    assert manifest["overlays"]["octant_cbg_hull"]["variant"] == "octant_cbg_hull_geo"
+    csv = pd.read_csv(written["csv"], keep_default_na=False)
+    assert set(csv.loc[csv["method"] == "octant_cbg_hull_geo", "overlay_on"]) == {"octant_cbg_hull"}

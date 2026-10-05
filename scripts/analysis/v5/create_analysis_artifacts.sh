@@ -188,6 +188,7 @@ fi
 #   classify             needs build-answer-space
 #   plot-error-cdf       needs classify
 #   plot-champion-upset  needs classify
+#   plot-cost-box        needs only targets.parquet
 #   plot-pni-gap         needs only the edge CSV and the config's PNI list
 #   plot-pni-cluster-rtt needs plot-pni-gap
 #   plot-sp-interconnect needs plot-pni-gap
@@ -245,6 +246,11 @@ for R in "${ALL[@]}"; do
   # The same distances, paired per TG: which methods were nearest (within
   # 1 km of the best), and how often they tie. The CDF above cannot say.
   run plot-champion-upset $V5 plot-champion-upset --layout per-run --run-id "$R"
+
+  # What each method pays per TG: runtime and peak heap, cheapest first, with
+  # the config's overlay (OCT-H's geometric-centroid twin) dashed on its host.
+  # Reads targets.parquet only, so it needs nothing above.
+  run plot-cost-box      $V5 plot-cost-box --layout per-run --run-id "$R"
 
   # Whether the S-P gap follows where the operator peers: distance to the
   # nearest PNI against the gap, k-means clusters on that scatter, then RTT
@@ -304,6 +310,8 @@ cross_group() {
     $V5 plot-error-cdf --layout pooled --unanswered cut "${args[@]}"
   run plot-champion-upset-pooled \
     $V5 plot-champion-upset --layout pooled "${args[@]}"
+  run plot-cost-box-pooled \
+    $V5 plot-cost-box --layout pooled "${args[@]}"
 
   # Where those predictions actually landed, on a map: one panel per
   # (method, dataset), the cells drawn under them. Both cohorts -- `correct`

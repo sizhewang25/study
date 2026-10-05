@@ -12,6 +12,25 @@ geolocated TG to get there. One x slot per method, two boxes in it:
 
 Both are reduced per TG *before* any percentile (`cost.per_target_cost`).
 
+## Slots are ranked by cost, not by `TERM_ORDER`
+
+Left to right, cheapest first: by p50 runtime, ties broken by p50 memory,
+both ascending (`cost_order`). The question the figure answers is "what does
+each method pay", so the reader should find the ranking by reading along x
+rather than by comparing box heights across a twin axis. Hue stays pinned to
+identity (`methods.LABEL_HUES`), so a method is still findable by colour when
+the data reorders the slots.
+
+## Overlays: a variant drawn on its host's slot
+
+`--overlay HOST=VARIANT` draws `VARIANT`'s two boxes on `HOST`'s slot as
+unfilled dashed frames in ink, slightly wider than the host's boxes so the
+host stays readable underneath. It is for a variant that differs from its host
+in one stage (`octant_cbg_hull_geo`: OCT-H with a geometric-centroid CTR), so
+the slot shows what that stage costs without spending a slot on a method the
+paper does not rank. A variant takes no slot and does not enter `cost_order`.
+Its rows are in the CSV with `overlay_on` naming the host.
+
 ## Whiskers are p5 and p95, not 1.5 IQR
 
 The boxes are drawn from precomputed stats (`Axes.bxp`), so every mark is a
@@ -72,6 +91,7 @@ from scripts.analysis.v5.modules.methods import (  # noqa: E402
     method_colors,
     method_label,
     method_order,
+    method_sort_key,
     method_term_table,
     methods_source,
 )
@@ -101,10 +121,27 @@ MEMORY_HATCH = "//////"
 #: The key's proxies are drawn in neutral ink: they name the axis, not a method.
 _KEY_INK = E._INK_2
 
+#: An overlay frame's width relative to `BOX_WIDTH`. Wider, so its vertical
+#: edges clear the host box's; at 1.2 the two frames of one slot still do not
+#: touch (0.2 offset - 0.192 half-width).
+OVERLAY_WIDTH_FACTOR = 1.2
+OVERLAY_DASH = (0, (2.4, 1.4))
+
+#: Key text for an overlay variant. Its `methods.METHOD_LABELS` term
+#: (OCT-H-GEO) is not one the paper defines, so the key spells out the change.
+OVERLAY_LABELS: dict[str, str] = {
+    "octant_cbg_hull_geo": "OCT-H with GEO CTR",
+    "octant_cbg_spl_geo": "OCT-S with GEO CTR",
+}
+
+#: The right axis's label. The channel (heap / alloc) is in the filename and
+#: the manifest; on the paper figure it is a measurement detail, not a label.
+MEMORY_AXIS_LABEL = "Peak memory per TG (MB)"
+
 FIGSIZE: tuple[float, float] = (4.6, 3.0)
 
 CSV_COLUMNS: tuple[str, ...] = (
-    "run_id", "dataset", "rows", "method", "method_label",
+    "run_id", "dataset", "rows", "method", "method_label", "overlay_on",
     "channel", "unit", "reduce", "stage",
     "n_rows", "n_solved", "n_null", "n",
     *C.STAT_QUANTILES, "mean", "min", "max",
@@ -134,6 +171,24 @@ def validate(memory: str, rows: str) -> None:
         raise ValueError(f"unknown rows policy {rows!r}; pick from {list(C.COST_ROWS)}")
 
 
+def parse_overlays(specs: list[str] | None) -> dict[str, str]:
+    """`["HOST=VARIANT", ...]` -> `{host: variant}`. One variant per host."""
+    out: dict[str, str] = {}
+    for spec in specs or ():
+        host, sep, variant = spec.partition("=")
+        host, variant = host.strip(), variant.strip()
+        if not sep or not host or not variant:
+            raise ValueError(f"overlay {spec!r} must read HOST=VARIANT")
+        if host == variant:
+            raise ValueError(f"overlay {spec!r} draws a method on itself")
+        if host in out:
+            raise ValueError(f"host {host!r} has two overlays: {out[host]!r}, {variant!r}")
+        out[host] = variant
+    if set(out) & set(out.values()):
+        raise ValueError(f"an overlay variant cannot also host one: {out}")
+    return out
+
+
 # ---- loading ----------------------------------------------------------------
 
 
@@ -155,16 +210,37 @@ def costed_methods(run: RunPaths, methods: list[str] | None) -> list[str]:
     return method_order(wanted)
 
 
+def drawn_methods(
+    run: RunPaths, methods: list[str] | None, overlays: dict[str, str] | None = None
+) -> list[str]:
+    """Slot methods, then overlay variants: everything `load_run` reads.
+
+    A variant is never a slot, even when `methods` is None (every combo on
+    disk) or names it. Its host must be a slot -- an overlay with nothing
+    under it would be a box drawn on no method.
+    """
+    overlays = overlays or {}
+    slots = [m for m in costed_methods(run, methods) if m not in overlays.values()]
+    if missing := sorted(set(overlays) - set(slots)):
+        raise ValueError(f"overlay host {missing} is not a drawn method; slots are {slots}")
+    if overlays:
+        costed_methods(run, list(overlays.values()))  # refuses a variant not on disk
+    return [*slots, *overlays.values()]
+
+
 def load_run(
-    run: RunPaths, *, memory: str, rows: str, methods: list[str] | None = None
+    run: RunPaths, *, memory: str, rows: str, methods: list[str] | None = None,
+    overlays: dict[str, str] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """`{method: per-TG frame}` holding both channels' raw columns, one row mask.
 
     Each frame also gets `run_id`, so a pooled frame keeps each row's origin.
+    Overlay variants are loaded like any method; only the drawing tells them
+    apart.
     """
     specs = (C.COST_SPECS[RUNTIME], C.COST_SPECS[memory])
     out: dict[str, pd.DataFrame] = {}
-    for method in costed_methods(run, methods):
+    for method in drawn_methods(run, methods, overlays):
         df = C.load_cost_frame(run, method, specs, rows="all")
         df["solved"] = solved_mask(df).to_numpy()
         if rows == "solved":
@@ -195,12 +271,16 @@ def stack_runs(by_run: dict[str, dict[str, pd.DataFrame]]) -> dict[str, pd.DataF
 # ---- stats ------------------------------------------------------------------
 
 
-def stats_table(frames: dict[str, pd.DataFrame], *, memory: str) -> pd.DataFrame:
+def stats_table(
+    frames: dict[str, pd.DataFrame], *, memory: str, overlays: dict[str, str] | None = None
+) -> pd.DataFrame:
     """One row per `(method, channel, stage)`, the pipeline row last per channel.
 
     Refuses a channel that is present but entirely NULL (`cost.require_measured`)
     -- a box for something never measured would read as a measurement.
+    `overlay_on` is the host a variant is drawn on, empty for a slot method.
     """
+    host_of = {variant: host for host, variant in (overlays or {}).items()}
     records = []
     for method, df in frames.items():
         for key in (RUNTIME, memory):
@@ -214,6 +294,7 @@ def stats_table(frames: dict[str, pd.DataFrame], *, memory: str) -> pd.DataFrame
                 records.append({
                     "method": method,
                     "method_label": method_label(method),
+                    "overlay_on": host_of.get(method, ""),
                     "channel": key,
                     "unit": spec.unit,
                     "reduce": spec.reduce,
@@ -233,32 +314,75 @@ def _box(block: dict[str, float]) -> dict:
     }
 
 
+def _slot_methods(pipe: pd.DataFrame) -> list[str]:
+    """The pipeline rows' methods that take a slot (not overlay variants)."""
+    return list(pipe.loc[pipe["overlay_on"].fillna("") == "", "method"].unique())
+
+
+def cost_order(table: pd.DataFrame, *, memory: str) -> list[str]:
+    """Slot methods cheapest first: p50 runtime, then p50 memory, ascending.
+
+    `TERM_ORDER` breaks an exact tie on both, so the order is deterministic.
+    Overlay variants are not ranked; they sit on their host's slot.
+    """
+    pipe = table[table["stage"] == C.PIPELINE]
+    p50 = pipe.set_index(["method", "channel"])["p50"]
+    return sorted(
+        _slot_methods(pipe),
+        key=lambda m: (p50[(m, RUNTIME)], p50[(m, memory)], method_sort_key(m)),
+    )
+
+
 # ---- drawing ----------------------------------------------------------------
 
 
 def _style_log_axis(ax, label: str, *, side: str) -> None:
-    from matplotlib.ticker import FuncFormatter, LogLocator
+    from matplotlib.ticker import LogFormatterSciNotation, LogLocator, NullFormatter
 
     ax.set_yscale("log")
     ax.yaxis.set_major_locator(LogLocator(base=10))
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    ax.yaxis.set_major_formatter(LogFormatterSciNotation(base=10))  # 10^k
+    ax.yaxis.set_minor_formatter(NullFormatter())
     ax.set_ylabel(label, fontsize=E._LABEL_PT, color=E._INK_2)
     ax.tick_params(axis="y", which="both", colors=E._MUTED, labelsize=E._TICK_PT)
     ax.spines[side].set_color(E._AXIS)
 
 
+def _overlay_box(ax, stats: dict, x: float) -> None:
+    """A variant's box on its host's position: unfilled, dashed, in ink, on top."""
+    line = {"color": E._INK, "linewidth": 0.9, "linestyle": OVERLAY_DASH}
+    ax.bxp(
+        [stats], positions=[x], widths=BOX_WIDTH * OVERLAY_WIDTH_FACTOR,
+        showfliers=False, patch_artist=True, manage_ticks=False, zorder=4,
+        boxprops={"facecolor": "none", "edgecolor": E._INK, "linewidth": 0.9,
+                  "linestyle": OVERLAY_DASH},
+        medianprops=line, whiskerprops=line,
+        capprops={"color": E._INK, "linewidth": 0.9},
+    )
+
+
 def plot_boxes(
-    table: pd.DataFrame, out_path: Path, *, memory: str, title: str, subtitle: str,
+    table: pd.DataFrame, out_path: Path, *, memory: str,
     figsize: tuple[float, float] = FIGSIZE, dpi: int = 300,
 ) -> Path:
-    """One slot per method: runtime (left axis, solid), memory (right, hatched)."""
+    """One slot per method: runtime (left axis, solid), memory (right, hatched).
+
+    Slots run cheapest first (`cost_order`). A row whose `overlay_on` names a
+    host is drawn on that host's slot as a dashed, unfilled frame. No title:
+    the dataset and TG count are in the manifest, and the paper captions it.
+    The key sits top-left, where the cheap methods leave the plot empty.
+    """
     from matplotlib.patches import Patch
 
     pipe = table[table["stage"] == C.PIPELINE]
-    methods = method_order(pipe["method"].unique())
+    methods = cost_order(table, memory=memory)
     colors = method_colors(methods)
     block = {
         (r.method, r.channel): r._asdict() for r in pipe.itertuples(index=False)
+    }
+    overlay_of = {
+        r.overlay_on: r.method
+        for r in pipe.itertuples(index=False) if isinstance(r.overlay_on, str) and r.overlay_on
     }
     xs = np.arange(len(methods), dtype=float)
 
@@ -288,9 +412,12 @@ def plot_boxes(
             whiskerprops={"color": hue, "linewidth": 0.9, "linestyle": (0, (2, 1.2))},
             capprops={"color": hue, "linewidth": 0.9},
         )
+        if (variant := overlay_of.get(method)) is not None:
+            for ax, channel, dx in ((ax_rt, RUNTIME, -BOX_OFFSET), (ax_mem, memory, BOX_OFFSET)):
+                _overlay_box(ax, _box(block[(variant, channel)]), xs[i] + dx)
 
     _style_log_axis(ax_rt, C.COST_SPECS[RUNTIME].axis_label, side="left")
-    _style_log_axis(ax_mem, C.COST_SPECS[memory].axis_label, side="right")
+    _style_log_axis(ax_mem, MEMORY_AXIS_LABEL, side="right")
     ax_rt.set_xlim(-0.6, len(methods) - 0.4)
     ax_rt.set_xticks(xs)
     ax_rt.set_xticklabels([method_label(m) for m in methods], fontsize=E._TICK_PT + 0.5,
@@ -313,18 +440,19 @@ def plot_boxes(
         Patch(facecolor=E._SURFACE, edgecolor=_KEY_INK, hatch=MEMORY_HATCH,
               label="Peak memory (right axis)"),
     ]
-    legend = ax_rt.legend(
-        handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=2,
-        fontsize=E._LEGEND_PT, frameon=False, handlelength=1.4, columnspacing=1.6,
+    handles += [
+        Patch(facecolor="none", edgecolor=E._INK, linestyle=OVERLAY_DASH, linewidth=0.9,
+              label=OVERLAY_LABELS.get(variant, method_label(variant)))
+        for host, variant in overlay_of.items() if host in methods
+    ]
+    # On the twin axis, which draws last, so the opaque key covers the gridlines.
+    legend = ax_mem.legend(
+        handles=handles, loc="upper left", ncol=1, fontsize=E._LEGEND_PT,
+        frameon=True, facecolor=E._SURFACE, edgecolor="none", framealpha=1.0,
+        handlelength=1.4, borderaxespad=0.4,
     )
     for text in legend.get_texts():
         text.set_color(E._INK_2)
-
-    ax_rt.set_title(title, fontsize=E._TITLE_PT, fontweight="bold", color=E._INK, pad=9)
-    ax_rt.annotate(
-        subtitle, xy=(0.5, 1.005), xycoords="axes fraction",
-        ha="center", va="bottom", fontsize=E._SUBTITLE_PT, color=E._INK_2,
-    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight", facecolor=E._SURFACE)
     plt.close(fig)
@@ -339,21 +467,34 @@ def _manifest(
     memory: str, rows: str, per_run: dict[str, int], source: str = "all",
 ) -> str:
     pipe = table[table["stage"] == C.PIPELINE]
-    methods = method_order(pipe["method"].unique())
+    slots = cost_order(table, memory=memory)
+    overlays = {
+        r.overlay_on: r.method
+        for r in pipe.itertuples(index=False) if isinstance(r.overlay_on, str) and r.overlay_on
+    }
+    methods = [*slots, *overlays.values()]
     body = {
         "figure": "cost_box",
         "layout": layout,
         "run_ids": sorted(run_ids),
         "dataset": cross.dataset_slug(run_ids),
         "artifacts": names,
-        "methods": methods,
+        "methods": slots,
+        "overlays": {
+            host: {
+                "variant": variant,
+                "label": OVERLAY_LABELS.get(variant, method_label(variant)),
+                "mark": "dashed unfilled frame in ink on the host's slot, both axes",
+            }
+            for host, variant in overlays.items()
+        },
         "methods_source": source,
         "method_terms": method_term_table(methods),
         "excluded": {
             SHORTEST_PING: "not a combo: no LTD/MTL/CTR stage is timed or measured",
         },
         "axes": {
-            "x": "method, in methods.TERM_ORDER",
+            "x": "method, cheapest first: p50 runtime, then p50 memory, ascending",
             "y_left": {
                 "channel": RUNTIME, "unit": "ms", "scale": "log",
                 "columns": list(C.COST_SPECS[RUNTIME].stage_cols),
@@ -405,20 +546,18 @@ def _manifest(
 
 def _write(
     frames: dict[str, pd.DataFrame], out_dir: Path, layout: str, *,
-    run_ids: list[str], memory: str, rows: str, subtitle: str, source: str = "all",
+    run_ids: list[str], memory: str, rows: str, source: str = "all",
+    overlays: dict[str, str] | None = None,
 ) -> dict[str, Path]:
     names = artifact_names(layout, memory, rows)
     out_dir.mkdir(parents=True, exist_ok=True)
-    table = stats_table(frames, memory=memory)
+    table = stats_table(frames, memory=memory, overlays=overlays)
     table.insert(0, "run_id", "+".join(sorted(run_ids)))
     table.insert(1, "dataset", cross.dataset_slug(run_ids))
     table.insert(2, "rows", rows)
     written = {k: out_dir / v for k, v in names.items()}
     table[list(CSV_COLUMNS)].to_csv(written["csv"], index=False)
-    plot_boxes(
-        table, written["png"], memory=memory,
-        title="Cost per geolocated TG", subtitle=subtitle,
-    )
+    plot_boxes(table, written["png"], memory=memory)
     any_frame = next(iter(frames.values()))
     per_run = {str(k): int(v) for k, v in any_frame["run_id"].value_counts().sort_index().items()}
     written["manifest"].write_text(
@@ -428,24 +567,18 @@ def _write(
     return written
 
 
-def _subtitle(name: str, n: int, rows: str) -> str:
-    return f"{name} · n={n:,} TGs · {'all rows' if rows == 'all' else 'solved rows'}"
-
-
 def build_for_run(
     run: RunPaths, *, memory: str = DEFAULT_MEMORY, rows: str = DEFAULT_ROWS,
     methods: list[str] | None = None, analysis_root: Path | None = None,
-    source: str | None = None,
+    source: str | None = None, overlays: dict[str, str] | None = None,
 ) -> dict[str, Path]:
     """One run's figure, CSV and manifest, into `<run>/cost/`."""
     validate(memory, rows)
-    frames = load_run(run, memory=memory, rows=rows, methods=methods)
-    n = len(next(iter(frames.values())))
+    frames = load_run(run, memory=memory, rows=rows, methods=methods, overlays=overlays)
     return _write(
         frames, run.analysis_dir(COST_KIND, root=analysis_root), PER_RUN,
         run_ids=[run.run_id], memory=memory, rows=rows,
-        subtitle=_subtitle(cross.short_dataset(run.run_id), n, rows),
-        source=methods_source(methods, source),
+        source=methods_source(methods, source), overlays=overlays,
     )
 
 
@@ -453,7 +586,7 @@ def build_for_runs(
     runs: list[RunPaths], *, layouts: tuple[str, ...] = (PER_RUN,),
     memory: str = DEFAULT_MEMORY, rows: str = DEFAULT_ROWS,
     methods: list[str] | None = None, analysis_root: Path | None = None,
-    source: str | None = None,
+    source: str | None = None, overlays: dict[str, str] | None = None,
 ) -> list[dict[str, Path]]:
     """Render the requested layouts; one artifact set per figure, layout-major."""
     ordered = tuple(dict.fromkeys(layouts)) or (PER_RUN,)
@@ -467,22 +600,22 @@ def build_for_runs(
         if layout == PER_RUN:
             out.extend(
                 build_for_run(run, memory=memory, rows=rows, methods=methods,
-                              analysis_root=analysis_root, source=source)
+                              analysis_root=analysis_root, source=source, overlays=overlays)
                 for run in runs
             )
             continue
         by_run = {
-            run.run_id: load_run(run, memory=memory, rows=rows, methods=methods)
+            run.run_id: load_run(
+                run, memory=memory, rows=rows, methods=methods, overlays=overlays
+            )
             for run in runs
         }
         frames = stack_runs(by_run)
-        n = len(next(iter(frames.values())))
         out.append(
             _write(
                 frames, cross.cross_dir(run_ids, analysis_root=analysis_root, kind=COST_KIND),
                 POOLED, run_ids=run_ids, memory=memory, rows=rows,
-                subtitle=_subtitle(f"{cross.dataset_slug(run_ids).upper()} pooled", n, rows),
-                source=methods_source(methods, source),
+                source=methods_source(methods, source), overlays=overlays,
             )
         )
     return out
