@@ -24,7 +24,8 @@ the data reorders the slots.
 ## Overlays: a variant drawn on its host's slot
 
 `--overlay HOST=VARIANT` draws `VARIANT`'s two boxes on `HOST`'s slot as
-unfilled dashed frames in ink, slightly wider than the host's boxes so the
+unfilled dashed frames in ink (the memory frame keeps the memory hatch),
+slightly wider than the host's boxes so the
 host stays readable underneath. It is for a variant that differs from its host
 in one stage (`octant_cbg_hull_geo`: OCT-H with a geometric-centroid CTR), so
 the slot shows what that stage costs without spending a slot on a method the
@@ -351,14 +352,18 @@ def _style_log_axis(ax, label: str, *, side: str) -> None:
     ax.spines[side].set_color(E._AXIS)
 
 
-def _overlay_box(ax, stats: dict, x: float) -> None:
-    """A variant's box on its host's position: unfilled, dashed, in ink, on top."""
+def _overlay_box(ax, stats: dict, x: float, *, hatch: str | None = None) -> None:
+    """A variant's box on its host's position: unfilled, dashed, in ink, on top.
+
+    `hatch` carries the channel's texture onto the frame (the memory box's
+    diagonal), so an overlay box reads as runtime or memory like any other.
+    """
     line = {"color": E._INK, "linewidth": 0.9, "linestyle": OVERLAY_DASH}
     ax.bxp(
         [stats], positions=[x], widths=BOX_WIDTH * OVERLAY_WIDTH_FACTOR,
         showfliers=False, patch_artist=True, manage_ticks=False, zorder=4,
         boxprops={"facecolor": "none", "edgecolor": E._INK, "linewidth": 0.9,
-                  "linestyle": OVERLAY_DASH},
+                  "linestyle": OVERLAY_DASH, **({"hatch": hatch} if hatch else {})},
         medianprops=line, whiskerprops=line,
         capprops={"color": E._INK, "linewidth": 0.9},
     )
@@ -416,8 +421,9 @@ def plot_boxes(
             capprops={"color": hue, "linewidth": 0.9},
         )
         if (variant := overlay_of.get(method)) is not None:
-            for ax, channel, dx in ((ax_rt, RUNTIME, -BOX_OFFSET), (ax_mem, memory, BOX_OFFSET)):
-                _overlay_box(ax, _box(block[(variant, channel)]), xs[i] + dx)
+            for ax, channel, dx, hatch in ((ax_rt, RUNTIME, -BOX_OFFSET, None),
+                                           (ax_mem, memory, BOX_OFFSET, MEMORY_HATCH)):
+                _overlay_box(ax, _box(block[(variant, channel)]), xs[i] + dx, hatch=hatch)
 
     _style_log_axis(ax_rt, RUNTIME_AXIS_LABEL, side="left")
     _style_log_axis(ax_mem, MEMORY_AXIS_LABEL, side="right")
@@ -487,7 +493,10 @@ def _manifest(
             host: {
                 "variant": variant,
                 "label": OVERLAY_LABELS.get(variant, method_label(variant)),
-                "mark": "dashed unfilled frame in ink on the host's slot, both axes",
+                "mark": (
+                    "dashed unfilled frame in ink on the host's slot, both axes; the "
+                    "memory frame carries the memory hatch"
+                ),
             }
             for host, variant in overlays.items()
         },
