@@ -230,14 +230,17 @@ for R in "${ALL[@]}"; do
   #   exclude  (the default) drops the rows a method did not answer, so each
   #            curve rests on its own population. The only one that joins to
   #            accuracy.csv.
-  #   sentinel parks them at 10,000 km so every curve is drawn over the same
-  #            denominator and the height at the sentinel reads as the
-  #            method's refusal rate -- which is the whole story for Vanilla.
+  #   cut      keeps them in the denominator and stops each curve at its last
+  #            answer, so the height where a curve ends is the method's
+  #            answer rate -- which is the whole story for Vanilla. The
+  #            paper's variant; it replaced the 10,000 km sentinel, which
+  #            cannot sit on a normalized axis.
   #
-  # They write different filenames, so neither overwrites the other.
+  # A run whose config declares analysis.common.dist_norm_km is drawn
+  # normalized (`.norm.` files). Different filenames, so nothing overwrites.
   run plot-error-cdf     $V5 plot-error-cdf --layout per-run --run-id "$R"
-  run plot-error-cdf[sentinel] \
-    $V5 plot-error-cdf --layout per-run --run-id "$R" --unanswered sentinel
+  run plot-error-cdf[cut] \
+    $V5 plot-error-cdf --layout per-run --run-id "$R" --unanswered cut
 
   # The same distances, paired per TG: which methods were nearest (within
   # 1 km of the best), and how often they tie. The CDF above cannot say.
@@ -293,18 +296,12 @@ cross_group() {
     --layout pooled --layout compare --mode bounded --mode unbounded "${args[@]}"
 
   # The pooled error distribution, beside the pooled bars. Both unanswered
-  # policies again, for the same reason as the per-run pass. The sentinel
-  # variant draws every method whatever the configs narrow to: it is the
-  # figure that shows each method's refusal rate, so none is left off it.
-  # Methods are read off the group's first run; a run missing one fails the
-  # pooled load rather than pooling a subset.
+  # policies again, for the same reason as the per-run pass, and the methods
+  # the configs narrow to (no `_geo` combos). Normalized when the group's
+  # configs declare one dist_norm_km; groups that disagree fail here.
   run plot-error-cdf-pooled $V5 plot-error-cdf --layout pooled "${args[@]}"
-  if methods_except "$1"; then
-    run plot-error-cdf-pooled[sentinel] \
-      $V5 plot-error-cdf --layout pooled --unanswered sentinel "${METHOD_ARGS[@]}" "${args[@]}"
-  else
-    FAILED+=("$R :: plot-error-cdf-pooled[sentinel] (could not list $1's methods)")
-  fi
+  run plot-error-cdf-pooled[cut] \
+    $V5 plot-error-cdf --layout pooled --unanswered cut "${args[@]}"
   run plot-champion-upset-pooled \
     $V5 plot-champion-upset --layout pooled "${args[@]}"
 

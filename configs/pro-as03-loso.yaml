@@ -133,6 +133,15 @@ analysis:
     dataset_label: PRO-LOSO AS-C
     grid: healpix
     resolution: [128]
+    # Every distance axis is min-max normalized with these bounds, so no
+    # figure prints an absolute distance: min 0 (a prediction on its TG), max
+    # the footprint span D, the largest great-circle distance between any two
+    # VPs or sites pooled over the three pro datasets (4,387.257 km; computed
+    # by scripts/analysis/v5/modules/footprint.py). The same bounds in every
+    # pro config.
+    dist_norm_km:
+      min: 0.0
+      max: 4387.257
 
     pni_csv: datasets/pni/as03-us-pni.approx.csv
     # peer_asn: <fill from the dashboard; not recoverable from this repo>

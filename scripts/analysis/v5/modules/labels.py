@@ -171,6 +171,62 @@ def declared_pni_csv(run_id: str, root: Path | str = DEFAULT_OUTPUTS_ROOT) -> Pa
     return None if value is None else _under_repo(str(value))
 
 
+#: Where a run's RTT normalizer is declared: the ms every RTT axis is divided
+#: by. Read by `plot-pni-cluster-rtt`.
+RTT_NORM_PATH = ("analysis", "common", "rtt_norm_ms")
+
+
+def declared_rtt_norm_ms(run_id: str, root: Path | str = DEFAULT_OUTPUTS_ROOT) -> float | None:
+    """The run's declared `analysis.common.rtt_norm_ms`, or None for "plot in ms".
+
+    A value that is there but not a positive number raises, as `combo_ids`
+    does: falling back to ms would print the absolute RTTs the normalizer
+    exists to hide, and the figure would not say so.
+    """
+    value = _node(run_id, RTT_NORM_PATH, root)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not value > 0:
+        raise ValueError(f"{run_id}: analysis.common.rtt_norm_ms must be a positive number of ms, got {value!r}")
+    return float(value)
+
+
+#: Where a run's distance normalizer is declared: the `{min, max}` km bounds
+#: every distance axis is min-max normalized with. Read by `plot-error-cdf`.
+DIST_NORM_PATH = ("analysis", "common", "dist_norm_km")
+
+
+def declared_dist_norm_km(
+    run_id: str, root: Path | str = DEFAULT_OUTPUTS_ROOT
+) -> tuple[float, float] | None:
+    """The run's declared `analysis.common.dist_norm_km` as `(min, max)`, or
+    None for "plot in km".
+
+    Both bounds are required and must satisfy 0 <= min < max. Anything else
+    raises, as `rtt_norm_ms` does: falling back to km would print the absolute
+    distances the normalizer exists to hide, and the figure would not say so.
+    """
+    value = _node(run_id, DIST_NORM_PATH, root)
+    if value is None:
+        return None
+
+    def number(v) -> bool:
+        return not isinstance(v, bool) and isinstance(v, (int, float))
+
+    if not isinstance(value, dict) or set(value) != {"min", "max"}:
+        raise ValueError(
+            f"{run_id}: analysis.common.dist_norm_km must be a mapping with exactly "
+            f"`min` and `max` (km), got {value!r}"
+        )
+    lo, hi = value["min"], value["max"]
+    if not (number(lo) and number(hi) and 0 <= lo < hi):
+        raise ValueError(
+            f"{run_id}: analysis.common.dist_norm_km needs numbers with "
+            f"0 <= min < max, got min={lo!r} max={hi!r}"
+        )
+    return float(lo), float(hi)
+
+
 #: The key, inside a command's own `analysis.<command>:` block, naming the
 #: methods that command's figures draw.
 COMBO_IDS_KEY = "combo_ids"

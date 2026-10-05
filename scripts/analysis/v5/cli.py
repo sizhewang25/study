@@ -937,10 +937,11 @@ def plot_ripe_vs_databases_cmd(
     validated six-term palette. Writes `ripe_vs_databases.{png,csv,manifest.json}`
     into `ripe-vs-databases/`. Needs `classify` on the run.
     """
-    if unanswered not in figure_error_cdf.UNANSWERED_POLICIES:
+    # `cut` is the error CDF's alone: this figure has no `.cut.` artifact name.
+    db_policies = (figure_error_cdf.EXCLUDE, figure_error_cdf.SENTINEL)
+    if unanswered not in db_policies:
         raise typer.BadParameter(
-            f"unknown --unanswered {unanswered!r}; pick from "
-            f"{list(figure_error_cdf.UNANSWERED_POLICIES)}"
+            f"unknown --unanswered {unanswered!r}; pick from {list(db_policies)}"
         )
     unknown = [d for d in (database or ()) if d not in ripe_vs_databases.DATABASES]
     if unknown:
@@ -994,9 +995,11 @@ def plot_error_cdf_cmd(
         ),
     ),
     min_x_km: float = typer.Option(
-        figure_error_cdf.X_MIN_KM,
+        None,
         "--min-x-km",
-        help="Lower bound of the log x axis (km). Distances below it are clamped "
+        help=f"Lower bound of the log x axis (km; in the normalized unit when the "
+        f"config declares analysis.common.dist_norm_km). Default: {figure_error_cdf.X_MIN_KM} km, or "
+        f"{figure_error_cdf.X_MIN_NORM} normalized. Values below it are clamped "
         "up in the drawn curve only; the CSV is unclamped.",
     ),
     max_x_km: float = typer.Option(
@@ -1005,7 +1008,8 @@ def plot_error_cdf_cmd(
         help=(
             f"Upper bound (km). Default: {figure_error_cdf.DEFAULT_X_MAX_KM:,.0f} under "
             f"--unanswered {figure_error_cdf.EXCLUDE}, {figure_error_cdf.SENTINEL_X_MAX_KM:,.0f} "
-            f"under {figure_error_cdf.SENTINEL}, which has to clear the sentinel."
+            f"under {figure_error_cdf.SENTINEL}, which has to clear the sentinel; "
+            f"{figure_error_cdf.X_MAX_NORM:g} (the declared max) when normalized."
         ),
     ),
     unanswered: str = typer.Option(
@@ -1016,8 +1020,10 @@ def plot_error_cdf_cmd(
             f"each curve rests on its own population (the default; the only one that "
             f"joins to accuracy.csv). {figure_error_cdf.SENTINEL}: park them at "
             f"--sentinel-km so every curve is drawn over the same denominator and the "
-            f"height at the sentinel is the method's answer rate. Writes "
-            f"`.sentinel.` filenames, so it does not overwrite the other."
+            f"height at the sentinel is the method's answer rate. "
+            f"{figure_error_cdf.CUT}: keep them in the denominator but draw nothing, "
+            f"so each curve stops at its answer rate (the paper's policy). Each "
+            f"non-default policy writes its own `.<policy>.` filenames."
         ),
     ),
     sentinel_km: float = typer.Option(
@@ -1042,7 +1048,12 @@ def plot_error_cdf_cmd(
     `--unanswered sentinel` adds the `.sentinel.` triple beside them: the same
     curves over the whole TG roster, unanswered rows at 10,000 km, so refusal
     rates are readable off the figure. Its percentiles are censored and do not
-    join to `accuracy.csv`.
+    join to `accuracy.csv`. `--unanswered cut` keeps them in the denominator
+    but draws nothing, so each curve stops at its answer rate (`.cut.`).
+
+    Distances are min-max normalized, in units of 1e-3, when the config
+    declares `analysis.common.dist_norm_km: {min, max}` (`.norm.` filenames;
+    pooled runs must declare the same bounds; not with `sentinel`).
     """
     if all_runs and run_id:
         raise typer.BadParameter("pass --run-id or --all-runs, not both")
@@ -1068,6 +1079,9 @@ def plot_error_cdf_cmd(
         "plot-error-cdf", runs, method, layouts, figure_error_cdf.PER_RUN, outputs_root
     )
     try:
+        from scripts.analysis.v5.modules.labels import declared_dist_norm_km
+
+        dist_norm = {r.run_id: declared_dist_norm_km(r.run_id, outputs_root) for r in runs}
         pngs = [
             png
             for group, lays, chosen, source in calls
@@ -1082,6 +1096,7 @@ def plot_error_cdf_cmd(
                 unanswered=unanswered,
                 sentinel_km=sentinel_km,
                 source=source,
+                dist_norm_km=dist_norm,
             )
         ]
     except (ValueError, MissingArtifactError) as exc:
@@ -1557,16 +1572,20 @@ def plot_pni_cluster_rtt_cmd(
     Reads the clusters CSV off disk rather than re-clustering, and refuses it
     if the run set, any run's PNI list or edge CSV sha256, the TG set or any
     TG's smallest RTT no longer matches. Whiskers p5/p95; TGs beyond them
-    are drawn as open circles.
+    are drawn as open circles. RTTs are divided by the config's
+    `analysis.common.rtt_norm_ms` when it declares one.
 
     Writes `pni_cluster_rtt.{png,csv,manifest.json}` beside the clusters.
     """
     _refuse_combo_ids("plot-pni-cluster-rtt", run_id or [], outputs_root)
     try:
         runs, pni_csvs, layouts, source_csvs = _pni_inputs(run_id, layout, pni_csv, source_csv, outputs_root)
+        from scripts.analysis.v5.modules.labels import declared_rtt_norm_ms
+
         pngs = figure_pni_cluster_rtt.build_for_runs(
             runs, pni_csvs, layouts=layouts,
             analysis_root=analysis_root, source_csvs=source_csvs,
+            rtt_norm_ms={r.run_id: declared_rtt_norm_ms(r.run_id, outputs_root) for r in runs},
         )
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc

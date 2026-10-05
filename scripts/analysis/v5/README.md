@@ -254,6 +254,24 @@ distance. These artifacts take a `.sentinel.` infix and carry
 `unanswered_policy`/`sentinel_km` columns, because **only the default files
 join to `accuracy.csv`**.
 
+The paper's variant is `--unanswered cut` on a run whose config declares
+`analysis.common.dist_norm_km`, written as `error_cdf[.pooled].norm.cut.*`.
+`cut` keeps unanswered rows in the denominator but draws nothing for them, so
+each curve stops at its answer rate (VAN at 0.78) with an empty tail, and a
+percentile past the answered share is NaN, not a sentinel.
+
+`dist_norm_km: {min: 0.0, max: 4387.257}` (every pro config, the way
+`rtt_norm_ms` is declared) min-max normalizes every distance:
+(d - min) / (max - min), in units of 10^-3. `max` is the footprint span D, the
+largest great-circle distance between any two distinct VP or site coordinates
+pooled over the three pro datasets, computed by
+`python -m scripts.analysis.v5.modules.footprint <run ids>` and confidential
+in the paper. The axis runs 0.01–1,000 and ends at `max`, the km guides are
+dropped, the percentile columns become `pred_dist_to_tg_norm_e3_p<p>` beside
+`dist_norm_min_km`/`dist_norm_max_km`, and an error outside the bounds is
+refused. Pooled runs must declare the same bounds; `sentinel` is refused on a
+normalized run. The panel has no title.
+
 **`plot-champion-upset`** is the error CDF, paired. The CDF is unpaired, since each
 curve is one method's marginal, so it cannot say which method was nearest on
 a given TG or how often methods tie there. On each TG, every method whose
@@ -734,6 +752,8 @@ python -m scripts.analysis.v5.cli plot-error-cdf --layout pooled --unanswered se
     --run-id as01-260728-260802-mesh \
     --run-id as02-260728-260802-mesh \
     --run-id as03-260728-260802-mesh
+python -m scripts.analysis.v5.cli plot-error-cdf --layout pooled --unanswered cut \
+    --run-id pro-as01-mesh --run-id pro-as02-mesh --run-id pro-as03-mesh
 python -m scripts.analysis.v5.cli plot-vp-proximity -c p5 -c p25 -c all \
     --run-id as01-260728-260802-mesh \
     --run-id as02-260728-260802-mesh \

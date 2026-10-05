@@ -50,6 +50,34 @@ footnote and the labelled sentinel line carry that reading; the CSV declares
 so the two populations cannot overwrite each other. Only the `exclude` files
 join to `accuracy.csv`.
 
+## ...or kept in the denominator and the line cut where the answers run out
+
+`--unanswered cut` is the paper's policy. Unanswered rows stay in the
+denominator, as under `sentinel`, but nothing is drawn for them: a method's
+curve stops at its last answered TG, at the height of its answer rate, and the
+tail is left empty. There is no made-up distance on the axis, and a percentile
+above the answered share is undefined -- NaN in the CSV, not a sentinel. The
+artifacts take a `.cut.` infix.
+
+## Normalized by declared bounds, in units of 10^-3
+
+Absolute distances are confidential. When the run's config declares
+`analysis.common.dist_norm_km: {min, max}`, every distance d is drawn as
+(d - min) / (max - min) in units of 10^-3: the paper's fixed-bound min-max
+normalization, min 0 and max the footprint span D (the largest great-circle
+distance between any two VPs or sites over the paper's datasets;
+`footprint.py` computes it). The km reference verticals are dropped (they
+would print km), the percentile columns are renamed `..._norm_e3_p<p>`, and a
+distance outside [min, max] is refused, because the paper states none exists.
+The artifacts take a `.norm.` infix. Pooled runs must declare the same bounds.
+Not combinable with `sentinel`, whose 10,000 km lies beyond D. Without a
+declaration, the figure is in km as before.
+
+## No title
+
+The panel carries curves, a key and two axis names. Which runs, how many TGs
+and which row policy are in the manifest; the paper's caption says the rest.
+
 ## Pooling concatenates rows; it cannot average percentiles
 
 `--layout pooled` draws one curve per method over every selected run's solved
@@ -134,8 +162,11 @@ Y_TICKS: tuple[float, ...] = (0.0, 0.25, 0.5, 0.75, 1.0)
 X_LABEL = "Distance (km)"
 Y_LABEL = "CDF"
 
-#: Reference verticals (km). Neutral ink, **not** green/red: green is the
-#: Octant family and red is SPO, so coloured guides would read as series.
+#: When normalized. "x10^-3" because the values are d / D times 1,000.
+X_LABEL_NORM = r"Normalized error distance ($\times 10^{-3}$)"
+
+#: Reference verticals (km). Neutral ink, **not** a series hue: every method
+#: hue would read as a curve. Drawn on the km axis only.
 THRESHOLDS_KM: tuple[int, ...] = (100, 500, 1000)
 
 #: Fixed x range, both bounds, so per-run and pooled figures share one axis.
@@ -144,10 +175,20 @@ THRESHOLDS_KM: tuple[int, ...] = (100, 500, 1000)
 X_MIN_KM = 0.1
 DEFAULT_X_MAX_KM = 10_000.0
 
+#: The normalized axis, in units of 10^-3 of (max - min): five decades like the
+#: km axis. The right edge is the declared max; any value beyond it is refused.
+NORM_SCALE = 1_000.0
+X_MIN_NORM = 0.01
+X_MAX_NORM = NORM_SCALE
+
+#: Percentile-column infix when normalized, in place of `_km_`.
+NORM_COLUMN = "pred_dist_to_tg_norm_e3"
+
 #: What to do with a TG the method did not answer.
 EXCLUDE = "exclude"
 SENTINEL = "sentinel"
-UNANSWERED_POLICIES: tuple[str, ...] = (EXCLUDE, SENTINEL)
+CUT = "cut"
+UNANSWERED_POLICIES: tuple[str, ...] = (EXCLUDE, SENTINEL, CUT)
 
 #: Where `sentinel` parks an unanswered row. Beyond any error a method could
 #: plausibly *make* on this roster, and short of the 20,015 km antipodal
@@ -167,19 +208,24 @@ LAYOUTS: tuple[str, ...] = (PER_RUN, POOLED)
 STEM = "error_cdf"
 
 
-def artifact_names(layout: str, policy: str = EXCLUDE) -> tuple[str, str, str]:
-    """`(png, csv, manifest)` for a layout and unanswered policy.
+def artifact_names(
+    layout: str, policy: str = EXCLUDE, normalized: bool = False
+) -> tuple[str, str, str]:
+    """`(png, csv, manifest)` for a layout, unanswered policy and x unit.
 
     No `{slug}`: the figure does not vary with the rung, so the name does not
     pretend it might. It *does* vary with the policy -- same axes, different
-    population and different percentiles -- so `sentinel` takes its own infix
-    rather than overwriting the file `accuracy.csv` joins to.
+    population and different percentiles -- so `sentinel` and `cut` take their
+    own infix rather than overwriting the file `accuracy.csv` joins to; and
+    with the unit, so a normalized figure takes `.norm.`.
     """
     parts = [STEM]
     if layout == POOLED:
         parts.append("pooled")
-    if policy == SENTINEL:
-        parts.append(SENTINEL)
+    if normalized:
+        parts.append("norm")
+    if policy != EXCLUDE:
+        parts.append(policy)
     stem = ".".join(parts)
     return (f"{stem}.png", f"{stem}.csv", f"{stem}.manifest.json")
 
@@ -401,6 +447,17 @@ def censor(
     out: dict[str, dict] = {}
     for method, entry in loaded.items():
         values = np.asarray(entry["errors"], dtype=float)
+        if policy == CUT:
+            # Nothing is appended: the rows stay out of `errors` and in the
+            # denominator, which `n_total` carries to the curve and the table.
+            out[method] = {
+                **entry,
+                "errors": values,
+                "n_total": int(entry["n_tgs"]),
+                "n_censored": int(entry["n_tgs"] - len(values)),
+                "n_real_at_or_above_sentinel": 0,
+            }
+            continue
         # From n_tgs, not n_failed + n_no_distance: the identity the figure
         # needs is len(errors) == n_tgs, so derive it from the denominator.
         n_censored = int(entry["n_tgs"] - len(values)) if policy == SENTINEL else 0
@@ -422,19 +479,74 @@ def censor(
     return out
 
 
+def normalize(loaded: dict[str, dict], bounds: tuple[float, float]) -> dict[str, dict]:
+    """Every distance as (d - min) / (max - min) in units of 10^-3.
+
+    Refuses a value outside the bounds: the paper states that no method's
+    error exceeds D, and the axis ends there, so a value past it is either a
+    wrong declaration or a claim the text can no longer make.
+    """
+    lo, hi = (float(b) for b in bounds)
+    if not 0 <= lo < hi:
+        raise ValueError(f"normalization bounds need 0 <= min < max, got {bounds}")
+    out: dict[str, dict] = {}
+    for method, entry in loaded.items():
+        values = np.asarray(entry["errors"], dtype=float)
+        outside = (values < lo) | (values > hi)
+        if outside.any():
+            raise ValueError(
+                f"{method}: {int(outside.sum())} errors fall outside the declared "
+                f"analysis.common.dist_norm_km [{lo:g}, {hi:g}] km "
+                f"(range {values.min():,.1f}-{values.max():,.1f} km)"
+            )
+        out[method] = {**entry, "errors": (values - lo) / (hi - lo) * NORM_SCALE}
+    return out
+
+
+def common_bounds(
+    run_ids: list[str], dist_norm_km: dict[str, tuple[float, float] | None] | None
+) -> tuple[float, float] | None:
+    """The one `(min, max)` every run in `run_ids` declares, None if none does;
+    mixed raises.
+
+    A pooled figure normalizes every run's distances by one pair of bounds, so
+    runs declaring different values, or some declaring none, cannot share it.
+    """
+    values = {r: (dist_norm_km or {}).get(r) for r in run_ids}
+    distinct = set(values.values())
+    if len(distinct) > 1:
+        raise ValueError(
+            f"pooled runs must declare the same analysis.common.dist_norm_km; got {values}"
+        )
+    return distinct.pop() if distinct else None
+
+
 def resolve_x_max(
-    policy: str, max_x_km: float | None = None, sentinel_km: float = SENTINEL_KM
+    policy: str,
+    max_x_km: float | None = None,
+    sentinel_km: float = SENTINEL_KM,
+    normalized: bool = False,
 ) -> float:
-    """The right edge: the caller's, else the policy's default.
+    """The right edge: the caller's, else the policy's (or the unit's) default.
 
     `sentinel` needs a wider axis than `exclude` -- its rightmost mass sits
     *at* `SENTINEL_KM`, which is `exclude`'s edge -- so the two layouts cannot
     share one default. Within a layout the bound is still fixed, which is what
-    per-run and pooled comparability actually rests on.
+    per-run and pooled comparability actually rests on. The normalized axis
+    ends at D.
     """
     if max_x_km is not None:
         return float(max_x_km)
+    if normalized:
+        return X_MAX_NORM
     return SENTINEL_X_MAX_KM if policy == SENTINEL else DEFAULT_X_MAX_KM
+
+
+def resolve_x_min(min_x_km: float | None = None, normalized: bool = False) -> float:
+    """The left edge: the caller's, else the unit's floor."""
+    if min_x_km is not None:
+        return float(min_x_km)
+    return X_MIN_NORM if normalized else X_MIN_KM
 
 
 # ---- the table --------------------------------------------------------------
@@ -452,6 +564,24 @@ def pcol(p: int) -> str:
     return f"{DIST_COLUMN}_p{p}"
 
 
+def _roster_quantile(values: np.ndarray, n_total: int, q: float) -> float:
+    """Linear quantile over `n_total` rows of which only `values` are known.
+
+    The unknown rows rank above every known one. Pandas' linear rule reads the
+    sorted rows at `floor(pos)` and `ceil(pos)`, `pos = q * (n - 1)`; when the
+    upper one is unknown the quantile is undefined (NaN). Otherwise it is the
+    same number `Series.quantile` gives on a roster with no unknowns.
+    """
+    known = np.sort(np.asarray(values, dtype=float))
+    if n_total == 0 or len(known) == 0:
+        return np.nan
+    pos = q * (n_total - 1)
+    lo, hi = int(np.floor(pos)), int(np.ceil(pos))
+    if hi >= len(known):
+        return np.nan
+    return round(float(known[lo] + (pos - lo) * (known[hi] - known[lo])), 3)
+
+
 def percentile_table(loaded: dict[str, dict]) -> pd.DataFrame:
     """One row per method: the counts plus the reported percentiles, ranked.
 
@@ -460,10 +590,16 @@ def percentile_table(loaded: dict[str, dict]) -> pd.DataFrame:
     digit. That holds under `exclude` only: `censor` changes the population,
     and a quantile of a censored sample is a different quantity. The `sentinel`
     artifacts are named apart for exactly that reason.
+
+    Under `cut` (`n_total` set) the quantile is taken over the whole roster
+    with the unanswered rows ranked last, and a percentile whose interpolation
+    reaches one of them is NaN: undefined, because the method did not answer
+    that share of its TGs.
     """
     rows: list[dict] = []
     for method, entry in loaded.items():
         values = pd.Series(entry["errors"], dtype=float)
+        n_total = entry.get("n_total")
         row = {
             "method": method,
             "method_label": method_label(method),
@@ -475,7 +611,10 @@ def percentile_table(loaded: dict[str, dict]) -> pd.DataFrame:
             "n_censored": int(entry.get("n_censored", 0)),
         }
         for p in PERCENTILES:
-            row[pcol(p)] = round(float(values.quantile(p / 100)), 3) if len(values) else np.nan
+            if n_total is not None:
+                row[pcol(p)] = _roster_quantile(values.to_numpy(), int(n_total), p / 100)
+            else:
+                row[pcol(p)] = round(float(values.quantile(p / 100)), 3) if len(values) else np.nan
         rows.append(row)
     table = pd.DataFrame(rows)
     return table.sort_values(list(_RANK_KEYS), ascending=list(_RANK_ASC)).reset_index(drop=True)
@@ -495,14 +634,16 @@ def curve_order(table: pd.DataFrame) -> list[str]:
 # ---- drawing ----------------------------------------------------------------
 
 
-def _cdf(values: np.ndarray, min_x_km: float = X_MIN_KM):
+def _cdf(values: np.ndarray, min_x_km: float = X_MIN_KM, n_total: int | None = None):
     """`(x, y)` for an empirical CDF, x clamped up to the log floor.
 
     The clamp is a rendering concession applied here only; `percentile_table`
-    reads the unclamped values.
+    reads the unclamped values. `n_total` is the denominator under `cut`: the
+    curve then ends at `len(values) / n_total`, the answer rate.
     """
     xs = np.sort(np.maximum(values, min_x_km))
-    return xs, np.arange(1, len(xs) + 1) / len(xs)
+    denom = len(xs) if n_total is None else int(n_total)
+    return xs, np.arange(1, len(xs) + 1) / denom
 
 
 def _draw_guides(ax, min_x_km: float, max_x_km: float) -> None:
@@ -543,7 +684,12 @@ def _draw_sentinel(ax, sentinel_km: float, max_x_km: float) -> None:
 
 
 def _style_axes(
-    ax, min_x_km: float, max_x_km: float, *, sentinel_km: float | None = None
+    ax,
+    min_x_km: float,
+    max_x_km: float,
+    *,
+    sentinel_km: float | None = None,
+    x_label: str = X_LABEL,
 ) -> None:
     """Log x on the fixed range, `Y_TICKS` on y, and the quiet spines."""
     from matplotlib.ticker import FuncFormatter
@@ -557,7 +703,7 @@ def _style_axes(
     ax.set_yticklabels([f"{y:g}" for y in Y_TICKS])
     # Plain axis names. What the distance *is*, and which rows are behind the
     # curve, are the manifest's job now that the figure carries no footnote.
-    ax.set_xlabel(X_LABEL, fontsize=_LABEL_PT, color=_INK_2)
+    ax.set_xlabel(x_label, fontsize=_LABEL_PT, color=_INK_2)
     ax.set_ylabel(Y_LABEL, fontsize=_LABEL_PT, color=_INK_2)
     ax.grid(True, which="both", color=_GRID, linewidth=0.5, alpha=0.9, zorder=0)
     ax.set_axisbelow(True)
@@ -581,11 +727,13 @@ def plot_cdf(
     table: pd.DataFrame,
     out_path: Path,
     *,
-    title: str,
-    subtitle: str,
+    title: str | None = None,
+    subtitle: str | None = None,
     min_x_km: float = X_MIN_KM,
     max_x_km: float = DEFAULT_X_MAX_KM,
     sentinel_km: float | None = None,
+    x_label: str = X_LABEL,
+    guides: bool = True,
     figsize: tuple[float, float] = PAPER_FIGSIZE,
     dpi: int = 300,
     order: list[str] | None = None,
@@ -605,6 +753,10 @@ def plot_cdf(
     `sentinel_km` is the censoring mark, set when `loaded` came through
     `censor(policy=SENTINEL)`. It only draws and labels -- the sentinel values
     are already in `loaded`, and this function never invents rows.
+
+    `title`/`subtitle` are drawn only when given; `plot-error-cdf` gives
+    neither. `x_label` and `guides` switch the panel to the normalized axis:
+    its own label and no km verticals.
 
     `order`, `style_fn` and `label_fn` exist for the one figure that draws series this
     package does not own: `ripe_vs_databases` puts two geolocation databases on
@@ -626,7 +778,8 @@ def plot_cdf(
     fig, ax = plt.subplots(figsize=figsize)
     fig.patch.set_facecolor(_SURFACE)
     ax.set_facecolor(_SURFACE)
-    _draw_guides(ax, min_x_km, max_x_km)
+    if guides:
+        _draw_guides(ax, min_x_km, max_x_km)
     if sentinel_km is not None:
         _draw_sentinel(ax, sentinel_km, max_x_km)
 
@@ -637,10 +790,10 @@ def plot_cdf(
         values = loaded[method]["errors"]
         if len(values) == 0:
             continue
-        xs, ys = _cdf(values, min_x_km)
+        xs, ys = _cdf(values, min_x_km, loaded[method].get("n_total"))
         ax.plot(xs, ys, alpha=0.95, gid=method, **style(method))
 
-    _style_axes(ax, min_x_km, max_x_km, sentinel_km=sentinel_km)
+    _style_axes(ax, min_x_km, max_x_km, sentinel_km=sentinel_km, x_label=x_label)
 
     handles = [
         Line2D(
@@ -657,11 +810,13 @@ def plot_cdf(
     for text in legend.get_texts():
         text.set_color(_INK_2)
 
-    ax.set_title(title, fontsize=_TITLE_PT, fontweight="bold", color=_INK, pad=9)
-    ax.annotate(
-        subtitle, xy=(0.5, 1.005), xycoords="axes fraction",
-        ha="center", va="bottom", fontsize=_SUBTITLE_PT, color=_INK_2,
-    )
+    if title:
+        ax.set_title(title, fontsize=_TITLE_PT, fontweight="bold", color=_INK, pad=9)
+    if subtitle:
+        ax.annotate(
+            subtitle, xy=(0.5, 1.005), xycoords="axes fraction",
+            ha="center", va="bottom", fontsize=_SUBTITLE_PT, color=_INK_2,
+        )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight", facecolor=_SURFACE)
@@ -680,6 +835,25 @@ CSV_COLUMNS: tuple[str, ...] = (
     "method", "method_label", "is_baseline",
     *COUNT_KEYS, "n_plotted", "n_censored", *[pcol(p) for p in PERCENTILES],
 )
+
+
+def ncol(p: int) -> str:
+    """`pred_dist_to_tg_norm_e3_p<p>` -- `pcol` when normalized."""
+    return f"{NORM_COLUMN}_p{p}"
+
+
+def csv_columns(normalized: bool = False) -> list[str]:
+    """`CSV_COLUMNS`, with the percentile columns renamed and the bounds added
+    when normalized, so a km file and a normalized file can never be
+    concatenated into one column."""
+    if not normalized:
+        return list(CSV_COLUMNS)
+    return [
+        *(c for c in CSV_COLUMNS if not c.startswith(f"{DIST_COLUMN}_p")),
+        "dist_norm_min_km",
+        "dist_norm_max_km",
+        *[ncol(p) for p in PERCENTILES],
+    ]
 
 
 def _clamped(loaded: dict[str, dict], min_x_km: float) -> dict[str, int]:
@@ -706,9 +880,11 @@ def _manifest(
     sentinel_km: float = SENTINEL_KM,
     per_run: dict[str, int] | None = None,
     source: str = "all",
+    bounds: tuple[float, float] | None = None,
 ) -> str:
     order = curve_order(table)
     censored = policy == SENTINEL
+    cut = policy == CUT
     body: dict = {
         "figure": png_name,
         "csv": csv_name,
@@ -756,6 +932,9 @@ def _manifest(
             "accuracy.csv: a value at the sentinel means the method had not "
             "answered that share of its TGs, not that it missed by that far."
             if censored
+            else " Taken over the whole roster with unanswered rows ranked last; a "
+            "percentile that reaches one is NaN (undefined), never a sentinel."
+            if cut
             else ""
         ),
         "unanswered": {
@@ -775,6 +954,10 @@ def _manifest(
                 "past the sentinel would be indistinguishable from censored "
                 "ones; the count above is how many there were."
                 if censored
+                else "unanswered rows stay in the denominator and are not drawn: "
+                "each curve stops at its last answered TG, at the height of the "
+                "method's answer rate, and the tail is left empty."
+                if cut
                 else "unanswered rows are dropped; each curve rests on its own "
                 "solved population. This is the file accuracy.csv joins to."
             ),
@@ -787,8 +970,9 @@ def _manifest(
         ),
         "panel": {
             "figsize_in": list(PAPER_FIGSIZE),
-            "x_label": X_LABEL,
+            "x_label": X_LABEL_NORM if bounds else X_LABEL,
             "y_label": Y_LABEL,
+            "title": None,
             "y_ticks": list(Y_TICKS),
             "note": (
                 "sized for a paper column: curves, key and axis names only. The "
@@ -802,13 +986,31 @@ def _manifest(
         ),
         "x_axis": {
             "scale": "log",
+            "units": "(d - min) / (max - min) x 1e3" if bounds else "km",
+            # Keys keep their v4 names; when normalized the bounds are in the
+            # normalized unit, as `units` says.
             "min_km": min_x_km,
             "max_km": max_x_km,
             "sentinel_km": float(sentinel_km) if censored else None,
             "n_clamped_to_floor": _clamped(loaded, min_x_km),
             "clamp_note": (
-                f"a log axis cannot render 0, so the drawn curve clamps distances "
-                f"below {min_x_km} km up to the floor. The CSV is unclamped."
+                f"a log axis cannot render 0, so the drawn curve clamps values "
+                f"below {min_x_km} up to the floor. The CSV is unclamped."
+            ),
+            "dist_norm_km": (
+                {
+                    "min": bounds[0],
+                    "max": bounds[1],
+                    "scale": NORM_SCALE,
+                    "source": "analysis.common.dist_norm_km in each run's config",
+                    "note": (
+                        "every distance d drawn as (d - min) / (max - min) x scale; "
+                        "no value lies outside [min, max] (refused otherwise). "
+                        "max is the footprint span D, confidential in the paper."
+                    ),
+                }
+                if bounds
+                else None
             ),
         },
         "counts": {m: {k: int(e[k]) for k in COUNT_KEYS} for m, e in loaded.items()},
@@ -844,38 +1046,53 @@ def _write(
     *,
     run_ids: list[str],
     nside: int,
-    subtitle: str,
     min_x_km: float,
     max_x_km: float,
     policy: str = EXCLUDE,
     sentinel_km: float = SENTINEL_KM,
     per_run: dict[str, int] | None = None,
     source: str = "all",
+    bounds: tuple[float, float] | None = None,
 ) -> Path:
     """Table, CSV twin, PNG and manifest for one layout. Returns the PNG.
 
-    `loaded` arrives uncensored; the policy is applied here, once, so the
-    table and the curve can never disagree about which rows are in.
+    `loaded` arrives uncensored and in km; the policy and the normalization
+    are applied here, once, so the table and the curve can never disagree
+    about which rows are in or what unit they are in.
     """
-    png_name, csv_name, manifest_name = artifact_names(layout, policy)
+    normalized = bounds is not None
+    if normalized and policy == SENTINEL:
+        raise ValueError(
+            f"--unanswered {SENTINEL} cannot be drawn on a normalized axis: the "
+            f"sentinel lies beyond the declared max; use {CUT}"
+        )
+    png_name, csv_name, manifest_name = artifact_names(layout, policy, normalized)
     drawn = censor(loaded, policy=policy, sentinel_km=sentinel_km)
+    if normalized:
+        drawn = normalize(drawn, bounds)
     mark = sentinel_km if policy == SENTINEL else None
     table = percentile_table(drawn)
     table.insert(0, "run_id", "+".join(sorted(run_ids)))
     table.insert(1, "dataset", cross.dataset_slug(run_ids))
     table["unanswered_policy"] = policy
     table["sentinel_km"] = float(sentinel_km) if policy == SENTINEL else np.nan
-    table[[c for c in CSV_COLUMNS if c in table.columns]].to_csv(out_dir / csv_name, index=False)
+    if normalized:
+        table["dist_norm_min_km"], table["dist_norm_max_km"] = bounds
+        table = table.rename(columns={pcol(p): ncol(p) for p in PERCENTILES})
+    cols = csv_columns(normalized)
+    table[[c for c in cols if c in table.columns]].to_csv(out_dir / csv_name, index=False)
     png = plot_cdf(
         drawn, table, out_dir / png_name,
-        title="Error distance to the TG", subtitle=subtitle,
         min_x_km=min_x_km, max_x_km=max_x_km, sentinel_km=mark,
+        x_label=X_LABEL_NORM if normalized else X_LABEL,
+        guides=not normalized,
     )
     (out_dir / manifest_name).write_text(
         _manifest(
             layout, table, drawn, run_ids=run_ids, nside=nside, png_name=png_name,
             csv_name=csv_name, min_x_km=min_x_km, max_x_km=max_x_km,
             policy=policy, sentinel_km=sentinel_km, per_run=per_run, source=source,
+            bounds=bounds,
         )
     )
     return png
@@ -883,11 +1100,11 @@ def _write(
 
 def _subtitle_tail(policy: str, sentinel_km: float) -> str:
     """How the panel names its own population, in the subtitle."""
-    return (
-        f"unanswered at {sentinel_km:,.0f} km"
-        if policy == SENTINEL
-        else "answered rows only"
-    )
+    if policy == SENTINEL:
+        return f"unanswered at {sentinel_km:,.0f} km"
+    if policy == CUT:
+        return "unanswered in the denominator, curves cut"
+    return "answered rows only"
 
 
 def _n_tgs(loaded: dict[str, dict]) -> int:
@@ -901,17 +1118,20 @@ def build_for_run(
     nside: int = SOURCE_NSIDE,
     methods: list[str] | None = None,
     analysis_root: Path | None = None,
-    min_x_km: float = X_MIN_KM,
+    min_x_km: float | None = None,
     max_x_km: float | None = None,
     unanswered: str = EXCLUDE,
     sentinel_km: float = SENTINEL_KM,
     source: str | None = None,
+    bounds: tuple[float, float] | None = None,
 ) -> Path:
     """One run's CDF, written into `classify/`, beside its `healpix-<n>/` rungs.
 
     `source` is where `methods` came from (`methods.METHODS_SOURCES`), for the
-    manifest; inferred from `methods` when not given.
+    manifest; inferred from `methods` when not given. `bounds` is the run's
+    declared `(min, max)` (`labels.declared_dist_norm_km`); None draws km.
     """
+    normalized = bounds is not None
     loaded = load_errors(run, nside, methods=methods, analysis_root=analysis_root)
     return _write(
         loaded,
@@ -919,15 +1139,12 @@ def build_for_run(
         PER_RUN,
         run_ids=[run.run_id],
         nside=nside,
-        subtitle=(
-            f"{run.run_id} · n={_n_tgs(loaded):,} TGs · "
-            f"{_subtitle_tail(unanswered, sentinel_km)}"
-        ),
-        min_x_km=min_x_km,
-        max_x_km=resolve_x_max(unanswered, max_x_km, sentinel_km),
+        min_x_km=resolve_x_min(min_x_km, normalized),
+        max_x_km=resolve_x_max(unanswered, max_x_km, sentinel_km, normalized),
         policy=unanswered,
         sentinel_km=sentinel_km,
         source=methods_source(methods, source),
+        bounds=bounds,
     )
 
 
@@ -938,11 +1155,12 @@ def build_for_runs(
     nside: int = SOURCE_NSIDE,
     methods: list[str] | None = None,
     analysis_root: Path | None = None,
-    min_x_km: float = X_MIN_KM,
+    min_x_km: float | None = None,
     max_x_km: float | None = None,
     unanswered: str = EXCLUDE,
     sentinel_km: float = SENTINEL_KM,
     source: str | None = None,
+    dist_norm_km: dict[str, tuple[float, float] | None] | None = None,
 ) -> list[Path]:
     """Render the requested layouts; returns the PNG paths, layout-major.
 
@@ -950,9 +1168,14 @@ def build_for_runs(
     writes one into the cross-dataset directory, beside the outcome bars.
 
     `unanswered` picks the population: `exclude` (the default, and the only one
-    that joins to `accuracy.csv`) or `sentinel`, which parks unanswered TGs at
-    `sentinel_km` so every curve shares a denominator. The two write different
-    filenames, so building both leaves both on disk.
+    that joins to `accuracy.csv`), `sentinel`, which parks unanswered TGs at
+    `sentinel_km` so every curve shares a denominator, or `cut`, which keeps
+    them in the denominator and stops each curve at its last answer. Each
+    writes different filenames, so building several leaves all on disk.
+
+    `dist_norm_km` maps run id to its declared `(min, max)`
+    (`labels.declared_dist_norm_km`); a run absent or None is drawn in km, and
+    a pooled figure needs one pair shared by every run.
     """
     ordered = tuple(dict.fromkeys(layouts)) or (PER_RUN,)
     unknown = [x for x in ordered if x not in LAYOUTS]
@@ -963,7 +1186,6 @@ def build_for_runs(
             f"unknown unanswered policy {unanswered!r}; pick from {list(UNANSWERED_POLICIES)}"
         )
     nside = G.validate_nside(nside)
-    max_x_km = resolve_x_max(unanswered, max_x_km, sentinel_km)
     run_ids = [r.run_id for r in runs]
 
     out: list[Path] = []
@@ -974,14 +1196,16 @@ def build_for_runs(
                     run, nside=nside, methods=methods, analysis_root=analysis_root,
                     min_x_km=min_x_km, max_x_km=max_x_km,
                     unanswered=unanswered, sentinel_km=sentinel_km, source=source,
+                    bounds=common_bounds([run.run_id], dist_norm_km),
                 )
                 for run in runs
             )
             continue
+        bounds = common_bounds(run_ids, dist_norm_km)
+        normalized = bounds is not None
         by_run = load_per_run(runs, nside, methods=methods, analysis_root=analysis_root)
         loaded = pool(by_run)
         per_run = {rid: _n_tgs(e) for rid, e in by_run.items()}
-        label = cross.dataset_slug(run_ids).upper()
         out.append(
             _write(
                 loaded,
@@ -989,16 +1213,13 @@ def build_for_runs(
                 POOLED,
                 run_ids=run_ids,
                 nside=nside,
-                subtitle=(
-                    f"{label} pooled · n={_n_tgs(loaded):,} TGs · "
-                    f"{_subtitle_tail(unanswered, sentinel_km)}"
-                ),
-                min_x_km=min_x_km,
-                max_x_km=max_x_km,
+                min_x_km=resolve_x_min(min_x_km, normalized),
+                max_x_km=resolve_x_max(unanswered, max_x_km, sentinel_km, normalized),
                 policy=unanswered,
                 sentinel_km=sentinel_km,
                 per_run=per_run,
                 source=methods_source(methods, source),
+                bounds=bounds,
             )
         )
     return out

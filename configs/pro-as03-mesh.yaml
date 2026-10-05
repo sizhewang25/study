@@ -129,6 +129,19 @@ analysis:
     resolution: [128]
 
     pni_csv: datasets/pni/as03-us-pni.approx.csv
+    # Every RTT axis is divided by this, so no figure prints an absolute RTT:
+    # the largest (VP, TG) pair RTT pooled over the three pro mesh datasets
+    # (as02's, 92.395 ms). The same constant in all three configs.
+    rtt_norm_ms: 92.395
+    # Every distance axis is min-max normalized with these bounds, so no
+    # figure prints an absolute distance: min 0 (a prediction on its TG), max
+    # the footprint span D, the largest great-circle distance between any two
+    # VPs or sites pooled over the three pro datasets (4,387.257 km; computed
+    # by scripts/analysis/v5/modules/footprint.py). The same bounds in every
+    # pro config.
+    dist_norm_km:
+      min: 0.0
+      max: 4387.257
     # peer_asn: <fill from the dashboard; not recoverable from this repo>
 
   # One block per v5 plotting command that create_analysis_artifacts.sh runs.

@@ -183,3 +183,30 @@ class TestPooled:
         with pytest.raises(MissingArtifactError):
             R.load_runs(two["runs"][:1], two["pni_csvs"], layout=P.POOLED,
                         analysis_root=two["root"], source_csvs=two["edge_csvs"])
+
+
+class TestNormalized:
+    """`rtt_norm_ms` divides what is drawn and adds `_norm` columns; ms stay."""
+
+    def test_csv_adds_norm_columns_and_keeps_ms(self, clustered):
+        run, edge_csv, pni_csv, _, root, out = clustered
+        R.build_for_run(run, pni_csv, analysis_root=root, source_csv=edge_csv, rtt_norm_ms=2.0)
+        stats = pd.read_csv(out / R.CSV_NAME)
+        assert np.allclose(stats.p50_ms, 0.5)
+        assert np.allclose(stats.p50_norm, 0.25)
+        assert np.allclose(stats.max_norm, stats.max_ms / 2.0)
+        assert json.loads((out / R.MANIFEST_NAME).read_text())["rtt_norm_ms"] == 2.0
+
+    def test_no_norm_writes_no_norm_columns(self, clustered):
+        run, edge_csv, pni_csv, _, root, out = clustered
+        R.build_for_run(run, pni_csv, analysis_root=root, source_csv=edge_csv)
+        assert not [c for c in pd.read_csv(out / R.CSV_NAME).columns if c.endswith("_norm")]
+        assert json.loads((out / R.MANIFEST_NAME).read_text())["rtt_norm_ms"] is None
+
+    def test_pooled_runs_must_agree(self):
+        assert R.common_norm(["a", "b"], {"a": 92.4, "b": 92.4}) == 92.4
+        assert R.common_norm(["a", "b"], None) is None
+        with pytest.raises(ValueError, match="same analysis.common.rtt_norm_ms"):
+            R.common_norm(["a", "b"], {"a": 92.4, "b": 90.0})
+        with pytest.raises(ValueError, match="same analysis.common.rtt_norm_ms"):
+            R.common_norm(["a", "b"], {"a": 92.4})

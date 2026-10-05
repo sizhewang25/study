@@ -358,6 +358,157 @@ class TestSentinel:
             E.build_for_runs([run], analysis_root=tmp_path, unanswered="drop")
 
 
+class TestCut:
+    """The paper's policy: unanswered rows in the denominator, nothing drawn."""
+
+    def test_the_curve_stops_at_the_answer_rate(self, tmp_path):
+        run = _write_run(tmp_path, "as01", {"m": _tgs(solved=6, failed=4)})
+        entry = E.censor(E.load_errors(run, analysis_root=tmp_path), policy=E.CUT)["m"]
+        assert len(entry["errors"]) == 6 and entry["n_total"] == 10
+        xs, ys = E._cdf(entry["errors"], n_total=entry["n_total"])
+        assert ys[-1] == pytest.approx(0.6)
+        assert xs.max() < E.SENTINEL_KM  # no made-up distance on the axis
+
+    def test_a_percentile_past_the_answered_share_is_undefined(self, tmp_path):
+        run = _write_run(tmp_path, "as01", {"m": _tgs(solved=3, failed=7)})
+        table = E.percentile_table(
+            E.censor(E.load_errors(run, analysis_root=tmp_path), policy=E.CUT)
+        )
+        assert np.isnan(table.iloc[0][E.pcol(50)])
+        # pos = 0.05 * (10 - 1) = 0.45 between the answered 10 and 20 km
+        assert table.iloc[0][E.pcol(5)] == pytest.approx(14.5)
+
+    def test_with_nothing_unanswered_it_matches_exclude(self, tmp_path):
+        run = _write_run(tmp_path, "as01", {"m": _tgs(solved=7, errors=[3, 1, 4, 1, 5, 9, 2])})
+        loaded = E.load_errors(run, analysis_root=tmp_path)
+        cut = E.percentile_table(E.censor(loaded, policy=E.CUT))
+        exc = E.percentile_table(loaded)
+        for p in E.PERCENTILES:
+            assert cut.iloc[0][E.pcol(p)] == exc.iloc[0][E.pcol(p)]
+
+    def test_it_writes_its_own_files(self, tmp_path):
+        run = _write_run(tmp_path, "as01", {"m": _tgs(solved=3, failed=3)})
+        E.build_for_runs([run], analysis_root=tmp_path, unanswered=E.CUT)
+        out = run.analysis_dir(CLASSIFY_KIND, root=tmp_path)
+        names = E.artifact_names(E.PER_RUN, E.CUT)
+        assert all((out / n).exists() for n in names) and ".cut." in names[0]
+        body = json.loads((out / names[2]).read_text())
+        assert body["unanswered"]["policy"] == E.CUT
+        assert body["unanswered"]["n_censored"]["m"] == 3
+
+
+#: Declared bounds for the normalized tests: a 1,000 km span.
+BOUNDS = (0.0, 1_000.0)
+
+
+class TestNormalize:
+    def test_distances_become_thousandths_of_the_span(self, tmp_path):
+        run = _write_run(tmp_path, "as01", {"m": _tgs(solved=2, errors=[10.0, 500.0])})
+        E.build_for_runs(
+            [run], analysis_root=tmp_path, unanswered=E.CUT,
+            dist_norm_km={run.run_id: BOUNDS},
+        )
+        out = run.analysis_dir(CLASSIFY_KIND, root=tmp_path)
+        png, csv_name, man = E.artifact_names(E.PER_RUN, E.CUT, normalized=True)
+        assert ".norm.cut." in png
+        csv = pd.read_csv(out / csv_name)
+        assert E.pcol(50) not in csv.columns  # no km column in a normalized file
+        assert csv.loc[0, E.ncol(50)] == pytest.approx(255.0)  # (10 + 500) / 2 / 1000 * 1e3
+        assert (csv.loc[0, "dist_norm_min_km"], csv.loc[0, "dist_norm_max_km"]) == BOUNDS
+        body = json.loads((out / man).read_text())
+        assert (body["x_axis"]["dist_norm_km"]["min"], body["x_axis"]["dist_norm_km"]["max"]) == BOUNDS
+        assert body["panel"]["x_label"] == E.X_LABEL_NORM
+
+    def test_a_nonzero_min_shifts_before_it_scales(self):
+        entry = {"errors": np.array([100.0, 300.0]), **{k: 2 for k in E.COUNT_KEYS}}
+        got = E.normalize({"m": entry}, (100.0, 500.0))["m"]["errors"]
+        assert got.tolist() == pytest.approx([0.0, 500.0])
+
+    def test_an_error_beyond_the_max_is_refused(self, tmp_path):
+        run = _write_run(tmp_path, "as01", {"m": _tgs(solved=1, errors=[1_500.0])})
+        with pytest.raises(ValueError, match="outside the declared"):
+            E.build_for_runs([run], analysis_root=tmp_path, dist_norm_km={run.run_id: BOUNDS})
+
+    def test_the_sentinel_cannot_be_normalized(self, tmp_path):
+        run = _write_run(tmp_path, "as01", {"m": _tgs(solved=1)})
+        with pytest.raises(ValueError, match="sentinel"):
+            E.build_for_runs(
+                [run], analysis_root=tmp_path, unanswered=E.SENTINEL,
+                dist_norm_km={run.run_id: BOUNDS},
+            )
+
+    def test_without_a_declaration_it_stays_in_km(self, tmp_path):
+        run = _write_run(tmp_path, "as01", {"m": _tgs(solved=2)})
+        E.build_for_runs([run], analysis_root=tmp_path, dist_norm_km={run.run_id: None})
+        out = run.analysis_dir(CLASSIFY_KIND, root=tmp_path)
+        assert (out / E.NAMES[E.PER_RUN][0]).exists()
+        assert not (out / E.artifact_names(E.PER_RUN, normalized=True)[0]).exists()
+
+    def test_pooled_runs_must_declare_the_same_bounds(self, tmp_path):
+        a = _write_run(tmp_path, "as01", {"m": _tgs(solved=1, first_id=0)})
+        b = _write_run(tmp_path, "as02", {"m": _tgs(solved=1, first_id=100)})
+        with pytest.raises(ValueError, match="same analysis.common.dist_norm_km"):
+            E.build_for_runs(
+                [a, b], layouts=(E.POOLED,), analysis_root=tmp_path,
+                dist_norm_km={a.run_id: BOUNDS, b.run_id: None},
+            )
+        E.build_for_runs(
+            [a, b], layouts=(E.POOLED,), analysis_root=tmp_path,
+            dist_norm_km={a.run_id: BOUNDS, b.run_id: BOUNDS},
+        )
+        out = cross.cross_dir([a.run_id, b.run_id], analysis_root=tmp_path)
+        assert (out / E.artifact_names(E.POOLED, normalized=True)[0]).exists()
+
+    def test_the_axis_ends_at_the_declared_max(self):
+        assert E.resolve_x_max(E.CUT, normalized=True) == E.NORM_SCALE
+        assert E.resolve_x_min(normalized=True) == E.X_MIN_NORM
+
+
+class TestDeclaredBounds:
+    """`labels.declared_dist_norm_km`: both bounds or a loud failure."""
+
+    @pytest.fixture
+    def declare(self, monkeypatch):
+        from scripts.analysis.v5.modules import labels as L
+
+        def set_value(value):
+            monkeypatch.setattr(L, "_node", lambda run_id, path, root=None: value)
+            return L.declared_dist_norm_km("r")
+
+        return set_value
+
+    def test_a_mapping_with_both_bounds_is_read(self, declare):
+        assert declare({"min": 0, "max": 4387.257}) == (0.0, 4387.257)
+
+    def test_absent_means_km(self, declare):
+        assert declare(None) is None
+
+    @pytest.mark.parametrize(
+        "value",
+        [4387.257, {"max": 10.0}, {"min": 0, "max": 10, "x": 1}, {"min": 5, "max": 5},
+         {"min": -1, "max": 5}, {"min": 0, "max": True}, {"min": 0, "max": "10"}],
+    )
+    def test_anything_else_raises(self, declare, value):
+        with pytest.raises(ValueError, match="dist_norm_km"):
+            declare(value)
+
+
+class TestFootprintSpan:
+    def test_it_is_the_largest_distance_over_pooled_vps_and_sites(self, monkeypatch):
+        from scripts.analysis.v5.modules import footprint as F
+
+        coords = {
+            "r1": (np.array([[0.0, 0.0]]), np.array([[0.0, 10.0]])),
+            "r2": (np.array([[0.0, 0.0]]), np.array([[0.0, -20.0]])),
+        }
+        monkeypatch.setattr(F, "coordinates", lambda run: coords[run.run_id])
+        runs = [RunPaths(run_id=r, root="x", source="s", setup="t") for r in coords]
+        got = F.footprint_span(runs)
+        # 30 degrees of longitude on the equator; the VP shared by both runs counts once.
+        assert got["span_km"] == pytest.approx(30 * np.pi / 180 * 6371.0088, rel=1e-3)
+        assert got["n_vp_coords"] == 1 and got["n_site_coords"] == 2
+
+
 class TestPanel:
     """Paper-column panel: curves, key, two axis names, nothing under them."""
 
