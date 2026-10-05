@@ -366,6 +366,7 @@ def plot_upset(
     set_label: str = SET_LABEL,
     min_share: float | None = None,
     wspace: float = 0.20,
+    pct_decimals: int = 1,
 ) -> Path:
     """Intersection bars over a dot matrix, set-size bars to its left.
 
@@ -376,6 +377,7 @@ def plot_upset(
     figure). `min_share` lumps every exact combination below that share of
     the TGs into one last column with no dots, labelled with how many
     combinations it holds; the set-size bars still count every TG.
+    `pct_decimals` sets the precision of every bar label.
     """
     import matplotlib as mpl
 
@@ -433,7 +435,7 @@ def plot_upset(
             members = [m for m, hit in zip(order, pattern) if hit]
             ax_bar.bar(x, pct, width=0.62, zorder=2, **_bar_style(members, colors))
         ax_bar.annotate(
-            f"{pct:.1f}", xy=(x, pct), xytext=(0, 1.5), textcoords="offset points",
+            f"{pct:.{pct_decimals}f}", xy=(x, pct), xytext=(0, 1.5), textcoords="offset points",
             ha="center", va="bottom", fontsize=E._GUIDE_PT, color=E._INK_2,
         )
     ax_bar.set_ylabel(INTERSECTION_LABEL, fontsize=E._GUIDE_PT + 0.5, color=E._INK_2)
@@ -479,7 +481,7 @@ def plot_upset(
         pct = 100.0 * totals[k] / n if n else 0.0
         ax_set.barh(y, pct, height=0.58, zorder=2, **_method_style(method, colors))
         ax_set.annotate(
-            f"{pct:.1f}", xy=(pct, y), xytext=(-2, 0), textcoords="offset points",
+            f"{pct:.{pct_decimals}f}", xy=(pct, y), xytext=(-2, 0), textcoords="offset points",
             ha="right", va="center", fontsize=E._GUIDE_PT, color=E._INK_2,
         )
     widest = 100.0 * totals.max() / n if n and totals.size else 1.0

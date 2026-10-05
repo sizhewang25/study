@@ -77,6 +77,10 @@ FIGSIZE: tuple[float, float] = (5.45, 2.9)
 #: method names that sit in it at this text-width canvas.
 WSPACE = 0.42
 
+#: Bar labels in whole percent, as the paper rounds accuracy: 0.1 pp is
+#: under one TG pooled, and ~20 replicas per site make it less still.
+PCT_DECIMALS = 0
+
 STEM = "correct_upset"
 KINDS = U.KINDS
 _SUFFIX = U._SUFFIX
@@ -253,6 +257,7 @@ def _write(mask, sites, origin, out_dir: Path, layout: str, *, run_ids, metric, 
     U.plot_upset(
         mask, written["png"], title=None, subtitle=None, figsize=FIGSIZE,
         set_label=METRICS[metric][1], min_share=MIN_SHARE, wspace=WSPACE,
+        pct_decimals=PCT_DECIMALS,
     )
     written["manifest"].write_text(_manifest(
         layout, names=names, mask=mask, sets=sets, run_ids=run_ids, origin=origin,
