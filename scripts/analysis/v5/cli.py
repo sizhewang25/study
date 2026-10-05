@@ -65,6 +65,7 @@ from scripts.analysis.v5.modules import (
     figure_ltd_model,
     figure_outcome_bars,
     figure_outcome_map,
+    figure_pareto,
     figure_peripherality,
     figure_pni_cluster_rtt,
     figure_pni_gap,
@@ -132,6 +133,7 @@ COMBO_COMMANDS = frozenset({
     "plot-error-cdf",
     "plot-champion-upset",
     "plot-cost-box",
+    "plot-pareto",
     "plot-vp-proximity",
     "plot-vp-dist-gap",
     "plot-vp-distance-cdf",
@@ -1316,6 +1318,43 @@ def plot_cost_box_cmd(
         raise typer.BadParameter(str(exc)) from exc
     for written in sets:
         typer.echo(f"wrote {written['png']}")
+
+
+@app.command("plot-pareto")
+def plot_pareto_cmd(
+    seen: list[str] = typer.Option(None, "--seen", help="Seen-site (K-fold) run; repeatable."),
+    unseen: list[str] = typer.Option(None, "--unseen", help="Unseen-site (LOSO) run; repeatable."),
+    method: list[str] = typer.Option(None, "--method", "-m", help="Draw only these methods."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """Accuracy against runtime per TG, with the Pareto frontier, per regime.
+
+    Four panels, each its own PNG: unbounded and bounded accuracy, seen and
+    unseen sites. The dot is the TG-pooled accuracy (as the pooled outcome
+    bars), the vertical bar the lowest-highest dataset, the horizontal bar the
+    p25-p75 runtime of that regime's TGs. S-P is a horizontal line. FALLBACK
+    rows are unanswered. Methods: --method, else the configs'
+    `analysis.plot-pareto.combo_ids`, which every run must agree on.
+
+    Writes `pareto.*` into `_cross/pareto/<n>-runs-<hash>/`. Needs `classify`.
+    """
+    groups = {g: [resolve_run(r, outputs_root) for r in ids]
+              for g, ids in ((figure_pareto.SEEN, seen), (figure_pareto.UNSEEN, unseen)) if ids}
+    if not groups:
+        raise typer.BadParameter("pass --seen and/or --unseen runs")
+    runs = [r for rs in groups.values() for r in rs]
+    chosen, _ = _methods_for("plot-pareto", runs, method, outputs_root)
+    if not chosen:
+        raise typer.BadParameter(
+            "no method list: pass --method or declare analysis.plot-pareto.combo_ids")
+    try:
+        written = figure_pareto.build(groups, chosen, analysis_root=analysis_root)
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for name, path in written.items():
+        if name.endswith(".png"):
+            typer.echo(f"wrote {path}")
 
 
 @app.command("plot-vp-proximity")

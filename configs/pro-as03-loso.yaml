@@ -171,6 +171,11 @@ analysis:
   # S-P has no cost and OCT-S costs what OCT-H does, so neither takes a slot.
   # OCT-H's geometric-centroid twin is drawn dashed on OCT-H's slot: same LTD
   # and MTL, so the gap between the two is what the Monte Carlo medoid costs.
+  # Accuracy against runtime, seen beside unseen sites: run with this
+  # dataset's mesh and LOSO twins (`plot-pareto --seen ... --unseen ...`).
+  plot-pareto:
+    combo_ids: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
+
   plot-cost-box:
     combo_ids: [million_scale_cbg, vanilla_cbg, octant_cbg_hull, spotter_cbg]
     overlay: {octant_cbg_hull: octant_cbg_hull_geo}
