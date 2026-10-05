@@ -87,7 +87,7 @@ DB_TERMS: dict[str, str] = {
 }
 
 #: Term -> hue. Chosen away from the six method hues: MM's burnt orange against
-#: VAN's #eda100 yellow, IPI's orchid against SPO's #e34948 red. The dash
+#: OCT-S's #eda100 yellow, IPI's orchid against OCT-H's #e34948 red. The dash
 #: patterns below carry the distinction a second time, so the pair is
 #: separable in greyscale and under colour-vision simulation.
 DB_HUES: dict[str, str] = {

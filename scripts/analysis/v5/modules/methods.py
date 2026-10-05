@@ -108,17 +108,23 @@ def method_term_table(methods) -> dict[str, str]:
 #: Term -> hue. Keyed on the term rather than the combo id so `octant_cbg_spl`
 #: and `octant_cbg` land on one colour.
 #:
-#: v3's validated palette (`validate_palette.js --mode light --surface #ffffff
-#: --pairs all`), unchanged: hue carries family and lightness the variant
-#: within it, so OCT-H and OCT-S share a green and separate by 30+ dE under
-#: every colour-vision simulation. Re-validate before changing any hex.
+#: The paper palette (2026-10-04), the same validated hexes reassigned: Octant
+#: takes the warm pair (OCT-H red, OCT-S yellow), SPO the blue, VAN the green.
+#: Re-validated with `validate_palette.js --mode light --surface #ffffff
+#: --pairs all` over the five CBG hues: worst CVD pair OCT-H/VAN dE 8.6
+#: (deutan), worst normal-vision pair SPO/SOI dE 16.3; OCT-S is under 3:1
+#: against white, as VAN's yellow was. S-P is a near-black grey of its own, so
+#: it cannot collide with SPO's blue, with `OTHER_HUE`, or with the `_INK_2`
+#: (#52514e) that figures use for non-method categories; the error CDF and the
+#: UpSet still draw the baseline in `_INK_2`, dashed or hatched. Re-validate
+#: before changing any hex.
 LABEL_HUES: dict[str, str] = {
-    "S-P": "#2a78d6",  # blue
+    "S-P": "#353431",  # baseline grey, near-black
     "SOI": "#4a3aa7",  # violet
-    "VAN": "#eda100",  # yellow
-    "OCT-H": "#17890b",  # green, mid
-    "OCT-S": "#58cd78",  # green, light
-    "SPO": "#e34948",  # red
+    "VAN": "#17890b",  # green
+    "OCT-H": "#e34948",  # red
+    "OCT-S": "#eda100",  # yellow
+    "SPO": "#2a78d6",  # blue
 }
 
 #: Anything `LABEL_HUES` does not name folds into one grey bucket rather than
