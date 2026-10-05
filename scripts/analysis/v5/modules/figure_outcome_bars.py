@@ -18,8 +18,8 @@ method can lead on serving region while holding no ring0 at all.
 
 ## Encoding
 
-* **Colour = ring tier**: green (in the TG grid), light blue (1 ring out),
-  light purple (2 rings out), light grey (further out -- ungraded, so no
+* **Colour = ring tier**: green (0 pixel dist.), light blue (1 pixel dist.),
+  light purple (2 pixel dist.), light grey (>2 pixel dist. -- ungraded, so no
   hue), dark grey (no answer). See `TIER_INK` for the reasoning and the
   validation.
 * **Stripe = cell label** in `bounded`: plain for `correct`, `//` for
@@ -103,10 +103,11 @@ UNANSWERED = C.UNANSWERED
 STACK: tuple[str, ...] = (*TIERS, UNANSWERED)
 
 TIER_LABELS = {
-    "ring0": "in the TG grid",
-    "ring1": "1 ring out",
-    "ring2": "2 rings out",
-    "beyond": "further out",
+    # The paper's term: the tier is the pixel distance to the TG's pixel.
+    "ring0": "0 pixel dist.",
+    "ring1": "1 pixel dist.",
+    "ring2": "2 pixel dist.",
+    "beyond": ">2 pixel dist.",
     UNANSWERED: "no answer",
 }
 
@@ -185,6 +186,10 @@ _FIG_H = 4.0
 #: classification figure). The per-dataset layout keeps `_PANEL_W` x `_FIG_H`.
 POOLED_PANEL_W = 8.0
 POOLED_FIG_H = 2.4
+
+#: The pooled `bounded` panel is taller: its segments are thinner (four tiers
+#: per bar, not one) and their labels stacked on each other at `POOLED_FIG_H`.
+POOLED_FIG_H_BOUNDED = 3.4
 
 #: Panel tags for the per-dataset layout, so the prose can cite "(a)". Drawn
 #: only when there is more than one panel -- a lone panel has nothing to cite
@@ -933,7 +938,11 @@ def build_for_runs(
                     out_dir / names["csv"], index=False
                 )
                 size = (
-                    {"panel_w": POOLED_PANEL_W, "fig_h": POOLED_FIG_H} if layout == POOLED else {}
+                    {
+                        "panel_w": POOLED_PANEL_W,
+                        "fig_h": POOLED_FIG_H_BOUNDED if mode == BOUNDED else POOLED_FIG_H,
+                    }
+                    if layout == POOLED else {}
                 )
                 png = render(table, nside, out_dir, png_name=names["png"], mode=mode, **size)
                 per_run = (
