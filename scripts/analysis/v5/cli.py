@@ -1836,17 +1836,19 @@ def report_loso_delta_cmd(
     ),
     method: list[str] = typer.Option(None, "--method", "-m", help="Report only these methods."),
     nside: int = typer.Option(loso_delta.SOURCE_NSIDE, "--nside", "-n", help="Which rung's *_tgs.parquet to read."),
-    n_boot: int = typer.Option(loso_delta.N_BOOT, "--n-boot", help="Site-bootstrap replicates; 0 skips the CI."),
     outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
     analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
 ) -> None:
     """Seen site vs unseen site: each method's K-fold run against its LOSO twin.
 
     Joins both runs' `classify` frames per method on tg_id and reports the
-    change in cell accuracy and error p50/p90, the correct->wrong and
-    wrong->correct transitions, and a paired site-clustered bootstrap CI --
-    overall, by each site's distance to its nearest other site, and by
-    has-X / no-X when the base run has `report-sp-pni-cells` output. Refuses a pair whose TGs,
+    change in cell accuracy (unanswered TGs wrong), the share of sites at which
+    it drops / stays / rises, the median error over every TG (unanswered
+    ranked last; also normalized when the configs declare
+    `analysis.common.dist_norm_km`), the unanswered share, and the
+    correct->wrong and wrong->correct transitions -- overall, by each site's
+    distance to its nearest other site, and by has-X / no-X when the base run
+    has `report-sp-pni-cells` output. Refuses a pair whose TGs,
     cells, or parameter-free methods (S-P, SOI) differ.
 
     Writes `loso_delta.*` into `_cross/loso-delta/<n>-runs-<hash>/`.
@@ -1857,10 +1859,14 @@ def report_loso_delta_cmd(
         pairs = [
             tuple(resolve_run(r, outputs_root) for r in loso_delta.parse_pair(p)) for p in pair
         ]
+        from scripts.analysis.v5.modules.labels import declared_dist_norm_km
+
         written = loso_delta.build(
             pairs, methods=list(method) if method else None, nside=nside,
-            analysis_root=analysis_root, n_boot=n_boot,
-            source="cli" if method else "all",
+            analysis_root=analysis_root, source="cli" if method else "all",
+            dist_norm_km={
+                r.run_id: declared_dist_norm_km(r.run_id, outputs_root) for pr in pairs for r in pr
+            },
         )
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc

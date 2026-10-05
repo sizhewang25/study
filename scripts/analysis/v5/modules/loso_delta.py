@@ -24,20 +24,23 @@ A method missing from either run is refused rather than dropped, as in every
 
 ## The numbers
 
-Per method, over every TG (the `classify` denominator: unanswered rows are
-wrong, not excluded):
+Per method, over every TG, with the paper's conventions: an unanswered TG
+(`status.solved_mask` rejects it) is **wrong**, even when its fallback
+coordinate lands in the right cell, and it ranks last in the error median.
 
 * cell accuracy in each run and its change, `d_acc = loso - base`;
-* error p50/p90 on solved rows (`status.solved_mask`, the error-CDF
-  convention), and the change in p50;
+* **per site**: the share of sites at which the accuracy drops, stays or
+  rises (`sites_drop_pct`, `sites_same_pct`, `sites_rise_pct`, and the
+  counts). ~20 replicas at one site succeed or fail together, so the sites,
+  not the TGs, are the independent observations; the per-site shares are how
+  the paper states whether a change is broad or rests on a few sites;
+* the median error in each run, over every TG with unanswered ones ranked
+  last (the `--unanswered cut` convention of the error CDF; NaN when more
+  than half are unanswered), in km and, when the runs' configs declare
+  `analysis.common.dist_norm_km`, normalized (`_norm_e3`, units of 10^-3);
+* the unanswered share in each run;
 * the cell transitions -- correct->wrong (a seen-site win that needed the
-  site) and wrong->correct.
-
-`d_acc` and `d_p50_km` carry a **paired, site-clustered bootstrap** CI: sites
-are resampled with replacement and every TG of a drawn site comes along in
-both runs, because ~20 replicas at one site are closer to one observation than
-to twenty. TG counts sit beside site counts in every table for the same
-reason.
+  site) and wrong->correct, with the sites they occur at.
 
 ## Breakdowns
 
@@ -71,6 +74,8 @@ import pandas as pd
 
 from scripts.analysis.v5.modules import classify as C
 from scripts.analysis.v5.modules import cross
+from scripts.analysis.v5.modules import dist_norm as DN
+from scripts.analysis.v5.modules import figure_error_cdf as E
 from scripts.analysis.v5.modules import grid as G
 from scripts.analysis.v5.modules import sites as SITES
 from scripts.analysis.v5.modules.figure_outcome_map import scored_methods
@@ -97,9 +102,9 @@ COORD_TOL_DEG = 1e-9
 DISTANCE_BINS: tuple[float, ...] = (0.0, 50.0, 200.0, 400.0, np.inf)
 DISTANCE_LABELS: tuple[str, ...] = ("<50 km", "50-200 km", "200-400 km", ">=400 km")
 
-N_BOOT = 2000
-BOOT_SEED = 0
-CI = (2.5, 97.5)
+#: A site's accuracy change smaller than this is "no change" (float noise only:
+#: a change is a multiple of 1 / n_tgs at the site).
+SITE_TOL = 1e-9
 
 #: Separator in the pooled index; occurs in neither a run id nor a TG id.
 RUN_KEY_SEP = "::"
@@ -203,7 +208,9 @@ def load_pair(
             solved = solved_mask(df).to_numpy()
             frame[f"{tag}_status"] = df["status"].astype(str).to_numpy()
             frame[f"{tag}_label"] = df["cell_label"].astype(str).to_numpy()
-            frame[f"{tag}_correct"] = (df["cell_label"] == "correct").to_numpy()
+            # An unanswered TG is wrong even when its fallback coordinate (the
+            # S-P VP's) lands in the right cell: the paper's denominator.
+            frame[f"{tag}_correct"] = solved & (df["cell_label"] == "correct").to_numpy()
             frame[f"{tag}_solved"] = solved
             frame[f"{tag}_err_km"] = np.where(solved, df["pred_dist_to_tg_km"].to_numpy(float), np.nan)
             frame[f"{tag}_pred_lat"] = df["pred_lat"].to_numpy(float)
@@ -268,73 +275,64 @@ def attach_has_x(long: pd.DataFrame, base: RunPaths, root: Path | None) -> tuple
 # ---- the numbers -------------------------------------------------------------
 
 
-def _quantile(values: np.ndarray, q: float) -> float:
-    v = values[np.isfinite(values)]
-    return float(np.quantile(v, q)) if v.size else float("nan")
+def _roster_median(err_km: np.ndarray, solved: np.ndarray) -> float:
+    """Median error over every TG, unanswered ranked last (`E._roster_quantile`)."""
+    known = err_km[solved & np.isfinite(err_km)]
+    return E._roster_quantile(known, len(err_km), 0.5)
 
 
-def _stats(g: pd.DataFrame) -> dict:
+def _per_site(g: pd.DataFrame) -> pd.Series:
+    """Per site, LOSO accuracy minus base accuracy over the site's TGs."""
+    by = g.groupby("site_key", sort=False)
+    return by["loso_correct"].mean() - by["base_correct"].mean()
+
+
+def _stats(g: pd.DataFrame, bounds: tuple[float, float] | None = None) -> dict:
     """One method's numbers over the rows of `g` (one pair, or pooled)."""
-    be, le = g["base_err_km"].to_numpy(float), g["loso_err_km"].to_numpy(float)
     bc, lc = g["base_correct"].to_numpy(bool), g["loso_correct"].to_numpy(bool)
+    bs, ls = g["base_solved"].to_numpy(bool), g["loso_solved"].to_numpy(bool)
     n = len(g)
-    return {
+    site_d = _per_site(g)
+    n_sites = len(site_d)
+    drop, rise = int((site_d < -SITE_TOL).sum()), int((site_d > SITE_TOL).sum())
+    p50_base = _roster_median(g["base_err_km"].to_numpy(float), bs)
+    p50_loso = _roster_median(g["loso_err_km"].to_numpy(float), ls)
+    out = {
         "n_tgs": n,
-        "n_sites": int(g["site_key"].nunique()),
+        "n_sites": n_sites,
         "acc_base": float(bc.mean()) if n else float("nan"),
         "acc_loso": float(lc.mean()) if n else float("nan"),
         "d_acc": float(lc.mean() - bc.mean()) if n else float("nan"),
-        "p50_base_km": _quantile(be, 0.5),
-        "p50_loso_km": _quantile(le, 0.5),
-        "d_p50_km": _quantile(le, 0.5) - _quantile(be, 0.5),
-        "p90_base_km": _quantile(be, 0.9),
-        "p90_loso_km": _quantile(le, 0.9),
-        "unanswered_base": float((~g["base_solved"].to_numpy(bool)).mean()) if n else float("nan"),
-        "unanswered_loso": float((~g["loso_solved"].to_numpy(bool)).mean()) if n else float("nan"),
+        "n_sites_drop": drop,
+        "n_sites_same": n_sites - drop - rise,
+        "n_sites_rise": rise,
+        "sites_drop_pct": 100.0 * drop / n_sites if n_sites else float("nan"),
+        "sites_same_pct": 100.0 * (n_sites - drop - rise) / n_sites if n_sites else float("nan"),
+        "sites_rise_pct": 100.0 * rise / n_sites if n_sites else float("nan"),
+        "p50_base_km": p50_base,
+        "p50_loso_km": p50_loso,
+    }
+    if bounds is not None:
+        for tag, v in (("base", p50_base), ("loso", p50_loso)):
+            out[f"p50_{tag}_norm_e3"] = (
+                float(DN.distance(v, bounds, what=f"p50_{tag}")) if np.isfinite(v) else float("nan")
+            )
+    out.update({
+        "unanswered_base": float((~bs).mean()) if n else float("nan"),
+        "unanswered_loso": float((~ls).mean()) if n else float("nan"),
         "n_correct_to_wrong": int((bc & ~lc).sum()),
         "n_wrong_to_correct": int((~bc & lc).sum()),
         "n_sites_correct_to_wrong": int(g.loc[bc & ~lc, "site_key"].nunique()),
-    }
-
-
-def site_bootstrap(
-    g: pd.DataFrame, *, n_boot: int = N_BOOT, seed: int = BOOT_SEED
-) -> dict:
-    """Paired, site-clustered CI for `d_acc` and `d_p50_km` over one method's rows.
-
-    Each replicate draws sites with replacement; a drawn site contributes all
-    of its TGs, in both runs, so the pairing survives the resampling.
-    """
-    keys = g["site_key"].to_numpy()
-    sites, inv = np.unique(keys, return_inverse=True)
-    if len(sites) < 2 or n_boot <= 0:
-        return {f"{m}_ci_{s}": float("nan") for m in ("d_acc", "d_p50_km") for s in ("lo", "hi")}
-    members = [np.flatnonzero(inv == i) for i in range(len(sites))]
-    bc = g["base_correct"].to_numpy(float)
-    lc = g["loso_correct"].to_numpy(float)
-    be = g["base_err_km"].to_numpy(float)
-    le = g["loso_err_km"].to_numpy(float)
-    rng = np.random.default_rng(seed)
-    d_acc = np.empty(n_boot)
-    d_p50 = np.empty(n_boot)
-    for b in range(n_boot):
-        idx = np.concatenate([members[i] for i in rng.integers(0, len(sites), len(sites))])
-        d_acc[b] = lc[idx].mean() - bc[idx].mean()
-        d_p50[b] = _quantile(le[idx], 0.5) - _quantile(be[idx], 0.5)
-    lo, hi = CI
-    return {
-        "d_acc_ci_lo": float(np.percentile(d_acc, lo)),
-        "d_acc_ci_hi": float(np.percentile(d_acc, hi)),
-        "d_p50_km_ci_lo": float(np.nanpercentile(d_p50, lo)),
-        "d_p50_km_ci_hi": float(np.nanpercentile(d_p50, hi)),
-    }
+        "n_sites_wrong_to_correct": int(g.loc[~bc & lc, "site_key"].nunique()),
+    })
+    return out
 
 
 def summary_table(
     long: pd.DataFrame, scope: str, *, by: str | None = None,
-    n_boot: int = N_BOOT, seed: int = BOOT_SEED,
+    bounds: tuple[float, float] | None = None,
 ) -> pd.DataFrame:
-    """One row per method (and per `by` value), with the bootstrap CI."""
+    """One row per method (and per `by` value)."""
     rows = []
     keys = ["method"] + ([by] if by else [])
     for key, g in long.groupby(keys, sort=False, observed=True, dropna=False):
@@ -342,8 +340,7 @@ def summary_table(
         row = {"scope": scope, "method": key[0], "method_label": method_label(key[0])}
         if by:
             row[by] = key[1]
-        row.update(_stats(g))
-        row.update(site_bootstrap(g, n_boot=n_boot, seed=seed))
+        row.update(_stats(g, bounds))
         rows.append(row)
     out = pd.DataFrame(rows)
     order = {m: i for i, m in enumerate(method_order(long["method"].unique()))}
@@ -378,11 +375,15 @@ def build(
     methods: list[str] | None = None,
     nside: int = SOURCE_NSIDE,
     analysis_root: Path | None = None,
-    n_boot: int = N_BOOT,
-    seed: int = BOOT_SEED,
     source: str = "all",
+    dist_norm_km: dict[str, tuple[float, float] | None] | None = None,
 ) -> dict[str, Path]:
-    """Every table and the manifest for these pairs. Returns `kind -> path`."""
+    """Every table and the manifest for these pairs. Returns `kind -> path`.
+
+    `dist_norm_km` maps run id to its declared `(min, max)`
+    (`labels.declared_dist_norm_km`); every run must agree, and the median
+    errors are then also written normalized.
+    """
     if not pairs:
         raise ValueError("pass at least one --pair BASE:LOSO")
     nside = G.validate_nside(nside)
@@ -397,6 +398,7 @@ def build(
             f"pass --method to pick a common set."
         )
     chosen = method_sets[0]
+    bounds = DN.common_bounds(run_ids, dist_norm_km)
 
     longs, has_x_sources = [], {}
     for base, loso in pairs:
@@ -412,13 +414,13 @@ def build(
     summary, by_dist, by_has_x, transitions = [], [], [], []
     have_has_x = all(s is not None for s in has_x_sources.values())
     for scope, lg in scoped:
-        summary.append(summary_table(lg, scope, n_boot=n_boot, seed=seed))
+        summary.append(summary_table(lg, scope, bounds=bounds))
         by_dist.append(summary_table(
             lg.assign(nearest_site_bin=distance_bin(lg["nearest_site_km"])), scope,
-            by="nearest_site_bin", n_boot=n_boot, seed=seed,
+            by="nearest_site_bin", bounds=bounds,
         ))
         if have_has_x:
-            by_has_x.append(summary_table(lg, scope, by="has_x", n_boot=n_boot, seed=seed))
+            by_has_x.append(summary_table(lg, scope, by="has_x", bounds=bounds))
         transitions.append(transition_table(lg, scope))
 
     out_dir = cross.cross_dir(run_ids, analysis_root=analysis_root, kind=KIND)
@@ -436,13 +438,13 @@ def build(
     ]
     pd.concat(longs, ignore_index=True)[member_cols].to_csv(written["membership"], index=False)
     written["manifest"].write_text(_manifest(
-        pairs, chosen, source=source, nside=nside, n_boot=n_boot, seed=seed,
+        pairs, chosen, source=source, nside=nside, bounds=bounds,
         has_x_sources=has_x_sources, names={k: p.name for k, p in written.items()},
     ))
     return written
 
 
-def _manifest(pairs, methods, *, source, nside, n_boot, seed, has_x_sources, names) -> str:
+def _manifest(pairs, methods, *, source, nside, bounds, has_x_sources, names) -> str:
     body = {
         "tables": {k: v for k, v in names.items() if k != "manifest"},
         "pairs": [{"base": b.run_id, "loso": l.run_id} for b, l in pairs],
@@ -451,9 +453,17 @@ def _manifest(pairs, methods, *, source, nside, n_boot, seed, has_x_sources, nam
         "method_labels": {m: method_label(m) for m in methods},
         "nside": nside,
         "denominator": (
-            "every TG classify scored; unanswered rows are wrong on the cell axis "
-            "and excluded from the error percentiles (status.solved_mask)."
+            "every TG classify scored. An unanswered row (status.solved_mask rejects "
+            "it) is wrong on the cell axis, even when its fallback coordinate lands "
+            "in the right cell, and ranks last in the median error (NaN when more "
+            "than half are unanswered)."
         ),
+        "per_site": (
+            "per site, LOSO accuracy minus base accuracy over the site's TGs; "
+            "sites_drop/same/rise count the sites where it is below, at, or above "
+            "zero. Sites, not TGs, are the independent observations."
+        ),
+        "dist_norm_km": DN.manifest_entry(bounds),
         "guards": {
             "same_tgs": "identical tg_id set, tg_lat/tg_lon and tg_seed_id in both runs",
             "parameter_free_identical": (
@@ -461,10 +471,6 @@ def _manifest(pairs, methods, *, source, nside, n_boot, seed, has_x_sources, nam
                 f"status and prediction must match exactly across a pair "
                 f"(tolerance {COORD_TOL_DEG} deg)."
             ),
-        },
-        "bootstrap": {
-            "kind": "paired, site-clustered: sites resampled with replacement, every TG of a drawn site in both runs",
-            "n_boot": n_boot, "seed": seed, "ci_percentiles": list(CI),
         },
         "distance_bins_km": {
             "edges": [e if np.isfinite(e) else "inf" for e in DISTANCE_BINS],
@@ -478,7 +484,7 @@ def _manifest(pairs, methods, *, source, nside, n_boot, seed, has_x_sources, nam
         ) if len(pairs) > 1 else None,
         "site_caveat": (
             "~20 IP replicas share a site; n_sites beside every n_tgs is the "
-            "effective sample size, and the CI resamples sites, not TGs."
+            "effective sample size, and the per-site shares are stated over sites."
         ),
     }
     return json.dumps(body, indent=2, default=str) + "\n"

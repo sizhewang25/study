@@ -1,9 +1,9 @@
 """`report-loso-delta`: a K-fold run against its leave-one-site-out twin.
 
 The invariants: a pair is only compared on identical TGs and cells, the
-parameter-free methods must not move between the two runs, the bootstrap
-resamples sites (not TGs) and is deterministic, and the pooled rows are the
-pairs' rows stacked.
+parameter-free methods must not move between the two runs, an unanswered TG
+is wrong and ranks last in the median, the per-site shares count sites (not
+TGs), and the pooled rows are the pairs' rows stacked.
 """
 
 from __future__ import annotations
@@ -87,21 +87,44 @@ def test_join_and_stats(tmp_path):
     assert s["n_correct_to_wrong"] == 2 and s["n_sites_correct_to_wrong"] == 1
     assert s["n_wrong_to_correct"] == 0
     assert s["n_tgs"] == 4 and s["n_sites"] == 2
+    # Site A drops (both replicas), site B is unchanged.
+    assert (s["n_sites_drop"], s["n_sites_same"], s["n_sites_rise"]) == (1, 1, 0)
+    assert s["sites_drop_pct"] == 50.0 and s["sites_rise_pct"] == 0.0
     # Parameter-free arms: zero delta by construction.
     sp = L._stats(long[long.method == SHORTEST_PING])
-    assert sp["d_acc"] == 0 and sp["d_p50_km"] == 0
+    assert sp["d_acc"] == 0 and sp["p50_base_km"] == sp["p50_loso_km"]
+    assert sp["n_sites_drop"] == sp["n_sites_rise"] == 0
 
 
-def test_unsolved_rows_are_wrong_but_not_in_error_percentiles(tmp_path):
-    loso_oct = _frame([True, True, True, True], [1, 1, 1, 1])
-    loso_oct.loc[0, "status"] = "FALLBACK"
-    loso_oct.loc[0, "cell_label"] = "unanswered"
+def test_an_unanswered_tg_is_wrong_even_in_the_right_cell(tmp_path):
+    """A FALLBACK row carries the S-P VP's coordinate, which can land in the
+    TG's cell; the paper's denominator still counts it wrong."""
+    loso_oct = _frame([True, True, True, True], [1, 2, 3, 4])
+    loso_oct.loc[0, "status"] = "FALLBACK"  # cell_label stays "correct"
     loso_oct.loc[0, "pred_dist_to_tg_km"] = 9999.0
     base, loso = _pair(tmp_path, oct_loso=loso_oct)
     s = L._stats(L.load_pair(base, loso, [OCT], root=tmp_path))
     assert s["acc_loso"] == 0.75
     assert s["unanswered_loso"] == 0.25
-    assert s["p90_loso_km"] == 1.0  # the FALLBACK distance never enters
+
+
+def test_the_median_ranks_unanswered_last(tmp_path):
+    loso_oct = _frame([True] * 4, [1, 2, 3, 4])
+    loso_oct.loc[[0, 1], "status"] = "FALLBACK"
+    base, loso = _pair(tmp_path, oct_loso=loso_oct)
+    g = L.load_pair(base, loso, [OCT], root=tmp_path)
+    s = L._stats(g)
+    # Roster [3, 4, inf, inf]: the median interpolates into an unanswered row.
+    assert np.isnan(s["p50_loso_km"])
+    assert s["p50_base_km"] == 4.5  # all answered: [3, 4, 5, 6]
+
+
+def test_the_median_is_normalized_with_declared_bounds(tmp_path):
+    base, loso = _pair(tmp_path)
+    g = L.load_pair(base, loso, [OCT], root=tmp_path)
+    s = L._stats(g, (0.0, 1_000.0))
+    assert s["p50_base_norm_e3"] == pytest.approx(4.5)  # 4.5 km of a 1,000 km span
+    assert "p50_base_norm_e3" not in L._stats(g)
 
 
 def test_parameter_free_must_not_move(tmp_path):
@@ -129,19 +152,6 @@ def test_different_cells_refused(tmp_path):
         L.load_pair(base, loso, [OCT], root=tmp_path)
 
 
-def test_bootstrap_is_site_clustered_and_deterministic(tmp_path):
-    base, loso = _pair(tmp_path)
-    g = L.load_pair(base, loso, [OCT], root=tmp_path)
-    a = L.site_bootstrap(g, n_boot=500, seed=1)
-    b = L.site_bootstrap(g, n_boot=500, seed=1)
-    assert a == b
-    # Two sites: a replicate holds A twice (-1.0), B twice (0.0) or one each
-    # (-0.5). A TG-level bootstrap would also produce -0.25 and -0.75.
-    assert a["d_acc_ci_lo"] == -1.0 and a["d_acc_ci_hi"] == 0.0
-    one_site = g[g.site_key == g.site_key.iat[0]]
-    assert np.isnan(L.site_bootstrap(one_site, n_boot=100)["d_acc_ci_lo"])
-
-
 def test_nearest_site_distance_and_bins(tmp_path):
     base, loso = _pair(tmp_path)
     g = L.load_pair(base, loso, [OCT], root=tmp_path)
@@ -152,7 +162,7 @@ def test_nearest_site_distance_and_bins(tmp_path):
 def test_build_writes_tables_and_pools(tmp_path):
     p1 = _pair(tmp_path, "1")
     p2 = _pair(tmp_path, "2", oct_loso=_frame([True] * 4, [3, 4, 5, 6]))
-    written = L.build([p1, p2], analysis_root=tmp_path, n_boot=50)
+    written = L.build([p1, p2], analysis_root=tmp_path)
     assert "by_has_x" not in written  # no pni-gap output in the fixture
     summary = pd.read_csv(written["summary"])
     oct_rows = summary[summary.method == OCT].set_index("scope")
@@ -165,6 +175,7 @@ def test_build_writes_tables_and_pools(tmp_path):
     t = trans[(trans.scope == L.POOLED) & (trans.method == OCT)]
     assert t.n_tgs.sum() == 8
     manifest = json.loads(written["manifest"].read_text())
+    assert "bootstrap" not in manifest and manifest["dist_norm_km"] is None
     assert manifest["pairs"] == [{"base": "mesh1", "loso": "loso1"}, {"base": "mesh2", "loso": "loso2"}]
     member = pd.read_csv(written["membership"])
     assert len(member) == 2 * 3 * 4  # pairs x methods x TGs
@@ -173,7 +184,7 @@ def test_build_writes_tables_and_pools(tmp_path):
 def test_run_in_two_pairs_refused(tmp_path):
     p1 = _pair(tmp_path, "1")
     with pytest.raises(ValueError, match="more than one pair"):
-        L.build([p1, (p1[0], _pair(tmp_path, "2")[1])], analysis_root=tmp_path, n_boot=0)
+        L.build([p1, (p1[0], _pair(tmp_path, "2")[1])], analysis_root=tmp_path)
 
 
 def test_requested_method_missing_refused(tmp_path):
@@ -193,7 +204,7 @@ def test_has_x_breakdown_uses_the_flag(tmp_path):
         "cluster": [7, 7, 7, 7],  # one cluster id, two flag values: the flag must win
         "tg_cell_holds_x": [False, False, True, True],
     }).to_csv(d / "sp_pni_cells_tgs.csv", index=False)
-    written = L.build([(base, loso)], analysis_root=tmp_path, n_boot=0)
+    written = L.build([(base, loso)], analysis_root=tmp_path)
     t = pd.read_csv(written["by_has_x"])
     o = t[t.method == OCT].set_index("has_x")
     assert o.loc[L.NO_X, "d_acc"] == -1.0 and o.loc[L.HAS_X, "d_acc"] == 0.0

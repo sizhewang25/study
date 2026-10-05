@@ -673,21 +673,26 @@ more than one pair) joins each method's `classify` frames from the two runs
 on `tg_id`. It refuses the pair unless the TGs, coordinates and `tg_seed_id`
 are identical and the parameter-free methods (S-P, SOI) predict identically
 in both runs: they fit nothing, so a difference means the runs saw different
-inputs. Per method it reports:
+inputs. Per method, with the paper's conventions (an unanswered TG is wrong,
+even when its fallback coordinate lands in the right cell), it reports:
 - cell accuracy in each run and `d_acc`;
-- error p50/p90 on solved rows and `d_p50_km`;
+- **per site**, the share of sites at which the accuracy drops, stays or rises
+  (`sites_{drop,same,rise}_pct`, with counts). Replicas at one site succeed or
+  fail together, so sites are the independent observations, and the paper
+  states each change this way rather than with a confidence interval;
+- the median error in each run over every TG, unanswered ranked last (NaN
+  past half unanswered), in km and, when the configs declare
+  `analysis.common.dist_norm_km`, normalized (`p50_{base,loso}_norm_e3`);
 - unanswered shares;
-- correct→wrong and wrong→correct transitions, with their site counts;
-- a **paired, site-clustered bootstrap** CI on `d_acc` and `d_p50_km`: sites
-  are resampled, and each drawn site brings all of its TGs in both runs.
+- correct→wrong and wrong→correct transitions, with their site counts.
 
 Breakdowns: by each site's distance to its nearest other site in the same run
 (`<50`, `50-200`, `200-400`, `>=400` km), and by has-X / no-X
 (`report-sp-pni-cells`' `tg_cell_holds_x`) when the base run has exactly one
 `sp_pni_cells_tgs.csv`. The flag is used rather than the cluster id, because
 each run numbers its clusters independently. The per-TG `membership`
-table and the manifest record the guards and bootstrap settings.
-`--method` narrows the methods; `--n-boot 0` skips the CI.
+table and the manifest record the guards and the conventions. `--method`
+narrows the methods.
 
 The LOSO configs carry no `report-loso-delta` block: the v3 CLI that the
 benchmark's dataset inspection calls refuses any unknown `analysis.<command>`
