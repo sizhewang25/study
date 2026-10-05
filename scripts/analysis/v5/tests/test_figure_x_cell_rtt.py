@@ -216,3 +216,33 @@ class TestTheRealPaperNumbers:
             ("pro-as02-mesh", "has-X"): (1.4, 9), ("pro-as02-mesh", "no-X"): (13.3, 13),
             ("pro-as03-mesh", "has-X"): (1.6, 10), ("pro-as03-mesh", "no-X"): (8.8, 13),
         }
+
+
+class TestNormalizedAndShares:
+    def test_sites_pct_is_the_sides_share_of_its_networks_sites(self):
+        tgs = _frame([("r", True, "a", 1.0, 20), ("r", True, "b", 2.0, 20),
+                      ("r", False, "c", 12.0, 20), ("r", False, "d", 15.0, 20)])
+        stats = X.stats_table(tgs, ["r"])
+        assert list(stats.sites_pct) == [50.0, 50.0]
+
+    def test_normalized_build_adds_norm_columns_and_records_bounds(self, ready):
+        [png] = X.build_for_run(ready["run"], ready["pni_csv"], analysis_root=ready["root"],
+                                source_csv=ready["edge_csv"], rtt_norm_ms=(0.0, 100.0))
+        stats = pd.read_csv(png.parent / X.CSV_NAME)
+        side = stats[stats.n_tgs > 0].iloc[0]
+        assert side.p50_norm == pytest.approx(side.p50_ms / 100.0)
+        manifest = json.loads((png.parent / X.MANIFEST_NAME).read_text())
+        assert manifest["rtt_norm_ms"]["split_norm"] == pytest.approx(X.SPLIT_MS / 100.0)
+
+    def test_a_floor_outside_the_bounds_is_refused(self, ready):
+        with pytest.raises(ValueError, match="outside the declared"):
+            X.build_for_run(ready["run"], ready["pni_csv"], analysis_root=ready["root"],
+                            source_csv=ready["edge_csv"], rtt_norm_ms=(0.0, 0.001))
+
+
+def test_panel_names_drop_the_words_every_run_shares(monkeypatch):
+    labels = {"a": "PRO-MESH AS-A", "b": "PRO-MESH AS-B", "c": "PRO-LOSO AS-C"}
+    monkeypatch.setattr(X, "dataset_label", labels.__getitem__)
+    assert X.panel_names(["a", "b"]) == {"a": "AS-A", "b": "AS-B"}
+    assert X.panel_names(["a", "c"]) == {"a": "PRO-MESH AS-A", "c": "PRO-LOSO AS-C"}
+    assert X.panel_names(["a"]) == {"a": "PRO-MESH AS-A"}

@@ -1770,8 +1770,10 @@ def plot_x_cell_rtt_cmd(
     has-X is `report-sp-pni-cells`'s flag: the TG's own cell holds X, the
     interconnect nearest it. Boxes are over TGs (whiskers p5/p95, TGs beyond
     them as open circles) on a log axis, with a dotted reading line at
-    3 ms; tick labels carry the site count beside the TG count. Runs every
-    staleness check of `report-sp-pni-cells` and `plot-pni-cluster-rtt`.
+    3 ms; tick labels carry the side's share of the network's sites. RTTs are
+    normalized by the config's `analysis.common.rtt_norm_ms` when it declares
+    one. Runs every staleness check of `report-sp-pni-cells` and
+    `plot-pni-cluster-rtt`.
 
     Writes `x_cell_rtt.{png,csv,manifest.json}` beside the clusters. Needs
     `classify` and `plot-pni-gap`.
@@ -1779,9 +1781,12 @@ def plot_x_cell_rtt_cmd(
     _refuse_combo_ids("plot-x-cell-rtt", run_id or [], outputs_root)
     try:
         runs, pni_csvs, layouts, source_csvs = _pni_inputs(run_id, layout, pni_csv, source_csv, outputs_root)
+        from scripts.analysis.v5.modules.labels import declared_rtt_norm_ms
+
         pngs = figure_x_cell_rtt.build_for_runs(
             runs, pni_csvs, layouts=layouts,
             analysis_root=analysis_root, source_csvs=source_csvs,
+            rtt_norm_ms={r.run_id: declared_rtt_norm_ms(r.run_id, outputs_root) for r in runs},
         )
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc

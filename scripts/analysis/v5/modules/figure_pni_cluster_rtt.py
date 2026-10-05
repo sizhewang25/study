@@ -55,8 +55,9 @@ Any mismatch raises and says to re-run `plot-pni-gap`.
 ## Replicas
 
 ~20 TGs per site share their VP geometry, so a cluster of 20 TGs at one site
-is one site's RTTs repeated, not 20 samples. Each tick label carries the
-cluster's site count next to its TG count for that reason.
+is one site's RTTs repeated, not 20 samples. The tick labels carry only the
+cluster name: the TG and site counts are on the `plot-pni-gap` scatter beside
+it, and in this figure's CSV (`n_tgs`, `n_sites`).
 
 Pooled (`--layout pooled`), the clusters come from `_cross/pni-gap/...` and
 every check above runs per run, each against its own PNI list and edge CSV.
@@ -97,9 +98,11 @@ QUANTITY = "min RTT (ms)"
 #: The y-axis label when the RTTs are normalized by the declared `rtt_norm_ms`.
 QUANTITY_NORM = "normalized min RTT"
 
-#: A small figure. Width is fixed rather than grown with k; at k <= 6 a
-#: 0.5 in slot per box still fits a two-line tick label.
-FIGSIZE = (3.0, 2.0)
+#: A small figure, printed at its own size as one of three panels in a row
+#: beside the VP-distance CDF and the interconnect scatter (~1/3 of the text
+#: width). Width is fixed rather than grown with k; the tick labels are the
+#: cluster names alone.
+FIGSIZE = (1.4, 1.75)
 
 #: y tick spacing, in ms.
 Y_STEP_MS = 10.0
@@ -282,8 +285,6 @@ def outliers(pairs: pd.DataFrame, stats: pd.DataFrame) -> dict[int, list[float]]
 def plot(
     stats: pd.DataFrame,
     *,
-    total_tgs: int,
-    total_sites: int,
     out_png: Path,
     fliers: dict[int, list[float]] | None = None,
     rtt_norm_ms: Bounds | None = None,
@@ -311,14 +312,8 @@ def plot(
         patch.set(facecolor=hue, alpha=0.6, edgecolor=hue, linewidth=0.6)
         flier.set(marker="o", markersize=OUTLIER_MS_PT, markerfacecolor="none",
                   markeredgecolor=hue, markeredgewidth=0.5, linestyle="none")
-    # TGs then sites, the scatter legend's order. Sites are the count that says
-    # how much evidence a box rests on: replicas are one observation repeated.
-    ax.set_xticks(
-        range(1, len(clusters) + 1),
-        [f"{cluster_label(r[P.CLUSTER_COL])}\n{P.count_label(r.n_tgs, total_tgs, 'TGs')}"
-         f"\n{P.count_label(r.n_sites, total_sites, 'sites')}" for _, r in stats.iterrows()],
-        fontsize=5.5,
-    )
+    # Cluster names only: the counts are on the scatter, which shares the clusters.
+    ax.set_xticks(range(1, len(clusters) + 1), [cluster_label(c) for c in clusters], fontsize=5.5)
     ax.set_ylabel(QUANTITY if rtt_norm_ms is None else QUANTITY_NORM, fontsize=6)
     ax.set_ylim(bottom=0)
     ax.yaxis.set_major_locator(MultipleLocator(Y_STEP_MS if rtt_norm_ms is None else Y_STEP_NORM))
@@ -390,8 +385,7 @@ def _write(pairs: pd.DataFrame, tgs: pd.DataFrame, meta: dict, out_dir: Path,
     table = stats if rtt_norm_ms is None else normalized(stats, rtt_norm_ms)
     table.to_csv(out_dir / CSV_NAME, index=False)
     (out_dir / MANIFEST_NAME).write_text(_manifest(meta, stats, rtt_norm_ms))
-    return plot(stats, total_tgs=meta["n_tgs"], total_sites=meta["n_sites"],
-                out_png=out_dir / PNG_NAME, fliers=outliers(pairs, stats), rtt_norm_ms=rtt_norm_ms)
+    return plot(stats, out_png=out_dir / PNG_NAME, fliers=outliers(pairs, stats), rtt_norm_ms=rtt_norm_ms)
 
 
 def build_for_runs(

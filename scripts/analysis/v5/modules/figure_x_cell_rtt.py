@@ -36,7 +36,20 @@ y axis is log: has-X boxes sit near 1 ms and one inflated site sits near
 
 Groups are the runs in the clusters manifest's order, has-X left of no-X.
 Pooled, the CSV also carries one `run_id = all` row per side; the figure
-draws only the per-run pairs.
+draws only the per-run pairs. A group's title is its dataset label minus the
+words every group shares (`PRO-MESH AS-A` -> `AS-A` when all three are
+`PRO-MESH`).
+
+## Normalized RTT, shares not counts
+
+When the runs declare `analysis.common.rtt_norm_ms: {min, max}` (as
+`plot-pni-cluster-rtt`), every RTT on the figure -- boxes, circles, median
+labels and the split line -- is drawn as (r - min) / (max - min), so no
+absolute RTT is printed. The CSV keeps the `_ms` columns and adds `_norm`
+twins. Pooled runs must declare one pair of bounds.
+
+Tick labels carry the side's share of its network's sites, not counts: the
+paper prints no absolute TG or site count. Counts stay in the CSV.
 
 No coordinate, VP id or interconnect id is written.
 
@@ -85,18 +98,22 @@ GROUPS = ((True, "has-$X$", "has-X"), (False, "no-$X$", "no-X"))
 HUES = {True: CLUSTER_HUES[0], False: CLUSTER_HUES[1]}
 
 QUANTITY = "min RTT (ms), per TG"
+QUANTITY_NORM = "normalized min RTT"
 
 #: The dotted line, in ms. A reading aid; see the module docstring.
 SPLIT_MS = 3.0
 
 #: Log-axis ticks, in ms; only those inside the data's range are drawn.
 Y_TICKS_MS = (0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0)
+#: The normalized axis labels decades only, as 10^k: every median carries its
+#: own number, so the axis only has to say the order of magnitude.
+Y_TICKS_NORM = (0.0001, 0.001, 0.01, 0.1, 1.0)
 #: Headroom either side of the data on the log axis, as a factor.
 Y_PAD = 1.5
 
 #: Width per run group and the fixed height, in inches.
-GROUP_WIDTH_IN = 1.2
-HEIGHT_IN = 2.1
+GROUP_WIDTH_IN = 1.65
+HEIGHT_IN = 1.35
 #: Box centres within a group, and the gap between groups, in x units.
 SLOT = 1.0
 GROUP_GAP = 0.6
@@ -139,14 +156,16 @@ def load_runs(
     return out.drop(columns="_merge"), meta, out_dir
 
 
-def _block(g: pd.DataFrame, n_run_tgs: int) -> dict:
+def _block(g: pd.DataFrame, n_run_tgs: int, n_run_sites: int) -> dict:
     rtt = g[FLOOR_COL].to_numpy(float)
     stats = cost_stats(rtt)
     n = int(stats.pop("n"))
+    n_sites = int(g[S.SITE_KEY_COL].nunique())
     return {
         "n_tgs": n,
         "tgs_pct": P.share_pct(n, n_run_tgs),
-        "n_sites": int(g[S.SITE_KEY_COL].nunique()),
+        "n_sites": n_sites,
+        "sites_pct": P.share_pct(n_sites, n_run_sites),
         **{f"{k}_ms": v for k, v in stats.items()},
         "n_outliers": len(R._outside(rtt, stats["p5"], stats["p95"])) if n else 0,
         "n_le_split": int((rtt <= SPLIT_MS).sum()),
@@ -171,7 +190,8 @@ def stats_table(tgs: pd.DataFrame, run_ids: list[str]) -> pd.DataFrame:
                 "dataset": dataset_label(scope) if scope != ALL_RUNS else ALL_RUNS,
                 "side": name,
                 GROUP_COL: flag,
-                **_block(block[block[GROUP_COL] == flag], len(block)),
+                **_block(block[block[GROUP_COL] == flag], len(block),
+                         block[["run_id", S.SITE_KEY_COL]].drop_duplicates().shape[0]),
             })
     return pd.DataFrame(rows)
 
@@ -196,11 +216,26 @@ def positions(run_ids: list[str]) -> dict[tuple[str, bool], float]:
             for i, r in enumerate(run_ids) for j, (flag, _, _) in enumerate(GROUPS)}
 
 
-def _y_limits(values: np.ndarray) -> tuple[float, float]:
+def _y_limits(values: np.ndarray, split: float, ticks: tuple[float, ...]) -> tuple[float, float]:
     v = values[np.isfinite(values) & (values > 0)]
     if not v.size:
-        return Y_TICKS_MS[2], Y_TICKS_MS[-3]
-    return float(min(v.min(), SPLIT_MS)) / Y_PAD, float(max(v.max(), SPLIT_MS)) * Y_PAD
+        return ticks[2], ticks[-3]
+    return float(min(v.min(), split)) / Y_PAD, float(max(v.max(), split)) * Y_PAD
+
+
+def panel_names(run_ids: list[str]) -> dict[str, str]:
+    """Each run's dataset label minus the leading words every run's label shares.
+
+    One run keeps its whole label: there is nothing to compare it against.
+    """
+    words = {r: dataset_label(r).split() for r in run_ids}
+    shared = 0
+    if len(run_ids) > 1:
+        for column in zip(*words.values()):
+            if len(set(column)) > 1:
+                break
+            shared += 1
+    return {r: " ".join(w[shared:]) or " ".join(w) for r, w in words.items()}
 
 
 def plot(
@@ -209,46 +244,60 @@ def plot(
     run_ids: list[str],
     out_png: Path,
     fliers: dict[tuple[str, bool], list[float]] | None = None,
+    rtt_norm_ms: R.Bounds | None = None,
 ) -> Path:
-    """Two boxes per run, has-X then no-X, on a log axis; `fliers` drawn as open circles."""
+    """Two boxes per run, has-X then no-X, on a log axis; `fliers` drawn as open circles.
+
+    With `rtt_norm_ms`, every value is drawn normalized by those bounds.
+    """
+    def y(v):
+        return v if rtt_norm_ms is None else R.to_norm(np.asarray(v, dtype=float), rtt_norm_ms)
+
     stats = stats[stats.run_id != ALL_RUNS]
     pos = positions(run_ids)
+    names = panel_names(run_ids)
     fig, ax = plt.subplots(figsize=(GROUP_WIDTH_IN * len(run_ids) + 0.5, HEIGHT_IN))
-    ticks, labels, extremes = [], [], [stats.min_ms.to_numpy(float), stats.max_ms.to_numpy(float)]
+    ticks, labels = [], []
+    extremes = [y(stats.min_ms.to_numpy(float)), y(stats.max_ms.to_numpy(float))]
     for _, r in stats.iterrows():
         flag = bool(r[GROUP_COL])
         x = pos[(r.run_id, flag)]
         tick = next(t for f, t, _ in GROUPS if f == flag)
         ticks.append(x)
-        labels.append(f"{tick}\n{int(r.n_tgs)} TGs\n{int(r.n_sites)} sites")
+        labels.append(f"{tick}\n{r.sites_pct:.0f}% sites")
         if not r.n_tgs:
             continue
-        box = {**bxp_stats({k: r[f"{k}_ms"] for k in STAT_KEYS}),
-               "fliers": (fliers or {}).get((r.run_id, flag), [])}
+        box = {**bxp_stats({k: float(y(r[f"{k}_ms"])) for k in STAT_KEYS}),
+               "fliers": list(y((fliers or {}).get((r.run_id, flag), [])))}
         art = ax.bxp([box], positions=[x], widths=BOX_WIDTH, patch_artist=True, showfliers=True,
                      medianprops={"color": INK, "lw": 0.9},
                      whiskerprops={"color": INK_2, "lw": 0.6}, capprops={"color": INK_2, "lw": 0.6})
         art["boxes"][0].set(facecolor=HUES[flag], alpha=0.45, edgecolor=HUES[flag], linewidth=0.6)
         art["fliers"][0].set(marker="o", markersize=OUTLIER_MS_PT, markerfacecolor="none",
                              markeredgecolor=HUES[flag], markeredgewidth=0.5, linestyle="none")
-        ax.text(x + BOX_WIDTH / 2 + 0.05, r.p50_ms, f"{r.p50_ms:.1f}", fontsize=5.5,
+        median = float(y(r.p50_ms))
+        ax.text(x + BOX_WIDTH / 2 + 0.05, median,
+                f"{median:.1f}" if rtt_norm_ms is None else f"{median:.3f}", fontsize=5.5,
                 va="center", color=INK_2)
     # The network name above its pair, in axes coordinates so it clears every box.
     for rid in run_ids:
         mid = np.mean([pos[(rid, f)] for f, _, _ in GROUPS])
-        ax.text(mid, 1.0, dataset_label(rid), transform=ax.get_xaxis_transform(),
+        ax.text(mid, 1.0, names[rid], transform=ax.get_xaxis_transform(),
                 ha="center", va="bottom", fontsize=6, color=INK)
-    ax.axhline(SPLIT_MS, color=INK_2, lw=0.4, ls=":", zorder=0)
+    split = float(y(SPLIT_MS))
+    ax.axhline(split, color=INK_2, lw=0.4, ls=":", zorder=0)
     ax.set_yscale("log")
-    lo, hi = _y_limits(np.concatenate(extremes))
+    y_ticks = Y_TICKS_MS if rtt_norm_ms is None else Y_TICKS_NORM
+    lo, hi = _y_limits(np.concatenate(extremes), split, y_ticks)
     ax.set_ylim(lo, hi)
-    shown = [t for t in Y_TICKS_MS if lo <= t <= hi]
+    shown = [t for t in y_ticks if lo <= t <= hi]
     if shown:
-        ax.set_yticks(shown, [f"{t:g}" for t in shown])
+        ax.set_yticks(shown, [f"{t:g}" if rtt_norm_ms is None
+                              else rf"$10^{{{int(round(np.log10(t)))}}}$" for t in shown])
     ax.yaxis.set_minor_formatter(plt.NullFormatter())
     ax.set_xticks(ticks, labels, fontsize=5.5)
     ax.set_xlim(min(pos.values()) - SLOT * 0.6, max(pos.values()) + SLOT * 0.8)
-    ax.set_ylabel(QUANTITY, fontsize=6)
+    ax.set_ylabel(QUANTITY if rtt_norm_ms is None else QUANTITY_NORM, fontsize=6)
     ax.tick_params(axis="both", labelsize=5.5, length=2, pad=1.5)
     ax.grid(axis="y", alpha=0.25, lw=0.3)
     for spine in ("top", "right"):
@@ -263,7 +312,8 @@ def plot(
 # -- the whole step -----------------------------------------------------------
 
 
-def _manifest(meta: dict, tgs: pd.DataFrame, stats: pd.DataFrame) -> str:
+def _manifest(meta: dict, tgs: pd.DataFrame, stats: pd.DataFrame,
+              rtt_norm_ms: R.Bounds | None = None) -> str:
     return json.dumps(
         {
             "figure": PNG_NAME,
@@ -280,6 +330,16 @@ def _manifest(meta: dict, tgs: pd.DataFrame, stats: pd.DataFrame) -> str:
             "grouping": f"{GROUP_COL}: {M.DEFINITIONS['rule_correct']} (X = {M.DEFINITIONS['x']})",
             "n_tgs_x_vs_any_interconnect_disagree": int((tgs[GROUP_COL] != tgs[ANY_COL]).sum()),
             "split_ms": SPLIT_MS,
+            "rtt_norm_ms": (
+                None if rtt_norm_ms is None else {
+                    "min": rtt_norm_ms[0],
+                    "max": rtt_norm_ms[1],
+                    "source": "analysis.common.rtt_norm_ms in each run's config",
+                    "rule": "every drawn RTT r is (r - min) / (max - min); the CSV adds *_norm",
+                    "split_norm": float(R.to_norm(SPLIT_MS, rtt_norm_ms)),
+                }
+            ),
+            "tick_labels": "side's share of its network's sites (sites_pct); counts in the CSV",
             "split_note": "a reading aid drawn as a dotted line and counted in n_le_split; not fitted",
             "boxes": (
                 "whiskers p5/p95, hinges p25/p75, line = median, log y axis; every TG "
@@ -295,12 +355,22 @@ def _manifest(meta: dict, tgs: pd.DataFrame, stats: pd.DataFrame) -> str:
     )
 
 
-def _write(tgs: pd.DataFrame, meta: dict, out_dir: Path) -> Path:
+def _check_bounds(tgs: pd.DataFrame, bounds: R.Bounds) -> None:
+    """Refuse a TG floor outside the declared bounds: the axis says it holds them all."""
+    R.check_bounds(tgs.rename(columns={FLOOR_COL: "rtt_ms"}), bounds)
+
+
+def _write(tgs: pd.DataFrame, meta: dict, out_dir: Path,
+           rtt_norm_ms: R.Bounds | None = None) -> Path:
     run_ids = list(meta["run_ids"])
     stats = stats_table(tgs, run_ids)
-    stats.to_csv(out_dir / CSV_NAME, index=False)
-    (out_dir / MANIFEST_NAME).write_text(_manifest(meta, tgs, stats) + "\n")
-    return plot(stats, run_ids=run_ids, out_png=out_dir / PNG_NAME, fliers=outliers(tgs, stats))
+    if rtt_norm_ms is not None:
+        _check_bounds(tgs, rtt_norm_ms)
+    table = stats if rtt_norm_ms is None else R.normalized(stats, rtt_norm_ms)
+    table.to_csv(out_dir / CSV_NAME, index=False)
+    (out_dir / MANIFEST_NAME).write_text(_manifest(meta, tgs, stats, rtt_norm_ms) + "\n")
+    return plot(stats, run_ids=run_ids, out_png=out_dir / PNG_NAME, fliers=outliers(tgs, stats),
+                rtt_norm_ms=rtt_norm_ms)
 
 
 def build_for_runs(
@@ -310,8 +380,13 @@ def build_for_runs(
     layouts: tuple[str, ...] = (P.PER_RUN,),
     analysis_root: Path | None = None,
     source_csvs: dict[str, Path] | None = None,
+    rtt_norm_ms: dict[str, R.Bounds | None] | None = None,
 ) -> list[Path]:
-    """The boxes for every requested layout, each beside the clusters it reads."""
+    """The boxes for every requested layout, each beside the clusters it reads.
+
+    `rtt_norm_ms` maps run id to its declared `(min, max)`
+    (`labels.declared_rtt_norm_ms`); a run absent or None is drawn in ms.
+    """
     bad = [lay for lay in layouts if lay not in P.LAYOUTS]
     if bad:
         raise ValueError(f"unknown layout {bad}; expected {list(P.LAYOUTS)}")
@@ -319,10 +394,12 @@ def build_for_runs(
     if P.PER_RUN in layouts:
         for run in runs:
             one = {run.run_id: source_csvs[run.run_id]} if source_csvs and run.run_id in source_csvs else None
-            pngs.append(_write(*load_runs([run], pni_csvs, analysis_root=analysis_root, source_csvs=one)))
+            pngs.append(_write(*load_runs([run], pni_csvs, analysis_root=analysis_root, source_csvs=one),
+                               R.common_norm([run.run_id], rtt_norm_ms)))
     if P.POOLED in layouts:
+        norm = R.common_norm([r.run_id for r in runs], rtt_norm_ms)
         pngs.append(_write(*load_runs(runs, pni_csvs, layout=P.POOLED, analysis_root=analysis_root,
-                                      source_csvs=source_csvs)))
+                                      source_csvs=source_csvs), norm))
     return pngs
 
 
@@ -332,9 +409,11 @@ def build_for_run(
     *,
     analysis_root: Path | None = None,
     source_csv: Path | None = None,
+    rtt_norm_ms: R.Bounds | None = None,
 ) -> list[Path]:
     """CSV, manifest and PNG for one run, per-run layout."""
     return build_for_runs(
         [run], {run.run_id: pni_csv}, analysis_root=analysis_root,
         source_csvs={run.run_id: source_csv} if source_csv is not None else None,
+        rtt_norm_ms={run.run_id: rtt_norm_ms},
     )
