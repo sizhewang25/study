@@ -939,11 +939,10 @@ def plot_ripe_vs_databases_cmd(
     validated six-term palette. Writes `ripe_vs_databases.{png,csv,manifest.json}`
     into `ripe-vs-databases/`. Needs `classify` on the run.
     """
-    # `cut` is the error CDF's alone: this figure has no `.cut.` artifact name.
-    db_policies = (figure_error_cdf.EXCLUDE, figure_error_cdf.SENTINEL)
-    if unanswered not in db_policies:
+    if unanswered not in figure_error_cdf.UNANSWERED_POLICIES:
         raise typer.BadParameter(
-            f"unknown --unanswered {unanswered!r}; pick from {list(db_policies)}"
+            f"unknown --unanswered {unanswered!r}; pick from "
+            f"{list(figure_error_cdf.UNANSWERED_POLICIES)}"
         )
     unknown = [d for d in (database or ()) if d not in ripe_vs_databases.DATABASES]
     if unknown:

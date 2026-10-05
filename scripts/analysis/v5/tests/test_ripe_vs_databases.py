@@ -146,8 +146,8 @@ class TestDistances:
 
 class TestSeries:
     def test_databases_are_labelled_by_their_own_terms(self):
-        assert RVD.series_label(RVD.MAXMIND) == "MM"
-        assert RVD.series_label(RVD.IPINFO) == "IPI"
+        assert RVD.series_label(RVD.MAXMIND) == "MaxMind"
+        assert RVD.series_label(RVD.IPINFO) == "IPinfo"
 
     def test_methods_keep_the_package_terms(self):
         assert RVD.series_label("million_scale_cbg") == "SOI"
@@ -188,14 +188,14 @@ class TestArtifacts:
 
         out = png.parent
         table = pd.read_csv(out / RVD.artifact_names()[1])
-        assert set(table.loc[table["is_database"], "method_label"]) == {"MM", "IPI"}
+        assert set(table.loc[table["is_database"], "method_label"]) == {"MaxMind", "IPinfo"}
         # An exact lookup: every percentile is zero to the CSV's 3dp.
         assert (table.loc[table["is_database"], E.pcol(50)] == 0).all()
 
         body = json.loads((out / RVD.artifact_names()[2]).read_text())
         assert set(body["databases"]) == set(RVD.DATABASES)
         assert body["databases"][RVD.IPINFO]["n_covered"] == len(TGS)
-        assert body["terms"]["MM"] == RVD.DB_TERMS["MM"]
+        assert body["terms"]["MaxMind"] == RVD.DB_TERMS["MaxMind"]
         # The glossary must still carry the methods on the panel.
         assert body["terms"]["SOI"] == MT.METHOD_TERMS["SOI"]
 

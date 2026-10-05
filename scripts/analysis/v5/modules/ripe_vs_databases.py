@@ -39,7 +39,15 @@ population; under `sentinel` it re-enters at 10,000 km, and the height of the
 curve at the sentinel is the database's coverage. `n_solved` in the CSV is the
 covered count, so a curve drawn on partial coverage is never silently read as a
 full one. On the RIPE anchor roster both databases cover every TG, so today the
-two policies differ only in the CBG methods' refusals.
+two policies differ only in the CBG methods' refusals. `cut`, the paper's
+policy, keeps the unanswered rows in the denominator and stops each curve at
+its last answer, as in `figure_error_cdf`.
+
+## Styled as the paper's error CDF, in km
+
+No title (the caption names the figure), decade ticks as 10^k and no km
+reference verticals, like the normalized error CDF. The axis itself stays in
+km: this is the public RIPE dataset, which needs no normalization.
 
 Command: `plot-ripe-vs-databases`.
 """
@@ -74,35 +82,42 @@ MAXMIND = "maxmind_free"
 
 #: Series id -> (filename, term). Ordered as they are drawn.
 DATABASES: dict[str, tuple[str, str]] = {
-    MAXMIND: ("maxmind_free_geo_anchors.json", "MM"),
-    IPINFO: ("ip_info_geo_anchors.json", "IPI"),
+    MAXMIND: ("maxmind_free_geo_anchors.json", "MaxMind"),
+    IPINFO: ("ip_info_geo_anchors.json", "IPinfo"),
 }
 
+#: Terms are the vendors' names written out, not abbreviations: a reader
+#: meets them only in this figure, so an abbreviation would need a gloss.
+#:
 #: Term -> full name, the local twin of `methods.METHOD_TERMS`. Kept here
 #: because `test_methods` pins that table to the hue table, and these two have
 #: no hue in the validated palette by design (see the module docstring).
 DB_TERMS: dict[str, str] = {
-    "MM": "MaxMind GeoLite2 (free)",
-    "IPI": "IPinfo",
+    "MaxMind": "MaxMind GeoLite2 (free)",
+    "IPinfo": "IPinfo",
 }
 
-#: Term -> hue. Chosen away from the six method hues: MM's burnt orange against
-#: OCT-S's #eda100 yellow, IPI's orchid against OCT-H's #e34948 red. The dash
+#: Term -> hue. Chosen away from the six method hues: MaxMind's burnt orange against
+#: OCT-S's #eda100 yellow, IPinfo's orchid against OCT-H's #e34948 red. The dash
 #: patterns below carry the distinction a second time, so the pair is
 #: separable in greyscale and under colour-vision simulation.
 DB_HUES: dict[str, str] = {
-    "MM": "#b5651d",
-    "IPI": "#b455a8",
+    "MaxMind": "#b5651d",
+    "IPinfo": "#b455a8",
 }
 
 #: Term -> linestyle. Mirrors the paper's figure: MaxMind dashed, IPinfo
 #: dash-dot, and neither solid, because solid is a measured result here.
 DB_DASHES: dict[str, tuple] = {
-    "MM": (0, (5, 2)),
-    "IPI": (0, (6, 2, 1, 2)),
+    "MaxMind": (0, (5, 2)),
+    "IPinfo": (0, (6, 2, 1, 2)),
 }
 
 STEM = "ripe_vs_databases"
+
+#: The x-axis name. "Absolute", because every other distance axis in the
+#: paper is normalized, and a reader arriving here expects that unit.
+X_LABEL = "Absolute Distance (km)"
 
 #: Read from the scored parquet: the TG roster plus its ground truth. Any
 #: method's file carries the same three columns for the same TGs.
@@ -110,9 +125,10 @@ ROSTER_COLUMNS: tuple[str, ...] = ("tg_id", "tg_lat", "tg_lon")
 
 
 def artifact_names(policy: str = E.EXCLUDE) -> tuple[str, str, str]:
-    """`(png, csv, manifest)`. `.sentinel.` infix under that policy, as in
-    `figure_error_cdf` -- the two populations must not overwrite each other."""
-    stem = f"{STEM}.{E.SENTINEL}" if policy == E.SENTINEL else STEM
+    """`(png, csv, manifest)`. A `.sentinel.` or `.cut.` infix under those
+    policies, as in `figure_error_cdf` -- the populations must not overwrite
+    each other."""
+    stem = STEM if policy == E.EXCLUDE else f"{STEM}.{policy}"
     return (f"{stem}.png", f"{stem}.csv", f"{stem}.manifest.json")
 
 
@@ -359,6 +375,9 @@ def _manifest(
                 "TGs alike -- are drawn at sentinel_km, so each curve's height there "
                 "is its answer rate."
                 if censored
+                else "unanswered rows stay in the denominator and are not drawn: "
+                "each curve stops at its last answer, at its answer rate."
+                if policy == E.CUT
                 else "unanswered rows are dropped; each curve rests on its own "
                 "population. n_solved is a database's covered count."
             ),
@@ -429,17 +448,15 @@ def build_for_run(
         drawn,
         table,
         out_dir / png_name,
-        title="CBG against the geolocation databases",
-        subtitle=(
-            f"{run.run_id} · n={E._n_tgs(drawn):,} TGs · "
-            f"{E._subtitle_tail(policy, sentinel_km)}"
-        ),
         min_x_km=min_x_km,
         max_x_km=resolved_max,
         sentinel_km=sentinel_km if policy == E.SENTINEL else None,
         order=order,
         style_fn=lambda s: series_style(s, colors),
         label_fn=series_label,
+        guides=False,
+        power_ticks=True,
+        x_label=X_LABEL,
     )
     (out_dir / manifest_name).write_text(
         _manifest(
