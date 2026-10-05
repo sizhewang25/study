@@ -103,6 +103,13 @@ analysis:
     dist_norm_km:
       min: 0.0
       max: 4387.257
+    # Every RTT axis is min-max normalized with these bounds, so no figure
+    # prints an absolute RTT: min 0 (a 0 ms RTT), max the largest (VP, TG)
+    # pair RTT pooled over the three pro mesh datasets (as02's, 92.395 ms).
+    # The same bounds in every pro config.
+    rtt_norm_ms:
+      min: 0.0
+      max: 92.395
 
     pni_csv: datasets/pni/as15169.csv
     peer_asn: 15169

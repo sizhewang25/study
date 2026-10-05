@@ -128,10 +128,6 @@ analysis:
     resolution: [128]
     pni_csv: datasets/pni/as01-us-pni.approx.csv
     peer_asn: 20940
-    # Every RTT axis is divided by this, so no figure prints an absolute RTT:
-    # the largest (VP, TG) pair RTT pooled over the three pro mesh datasets
-    # (as02's, 92.395 ms). The same constant in all three configs.
-    rtt_norm_ms: 92.395
     # Every distance axis is min-max normalized with these bounds, so no
     # figure prints an absolute distance: min 0 (a prediction on its TG), max
     # the footprint span D, the largest great-circle distance between any two
@@ -141,6 +137,13 @@ analysis:
     dist_norm_km:
       min: 0.0
       max: 4387.257
+    # Every RTT axis is min-max normalized with these bounds, so no figure
+    # prints an absolute RTT: min 0 (a 0 ms RTT), max the largest (VP, TG)
+    # pair RTT pooled over the three pro mesh datasets (as02's, 92.395 ms).
+    # The same bounds in every pro config.
+    rtt_norm_ms:
+      min: 0.0
+      max: 92.395
 
   # One block per v5 plotting command that create_analysis_artifacts.sh runs.
   # `combo_ids` narrows a figure to the methods it names (S-P included only

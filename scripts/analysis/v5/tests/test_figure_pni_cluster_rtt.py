@@ -186,16 +186,35 @@ class TestPooled:
 
 
 class TestNormalized:
-    """`rtt_norm_ms` divides what is drawn and adds `_norm` columns; ms stay."""
+    """`rtt_norm_ms: {min, max}` normalizes what is drawn and adds `_norm` columns."""
+
+    BOUNDS = (0.0, 50.0)      # the fixture's pair RTTs reach ~44 ms
 
     def test_csv_adds_norm_columns_and_keeps_ms(self, clustered):
         run, edge_csv, pni_csv, _, root, out = clustered
-        R.build_for_run(run, pni_csv, analysis_root=root, source_csv=edge_csv, rtt_norm_ms=2.0)
+        R.build_for_run(run, pni_csv, analysis_root=root, source_csv=edge_csv,
+                        rtt_norm_ms=self.BOUNDS)
         stats = pd.read_csv(out / R.CSV_NAME)
         assert np.allclose(stats.p50_ms, 0.5)
-        assert np.allclose(stats.p50_norm, 0.25)
-        assert np.allclose(stats.max_norm, stats.max_ms / 2.0)
-        assert json.loads((out / R.MANIFEST_NAME).read_text())["rtt_norm_ms"] == 2.0
+        assert np.allclose(stats.p50_norm, 0.01)
+        assert np.allclose(stats.max_norm, stats.max_ms / 50.0)
+        body = json.loads((out / R.MANIFEST_NAME).read_text())["rtt_norm_ms"]
+        assert (body["min"], body["max"]) == self.BOUNDS
+
+    def test_a_nonzero_min_is_subtracted(self, clustered):
+        run, edge_csv, pni_csv, _, root, out = clustered
+        pairs, *_ = R.load(run, pni_csv, analysis_root=root, source_csv=edge_csv)
+        lo = float(pairs.rtt_ms.min())
+        R.build_for_run(run, pni_csv, analysis_root=root, source_csv=edge_csv,
+                        rtt_norm_ms=(lo, 50.0))
+        stats = pd.read_csv(out / R.CSV_NAME)
+        assert np.allclose(stats.p50_norm, (stats.p50_ms - lo) / (50.0 - lo))
+
+    def test_an_rtt_outside_the_bounds_is_refused(self, clustered):
+        run, edge_csv, pni_csv, _, root, _ = clustered
+        with pytest.raises(ValueError, match="outside the declared analysis.common.rtt_norm_ms"):
+            R.build_for_run(run, pni_csv, analysis_root=root, source_csv=edge_csv,
+                            rtt_norm_ms=(0.0, 0.1))
 
     def test_no_norm_writes_no_norm_columns(self, clustered):
         run, edge_csv, pni_csv, _, root, out = clustered
@@ -204,9 +223,39 @@ class TestNormalized:
         assert json.loads((out / R.MANIFEST_NAME).read_text())["rtt_norm_ms"] is None
 
     def test_pooled_runs_must_agree(self):
-        assert R.common_norm(["a", "b"], {"a": 92.4, "b": 92.4}) == 92.4
+        b = (0.0, 92.4)
+        assert R.common_norm(["a", "b"], {"a": b, "b": b}) == b
         assert R.common_norm(["a", "b"], None) is None
         with pytest.raises(ValueError, match="same analysis.common.rtt_norm_ms"):
-            R.common_norm(["a", "b"], {"a": 92.4, "b": 90.0})
+            R.common_norm(["a", "b"], {"a": b, "b": (0.0, 90.0)})
         with pytest.raises(ValueError, match="same analysis.common.rtt_norm_ms"):
-            R.common_norm(["a", "b"], {"a": 92.4})
+            R.common_norm(["a", "b"], {"a": b})
+
+
+class TestDeclaredBounds:
+    """`labels.declared_rtt_norm_ms`: both bounds or a loud failure."""
+
+    @pytest.fixture
+    def declare(self, monkeypatch):
+        from scripts.analysis.v5.modules import labels as L
+
+        def set_value(value):
+            monkeypatch.setattr(L, "_node", lambda run_id, path, root=None: value)
+            return L.declared_rtt_norm_ms("r")
+
+        return set_value
+
+    def test_a_mapping_with_both_bounds_is_read(self, declare):
+        assert declare({"min": 0, "max": 92.395}) == (0.0, 92.395)
+
+    def test_absent_means_ms(self, declare):
+        assert declare(None) is None
+
+    @pytest.mark.parametrize(
+        "value",
+        [92.395, {"max": 10.0}, {"min": 0, "max": 10, "x": 1}, {"min": 5, "max": 5},
+         {"min": -1, "max": 5}, {"min": 0, "max": True}, {"min": 0, "max": "10"}],
+    )
+    def test_anything_else_raises(self, declare, value):
+        with pytest.raises(ValueError, match="rtt_norm_ms"):
+            declare(value)

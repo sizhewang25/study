@@ -15,14 +15,16 @@ it is the quantity that separates the mechanism groups (0.6-4.0 / 13.0-14.5 /
 once; it mostly restated the fleet's geography and was dropped. The y axis is
 linear from 0.
 
-## Normalized by a declared RTT
+## Normalized by declared bounds
 
 Absolute RTTs are confidential. When the run's config declares
-`analysis.common.rtt_norm_ms` (R), the figure draws RTT / R: R is the
-largest (VP, TG) pair RTT pooled over the datasets the paper reports, so every
-value is in [0, 1] and ratios between RTTs survive. The CSV keeps the `_ms`
-columns and adds the same stats as `_norm`; the manifest records R. Pooled
-runs must declare the same R. Without one, the figure is in ms as before.
+`analysis.common.rtt_norm_ms: {min, max}`, every RTT r is drawn as
+(r - min) / (max - min), as `plot-error-cdf` does with `dist_norm_km`: min 0
+and max the largest (VP, TG) pair RTT pooled over the datasets the paper
+reports, so every value is in [0, 1] and ratios between RTTs survive. A pair
+RTT outside [min, max] is refused. The CSV keeps the `_ms` columns and adds the
+same stats as `_norm`; the manifest records the bounds. Pooled runs must
+declare the same bounds. Without them, the figure is in ms as before.
 
 ## Whiskers are p5 and p95
 
@@ -92,7 +94,7 @@ MANIFEST_NAME = "pni_cluster_rtt.manifest.json"
 #: the caption spells it out ("each TG's smallest RTT over the fleet").
 QUANTITY = "min RTT (ms)"
 
-#: The y-axis label when the RTTs are divided by the declared `rtt_norm_ms`.
+#: The y-axis label when the RTTs are normalized by the declared `rtt_norm_ms`.
 QUANTITY_NORM = "normalized min RTT"
 
 #: A small figure. Width is fixed rather than grown with k; at k <= 6 a
@@ -212,19 +214,43 @@ def stats_table(pairs: pd.DataFrame, tgs: pd.DataFrame, cluster_meta: dict) -> p
     return pd.DataFrame(rows)
 
 
-def normalized(stats: pd.DataFrame, rtt_norm_ms: float) -> pd.DataFrame:
-    """`stats` plus every `<stat>_ms` column divided by `rtt_norm_ms`, as `<stat>_norm`."""
+#: `(min, max)` in ms, as `labels.declared_rtt_norm_ms` returns it.
+Bounds = tuple[float, float]
+
+
+def to_norm(values, bounds: Bounds):
+    """(r - min) / (max - min)."""
+    lo, hi = bounds
+    return (values - lo) / (hi - lo)
+
+
+def check_bounds(pairs: pd.DataFrame, bounds: Bounds) -> None:
+    """Refuse any pair RTT outside the bounds: the axis is declared to hold them all."""
+    lo, hi = bounds
+    rtt = pairs.rtt_ms.to_numpy(dtype=float)
+    outside = (rtt < lo) | (rtt > hi)
+    if outside.any():
+        raise ValueError(
+            f"{int(outside.sum())} pair RTTs fall outside the declared "
+            f"analysis.common.rtt_norm_ms [{lo:g}, {hi:g}] ms "
+            f"(range {rtt.min():g}-{rtt.max():g} ms)"
+        )
+
+
+def normalized(stats: pd.DataFrame, bounds: Bounds) -> pd.DataFrame:
+    """`stats` plus every `<stat>_ms` column normalized by `bounds`, as `<stat>_norm`."""
     out = stats.copy()
     for col in [c for c in stats.columns if c.endswith("_ms")]:
-        out[col.removesuffix("_ms") + "_norm"] = stats[col] / rtt_norm_ms
+        out[col.removesuffix("_ms") + "_norm"] = to_norm(stats[col], bounds)
     return out
 
 
-def common_norm(run_ids: list[str], rtt_norm_ms: dict[str, float | None] | None) -> float | None:
-    """The one R every run in `run_ids` declares, None if none does; mixed raises.
+def common_norm(run_ids: list[str], rtt_norm_ms: dict[str, Bounds | None] | None) -> Bounds | None:
+    """The one `(min, max)` every run in `run_ids` declares, None if none does;
+    mixed raises.
 
-    A pooled figure divides every run's RTTs by one R, so runs declaring
-    different values, or some declaring none, cannot share a figure.
+    A pooled figure normalizes every run's RTTs by one pair of bounds, so runs
+    declaring different values, or some declaring none, cannot share a figure.
     """
     values = {r: (rtt_norm_ms or {}).get(r) for r in run_ids}
     distinct = set(values.values())
@@ -260,19 +286,22 @@ def plot(
     total_sites: int,
     out_png: Path,
     fliers: dict[int, list[float]] | None = None,
-    rtt_norm_ms: float | None = None,
+    rtt_norm_ms: Bounds | None = None,
 ) -> Path:
     """Boxes per cluster; `fliers` (from `outliers`) are drawn as open circles.
 
-    With `rtt_norm_ms`, every value is drawn divided by it (`stats` and
-    `fliers` stay in ms).
+    With `rtt_norm_ms`, every value is drawn normalized by those bounds
+    (`stats` and `fliers` stay in ms).
     """
     stats = stats.sort_values(P.CLUSTER_COL).reset_index(drop=True)
     clusters = stats[P.CLUSTER_COL].tolist()
-    scale = 1.0 if rtt_norm_ms is None else 1.0 / rtt_norm_ms
+
+    def scale(v: float) -> float:
+        return v if rtt_norm_ms is None else float(to_norm(v, rtt_norm_ms))
+
     fig, ax = plt.subplots(figsize=FIGSIZE)
-    boxes = [{**bxp_stats({k: r[f"{k}_ms"] * scale for k in ("p5", "p25", "p50", "p75", "p95")}),
-              "fliers": [v * scale for v in (fliers or {}).get(c, [])]}
+    boxes = [{**bxp_stats({k: scale(r[f"{k}_ms"]) for k in ("p5", "p25", "p50", "p75", "p95")}),
+              "fliers": [scale(v) for v in (fliers or {}).get(c, [])]}
              for c, (_, r) in zip(clusters, stats.iterrows())]
     art = ax.bxp(boxes, positions=range(1, len(clusters) + 1), widths=0.5, patch_artist=True,
                  showfliers=True, medianprops={"color": INK, "lw": 0.9},
@@ -304,7 +333,7 @@ def plot(
     height_pt = ax.bbox.height * 72.0 / fig.dpi
     floor = ax.get_ylim()[1] * MEDIAN_LABEL_CLEARANCE_PT / height_pt
     for i, (_, r) in enumerate(stats.iterrows(), start=1):
-        median = r["p50_ms"] * scale
+        median = scale(r["p50_ms"])
         ax.text(i + 0.3, max(median, floor), f"{median:.1f}" if rtt_norm_ms is None else f"{median:.2f}",
                 fontsize=5.5, va="center", color=INK_2)
     out_png.parent.mkdir(parents=True, exist_ok=True)
@@ -313,7 +342,7 @@ def plot(
     return out_png
 
 
-def _manifest(cluster_meta: dict, stats: pd.DataFrame, rtt_norm_ms: float | None) -> str:
+def _manifest(cluster_meta: dict, stats: pd.DataFrame, rtt_norm_ms: Bounds | None) -> str:
     return json.dumps(
         {
             "figure": PNG_NAME,
@@ -327,8 +356,18 @@ def _manifest(cluster_meta: dict, stats: pd.DataFrame, rtt_norm_ms: float | None
                 for r in cluster_meta["runs"]
             ],
             "quantity": "each TG's smallest RTT over the fleet, i.e. its S-P VP's RTT",
-            "rtt_norm_ms": rtt_norm_ms,
-            "y_axis": "ms" if rtt_norm_ms is None else "RTT / rtt_norm_ms (the _norm columns)",
+            "rtt_norm_ms": (
+                None if rtt_norm_ms is None else {
+                    "min": rtt_norm_ms[0],
+                    "max": rtt_norm_ms[1],
+                    "source": "analysis.common.rtt_norm_ms in each run's config",
+                    "note": (
+                        "every RTT r drawn as (r - min) / (max - min), the _norm columns; "
+                        "no pair RTT lies outside [min, max] (refused otherwise). "
+                        "max is the pooled largest pair RTT, confidential in the paper."
+                    ),
+                }
+            ),
             "boxes": (
                 "whiskers p5/p95, hinges p25/p75, line = median; every TG outside "
                 "p5/p95 drawn as an open circle (n_outliers in the CSV)."
@@ -344,7 +383,9 @@ def _manifest(cluster_meta: dict, stats: pd.DataFrame, rtt_norm_ms: float | None
 
 
 def _write(pairs: pd.DataFrame, tgs: pd.DataFrame, meta: dict, out_dir: Path,
-           rtt_norm_ms: float | None = None) -> Path:
+           rtt_norm_ms: Bounds | None = None) -> Path:
+    if rtt_norm_ms is not None:
+        check_bounds(pairs, rtt_norm_ms)
     stats = stats_table(pairs, tgs, meta)
     table = stats if rtt_norm_ms is None else normalized(stats, rtt_norm_ms)
     table.to_csv(out_dir / CSV_NAME, index=False)
@@ -360,12 +401,12 @@ def build_for_runs(
     layouts: tuple[str, ...] = (P.PER_RUN,),
     analysis_root: Path | None = None,
     source_csvs: dict[str, Path] | None = None,
-    rtt_norm_ms: dict[str, float | None] | None = None,
+    rtt_norm_ms: dict[str, Bounds | None] | None = None,
 ) -> list[Path]:
     """Boxes for every requested layout, each beside the clusters it reads.
 
-    `rtt_norm_ms` maps run id to its declared R (`labels.declared_rtt_norm_ms`);
-    a run absent or None is drawn in ms.
+    `rtt_norm_ms` maps run id to its declared `(min, max)`
+    (`labels.declared_rtt_norm_ms`); a run absent or None is drawn in ms.
     """
     bad = [lay for lay in layouts if lay not in P.LAYOUTS]
     if bad:
@@ -390,7 +431,7 @@ def build_for_run(
     *,
     analysis_root: Path | None = None,
     source_csv: Path | None = None,
-    rtt_norm_ms: float | None = None,
+    rtt_norm_ms: Bounds | None = None,
 ) -> list[Path]:
     """Stats CSV, manifest and the PNG for one run, per-run layout."""
     return build_for_runs(
