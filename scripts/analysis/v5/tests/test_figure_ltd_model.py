@@ -401,6 +401,21 @@ class TestThePayload:
         assert a == b, "two builds of one run must produce the same page"
         assert len(a["vp-0"]) <= 10
 
+    def test_the_scatter_uses_the_fit_distance_when_stored(self):
+        """An interconnect-distance run fits on `distance_km`, not great-circle;
+        the scatter must sit where the fit put it, under the band."""
+        import pandas as pd
+
+        samples = pd.DataFrame({
+            "vp_id": ["vp-0", "vp-0"], "vp_lat": [40.0, 40.0], "vp_lon": [-75.0, -75.0],
+            "tg_lat": [41.0, 42.0], "tg_lon": [-80.0, -80.0], "rtt_ms": [10.0, 20.0],
+        })
+        air = mod.scatter_by_vp(samples, max_points_per_vp=10)["vp-0"]
+        routed = mod.scatter_by_vp(samples.assign(distance_km=[1234.5, 2345.6]),
+                                   max_points_per_vp=10)["vp-0"]
+        assert [k for _, k in routed] == [1234.5, 2345.6]
+        assert [k for _, k in air] != [1234.5, 2345.6]
+
 
 class TestTheCommand:
     def test_it_carries_the_flags_the_sweep_script_passes(self):

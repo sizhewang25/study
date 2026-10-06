@@ -138,7 +138,8 @@ def load_fit_samples(
     inputs_root: Path,
     expect_n: int | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """The `(vp_id, vp_lat, vp_lon, tg_lat, tg_lon, rtt_ms)` rows a fold was fit on.
+    """The `(vp_id, vp_lat, vp_lon, tg_lat, tg_lon, rtt_ms)` rows a fold was fit on,
+    plus `distance_km` when the materialized parquet stores one.
 
     Returns the frame and a provenance dict, which the page displays: the scatter
     is *reconstructed* for the operator runs and a reader has to be able to tell
@@ -159,10 +160,14 @@ def load_fit_samples(
     """
     parquet = _inputs_fold_dir(run, fold_id, inputs_root) / "fit_samples.parquet"
     if parquet.exists():
-        df = pq.read_table(
-            parquet,
-            columns=["vp_id", "vp_lat", "vp_lon", "probe_lat", "probe_lon", "latency_ms"],
-        ).to_pandas()
+        columns = ["vp_id", "vp_lat", "vp_lon", "probe_lat", "probe_lon", "latency_ms"]
+        # The distance the LTDs were fit against (the routing distance under
+        # `distance: interconnect_distance`). Absent from parquets written
+        # before the column existed, which were fit on great-circle.
+        has_distance = "distance_km" in pq.read_schema(parquet).names
+        if has_distance:
+            columns.append("distance_km")
+        df = pq.read_table(parquet, columns=columns).to_pandas()
         df = df.rename(
             columns={
                 "probe_lat": "tg_lat",
@@ -175,6 +180,7 @@ def load_fit_samples(
             "path": str(parquet.relative_to(REPO_ROOT))
             if parquet.is_relative_to(REPO_ROOT)
             else str(parquet),
+            "distance": "fit_samples.distance_km" if has_distance else "great_circle",
         }
     else:
         # `edges.resolve_source_csv` raises `MeshSupersetError` on a weighted arm,
@@ -224,6 +230,7 @@ def load_fit_samples(
             "stratification": str(strat_path.relative_to(REPO_ROOT))
             if strat_path.is_relative_to(REPO_ROOT)
             else str(strat_path),
+            "distance": "great_circle",
         }
 
     if expect_n is not None and len(df) != int(expect_n):
@@ -239,7 +246,11 @@ def load_fit_samples(
 def scatter_by_vp(
     samples: pd.DataFrame, *, max_points_per_vp: int
 ) -> dict[str, list[list[float]]]:
-    """`vp_id -> [[rtt_ms, distance_km], ...]`, distance recomputed per row.
+    """`vp_id -> [[rtt_ms, distance_km], ...]`.
+
+    The distance is the samples' own `distance_km` when they carry one -- what
+    the LTD was fit against, so the scatter sits under the band drawn from the
+    same fit -- else great-circle recomputed per row.
 
     Deduped per (fold, VP) by the caller: the fit set is identical across combos
     within a fold, so holding it per combo would multiply the payload by the
@@ -247,12 +258,15 @@ def scatter_by_vp(
     """
     if samples.empty:
         return {}
-    km = elementwise_km(
-        samples["vp_lat"].to_numpy(),
-        samples["vp_lon"].to_numpy(),
-        samples["tg_lat"].to_numpy(),
-        samples["tg_lon"].to_numpy(),
-    )
+    if "distance_km" in samples.columns and samples["distance_km"].notna().all():
+        km = samples["distance_km"].to_numpy(dtype=float)
+    else:
+        km = elementwise_km(
+            samples["vp_lat"].to_numpy(),
+            samples["vp_lon"].to_numpy(),
+            samples["tg_lat"].to_numpy(),
+            samples["tg_lon"].to_numpy(),
+        )
     frame = pd.DataFrame(
         {
             "vp_id": samples["vp_id"].astype(str).to_numpy(),
