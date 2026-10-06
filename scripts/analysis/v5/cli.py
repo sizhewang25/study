@@ -79,6 +79,7 @@ from scripts.analysis.v5.modules import (
     figure_x_cell_rtt,
     bounds,
     dataset_summary,
+    icd_assumption,
     loso_delta,
     map_answer_space,
     map_bipartite,
@@ -1823,6 +1824,45 @@ def plot_sp_interconnect_cmd(
         raise typer.BadParameter(str(exc)) from exc
     for png in pngs:
         typer.echo(f"wrote {png}")
+
+
+@app.command("report-icd-assumption")
+def report_icd_assumption_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Run (repeatable); one report per run."),
+    pni_csv: Path = typer.Option(None, "--pni-csv", help=_PNI_CSV_HELP + " One --run-id only."),
+    source_csv: Path = typer.Option(None, "--source-csv", help="Override the run's edge CSV. One --run-id only."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+    inputs_root: Path = typer.Option(
+        None, help="Benchmark inputs root, where each fold's manifest records the fit distance. "
+                   "Default: the benchmark's."),
+) -> None:
+    """How far the interconnect-distance assumption holds: X* (nearest the TG) vs S-P's X.
+
+    Side report for `distance: interconnect_distance` runs, which fit every LTD
+    against d(VP, X*) + d(X*, TG). Reports how often the interconnect nearest
+    the S-P VP disagrees with X* (all TGs, and TGs where S-P is credible), and
+    how many (VP, TG) edges break the 2/3 c propagation floor under the
+    routing distance against the great-circle one.
+
+    Writes `icd_assumption.report.json` and `icd_assumption_tgs.csv` beside the
+    run's `pni-gap` output. Needs no clusters. Refuses an ICD run whose baked
+    `interconnect_csv_path` is not the PNI list given.
+    """
+    _refuse_combo_ids("report-icd-assumption", run_id or [], outputs_root)
+    try:
+        runs, pni_csvs, _, source_csvs = _pni_inputs(run_id, None, pni_csv, source_csv, outputs_root)
+        reports = [
+            icd_assumption.build(
+                run, pni_csvs[run.run_id], analysis_root=analysis_root,
+                source_csv=(source_csvs or {}).get(run.run_id), inputs_root=inputs_root,
+            )
+            for run in runs
+        ]
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for path in reports:
+        typer.echo(f"wrote {path}")
 
 
 @app.command("report-sp-pni-cells")
