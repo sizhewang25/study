@@ -31,6 +31,7 @@ import pyarrow.parquet as pq
 from scripts.benchmark.v2 import schema as bench_schema
 from scripts.benchmark.v2.sources.base import DataSource, EvalTarget, TgConfig, VpConfig
 from scripts.framework.v2 import FitSample
+from scripts.framework.v2.ltd.base import sample_distance_km
 
 
 # Repo-root `inputs/benchmark/v2/`, a sibling of `outputs/benchmark/v2/` and
@@ -111,7 +112,13 @@ def materialize_inputs(
         "n_fit_samples": n_fit,
         "n_eval_observations": n_obs,
         "n_eval_targets": n_targets,
+        # Which VP-to-target distance fit_samples.parquet's `distance_km`
+        # holds. Sources without the knob fit great-circle.
+        "distance": getattr(source, "distance_mode", "air_distance"),
     }
+    interconnect_csv = getattr(source, "interconnect_csv_path", None)
+    if interconnect_csv is not None:
+        manifest["interconnect_csv_path"] = str(interconnect_csv)
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return out_dir
 
@@ -161,7 +168,9 @@ def _write_fit_samples(rows: Iterable[FitSample], path: Path) -> int:
     # FitSample doesn't carry a probe identifier — it's just (vp_id, vp_coord,
     # probe_coord, latency). For the materialized parquet we synthesize a
     # probe_id from the probe_coord rounded to 4dp; for RIPE Atlas this gives
-    # the anchor IP indirectly through the eval pass.
+    # the anchor IP indirectly through the eval pass. `distance_km` is always
+    # written resolved (the source's distance, else great-circle), so the
+    # parquet states the distance every LTD fits against.
     table = pa.table(
         {
             "vp_id": [str(s.vp_id) for s in items],
@@ -171,6 +180,7 @@ def _write_fit_samples(rows: Iterable[FitSample], path: Path) -> int:
             "probe_lat": [s.probe_coord.lat for s in items],
             "probe_lon": [s.probe_coord.lon for s in items],
             "latency_ms": [float(s.latency) for s in items],
+            "distance_km": [float(sample_distance_km(s)) for s in items],
         },
         schema=bench_schema.FIT_SAMPLES_SCHEMA,
     )
@@ -244,6 +254,9 @@ def load_fit_samples_parquet(path: Path) -> list[FitSample]:
             vp_coord=Coord(lat=r["vp_lat"], lon=r["vp_lon"]),
             probe_coord=Coord(lat=r["probe_lat"], lon=r["probe_lon"]),
             latency=Latency(r["latency_ms"]),
+            # Absent from parquets written before the column: None, which
+            # `sample_distance_km` reads as great-circle.
+            distance_km=r.get("distance_km"),
         )
         for r in rows
     ]

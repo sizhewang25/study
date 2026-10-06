@@ -476,6 +476,115 @@ class TestTgConfigsEmission(unittest.TestCase):
         self.assertEqual(t1001.asn, 7922)
 
 
+#: Two interconnects for `_site_csv`: X1 beside site B (41.5, -90.25), X2 on
+#: the west coast. Sites A, B, C are nearest X1; site D (47, -122) X2.
+_INTERCONNECT_CSV = (
+    "pni_id,pni_lat,pni_lon\n"
+    "x1,41.85,-87.62\n"
+    "x2,47.61,-122.33\n"
+)
+
+
+class TestGenericCSVSource_InterconnectDistance(unittest.TestCase):
+    """`distance: interconnect_distance` bakes d(VP, X*) + d(X*, target) into
+    every fit sample, X* the interconnect nearest the target; the default
+    leaves `distance_km` None (great-circle). Eval obs are untouched."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        tmp = Path(self.tmpdir.name)
+        self.csv_path = tmp / "sites.csv"
+        self.csv_path.write_text(_site_csv())
+        self.x_path = tmp / "pni.csv"
+        self.x_path.write_text(_INTERCONNECT_CSV)
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def _make(self, **kw) -> GenericCSVSource:
+        return GenericCSVSource(
+            slice="all", setup="anchors_to_probes", csv_path=self.csv_path, **kw,
+        )
+
+    def _routed(self) -> GenericCSVSource:
+        return self._make(distance="interconnect_distance", interconnect_csv_path=self.x_path)
+
+    def test_air_distance_is_default_and_leaves_distance_unset(self) -> None:
+        src = self._make()
+        self.assertEqual(src.distance_mode, "air_distance")
+        self.assertTrue(all(fs.distance_km is None for fs in src.iter_fit_samples()))
+
+    def test_routed_distance_goes_through_targets_nearest_interconnect(self) -> None:
+        from scripts.framework.v2.ltd.base import sample_distance_km
+        from scripts.libs.cbg.rtt_model import haversine_distance as hav
+
+        xs = {"x1": (41.85, -87.62), "x2": (47.61, -122.33)}
+        samples = list(self._routed().iter_fit_samples())
+        self.assertTrue(samples)
+        for fs in samples:
+            t, v = fs.probe_coord, fs.vp_coord
+            x = "x2" if t.lat == 47.0 else "x1"
+            expected = hav(v.lat, v.lon, *xs[x]) + hav(*xs[x], t.lat, t.lon)
+            self.assertAlmostEqual(fs.distance_km, expected, places=9)
+            self.assertEqual(sample_distance_km(fs), fs.distance_km)
+            # Triangle inequality: never shorter than great-circle.
+            self.assertGreaterEqual(fs.distance_km + 1e-9, hav(v.lat, v.lon, t.lat, t.lon))
+
+    def test_eval_targets_unchanged(self) -> None:
+        a = list(self._make().iter_eval_targets())
+        b = list(self._routed().iter_eval_targets())
+        self.assertEqual(a, b)
+
+    def test_unknown_distance_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown distance"):
+            self._make(distance="road_distance")
+
+    def test_interconnect_without_csv_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires `interconnect_csv_path`"):
+            self._make(distance="interconnect_distance")
+
+    def test_csv_with_air_distance_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "only used with"):
+            self._make(interconnect_csv_path=self.x_path)
+
+    def test_bad_interconnect_csv_raises(self) -> None:
+        for body, msg in (
+            ("pni_id,lat,lon\nx1,41.0,-87.0\n", "missing interconnect columns"),
+            ("pni_id,pni_lat,pni_lon\nx1,,-87.0\n", "no usable coordinate"),
+            ("pni_id,pni_lat,pni_lon\nx1,-87.0,141.0\nx2,91.0,-87.0\n", "Swapped"),
+            ("pni_id,pni_lat,pni_lon\n", "lists no interconnect"),
+        ):
+            self.x_path.write_text(body)
+            with self.subTest(msg=msg), self.assertRaisesRegex(ValueError, msg):
+                self._routed()._ensure_loaded()
+
+    def test_materialize_round_trip(self) -> None:
+        """fit_samples.parquet stores the resolved distance in both modes; the
+        manifest names the mode; an old parquet without the column loads as
+        None, which `sample_distance_km` reads as great-circle."""
+        import json
+        import pyarrow.parquet as pq
+        from scripts.benchmark.v2.inputs import load_fit_samples_parquet, materialize_inputs
+        from scripts.framework.v2.ltd.base import sample_distance_km
+
+        root = Path(self.tmpdir.name) / "inputs"
+        for run_id, src in (("air", self._make()), ("icd", self._routed())):
+            expected = [sample_distance_km(fs) for fs in src.iter_fit_samples()]
+            out = materialize_inputs(src, root=root, run_id=run_id)
+            loaded = load_fit_samples_parquet(out / "fit_samples.parquet")
+            self.assertEqual([fs.distance_km for fs in loaded], expected)
+            manifest = json.loads((out / "manifest.json").read_text())
+            self.assertEqual(manifest["distance"], src.distance_mode)
+            self.assertEqual("interconnect_csv_path" in manifest, run_id == "icd")
+
+        path = root / "generic_csv" / "air" / "anchors_to_probes" / "all" / "fit_samples.parquet"
+        pq.write_table(pq.read_table(path).drop(["distance_km"]), path)
+        old = load_fit_samples_parquet(path)
+        self.assertTrue(all(fs.distance_km is None for fs in old))
+        expected_air = [sample_distance_km(fs) for fs in self._make().iter_fit_samples()]
+        self.assertEqual([sample_distance_km(fs) for fs in old], expected_air)
+
+
 class TestTgConfigsParquetWriter(unittest.TestCase):
     """materialize_inputs() writes tg_configs.parquet with the declared schema
     and the per-setup row count (one row per unique target)."""

@@ -25,10 +25,10 @@ from scripts.framework.v2.ltd.base import (
     FitSample,
     FittingResult,
     LTDResult,
+    sample_distance_km,
 )
 from scripts.framework.v2.registry import register_ltd
 from scripts.framework.v2.types import Coord, Distance, Error, Latency, VpId
-from scripts.libs.cbg.rtt_model import haversine_distance
 from scripts.libs.octant.octant_model import (
     OctantRTTModel,
     find_delta_for_coverage,
@@ -67,9 +67,7 @@ class BoundedSplineLTD(AnnulusLTDModel):
             lambda: {"rtts": [], "distances": [], "vp_coord": None}
         )
         for s in samples:
-            d = haversine_distance(
-                s.vp_coord.lat, s.vp_coord.lon, s.probe_coord.lat, s.probe_coord.lon
-            )
+            d = sample_distance_km(s)
             bucket = by_vp[s.vp_id]
             bucket["rtts"].append(float(s.latency))
             bucket["distances"].append(d)

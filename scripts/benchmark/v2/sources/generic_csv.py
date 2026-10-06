@@ -52,6 +52,24 @@ Source kwargs (defaults match the prior VultrCSVSource):
   asn_bucket_top_n   : int = 20     — DistGeo bucket cap.
   min_obs            : int = None   — drop targets with fewer VP observations.
   fold_by            : str = "distgeo" — `distgeo` or `site`; see `fold_N`.
+  distance           : str = "air_distance" — the VP-to-target distance the
+                       LTDs fit RTT against (see "Fit distance" below).
+  interconnect_csv_path : Path | str = None — interconnect (PNI) list,
+                       `pni_lat, pni_lon` columns at least; required by and
+                       only accepted with `distance: interconnect_distance`.
+
+Fit distance (`distance`):
+  air_distance           — great-circle VP-to-target (`FitSample.distance_km`
+                           left None; the LTD computes haversine).
+  interconnect_distance  — routing distance through the target's nearest
+                           interconnect X* (nearest by great-circle from the
+                           target): d(VP, X*) + d(X*, target). Baked into
+                           `FitSample.distance_km`, so materialized
+                           fit_samples.parquet carries it. X* is an
+                           assumption from the target's location alone, not
+                           the interconnect the traffic actually crosses.
+                           Eval observations and error distances are
+                           unaffected: they stay great-circle.
 
 This source is weight-AWARE but never weight-FILTERING: it reads and validates
 an optional `weight` column and carries it into `obs_weights` (so the required
@@ -68,6 +86,7 @@ import re
 from pathlib import Path
 from typing import Iterator, Optional
 
+import numpy as np
 import pandas as pd
 
 from scripts.benchmark.v2.sources.base import (
@@ -83,6 +102,7 @@ from scripts.framework.v2.types import Coord, Latency, VpId
 # the precheck's reader needs the same converter, and importing it *from* this
 # module is what used to pull `scripts.framework.v2` into the analysis layer.
 from scripts.libs.canonical.schema import raw_str as _raw_str
+from scripts.libs.cbg.rtt_model import haversine_distance
 from scripts.processing.ripe_atlas.stratification import (
     AnchorInfo,
     DistGeoStratification,
@@ -118,6 +138,11 @@ _FOLD_SLICE_RE = re.compile(r"^fold_(\d+)$")
 #: `fold_by` values: who `fold_N` partitions.
 FOLD_BY = ("distgeo", "site")
 
+#: `distance` values: which VP-to-target distance the LTDs fit against.
+AIR_DISTANCE = "air_distance"
+INTERCONNECT_DISTANCE = "interconnect_distance"
+DISTANCE_MODES = (AIR_DISTANCE, INTERCONNECT_DISTANCE)
+
 #: Decimals a target coordinate is rounded to before it names a site. Matches
 #: v5's `sites.SITE_DECIMALS`; kept here rather than imported, so this source
 #: stays on the libs layer. Replicas carry byte-identical coordinates, so any
@@ -144,9 +169,24 @@ class GenericCSVSource(DataSource):
         asn_bucket_top_n: int = 20,
         min_obs: Optional[int] = None,
         fold_by: str = "distgeo",
+        distance: str = AIR_DISTANCE,
+        interconnect_csv_path: Optional[Path] = None,
     ) -> None:
         if fold_by not in FOLD_BY:
             raise ValueError(f"unknown fold_by {fold_by!r}; expected one of {FOLD_BY}")
+        if distance not in DISTANCE_MODES:
+            raise ValueError(
+                f"unknown distance {distance!r}; expected one of {DISTANCE_MODES}"
+            )
+        if distance == INTERCONNECT_DISTANCE and interconnect_csv_path is None:
+            raise ValueError(
+                f"distance={INTERCONNECT_DISTANCE!r} requires `interconnect_csv_path`"
+            )
+        if distance == AIR_DISTANCE and interconnect_csv_path is not None:
+            raise ValueError(
+                f"`interconnect_csv_path` is only used with "
+                f"distance={INTERCONNECT_DISTANCE!r}; got distance={distance!r}"
+            )
         if setup not in DataSource.ALLOWED_SETUPS:
             raise ValueError(
                 f"unknown setup {setup!r}; expected one of {DataSource.ALLOWED_SETUPS}"
@@ -181,6 +221,11 @@ class GenericCSVSource(DataSource):
         self._asn_bucket_top_n = asn_bucket_top_n
         self._min_obs = min_obs
         self._fold_by = fold_by
+        # Public: `materialize_inputs` records both in the manifest.
+        self.distance_mode = distance
+        self.interconnect_csv_path = (
+            Path(interconnect_csv_path) if interconnect_csv_path is not None else None
+        )
         # Set by `_normalize_weight`: whether the CSV carried a real `weight`
         # column, as opposed to the synthesized 1.0 default. Subclasses that
         # filter on traffic need this to refuse a weightless mesh.
@@ -235,6 +280,7 @@ class GenericCSVSource(DataSource):
 
     def iter_fit_samples(self) -> Iterator[FitSample]:
         df = self._ensure_loaded()
+        routed = self.distance_mode == INTERCONNECT_DISTANCE
         for row in df.itertuples(index=False):
             tg_id = str(row.target_id)
             if self._fit_targets is not None and tg_id not in self._fit_targets:
@@ -244,6 +290,7 @@ class GenericCSVSource(DataSource):
                 vp_coord=Coord(lat=float(row.vp_lat), lon=float(row.vp_lon)),
                 probe_coord=Coord(lat=float(row.target_lat), lon=float(row.target_lon)),
                 latency=Latency(float(row.rtt_ms)),
+                distance_km=float(row.distance_km) if routed else None,
             )
 
     def iter_eval_targets(self) -> Iterator[EvalTarget]:
@@ -286,6 +333,8 @@ class GenericCSVSource(DataSource):
     def _ensure_loaded(self) -> pd.DataFrame:
         if self._df is None:
             self._load_csv()
+            if self.distance_mode == INTERCONNECT_DISTANCE:
+                self._add_interconnect_distance()
             if self._fold_index is not None:
                 self._apply_stratification()
             if self._min_obs is not None:
@@ -454,6 +503,28 @@ class GenericCSVSource(DataSource):
         )
         return algo.compute_fold_assignments(targets)
 
+    def _add_interconnect_distance(self) -> None:
+        """Add `distance_km` = d(VP, X*) + d(X*, target) per row, X* being the
+        interconnect nearest the target."""
+        assert self._df is not None and self.interconnect_csv_path is not None
+        x_lat, x_lon = _load_interconnects(self.interconnect_csv_path)
+        df = self._df
+        tg_lat = df["target_lat"].to_numpy(dtype=float)
+        tg_lon = df["target_lon"].to_numpy(dtype=float)
+        tg_to_x = haversine_distance(
+            tg_lat[:, None], tg_lon[:, None], x_lat[None, :], x_lon[None, :]
+        )
+        nearest = tg_to_x.argmin(axis=1)
+        vp_to_x = haversine_distance(
+            df["vp_lat"].to_numpy(dtype=float), df["vp_lon"].to_numpy(dtype=float),
+            x_lat[nearest], x_lon[nearest],
+        )
+        df["distance_km"] = vp_to_x + tg_to_x[np.arange(len(df)), nearest]
+        logger.info(
+            "distance=%s: %d interconnects from %s",
+            INTERCONNECT_DISTANCE, len(x_lat), self.interconnect_csv_path,
+        )
+
     def _apply_min_obs_filter(self) -> None:
         assert self._df is not None and self._min_obs is not None
         counts = self._df.groupby("target_id")["target_id"].transform("count")
@@ -466,6 +537,35 @@ class GenericCSVSource(DataSource):
         if self._fit_targets is not None:
             self._fit_targets &= surviving
         logger.info("min_obs=%d: %d → %d targets", self._min_obs, before, after)
+
+
+def _load_interconnects(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """`(lat, lon)` arrays of the interconnect list, validated.
+
+    Strict because a bad row goes wrong without any error: a swapped lat/lon
+    or a NaN coordinate moves every target's nearest interconnect and still
+    yields plausible distances. Mirrors v5's `pni_gap.load_pnis`, kept here so
+    this source stays on the libs layer.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"interconnect_csv_path {path} does not exist")
+    df = pd.read_csv(path)
+    df.columns = df.columns.str.strip().str.lower()
+    missing = [c for c in ("pni_lat", "pni_lon") if c not in df.columns]
+    if missing:
+        raise ValueError(f"{path} is missing interconnect columns {missing}")
+    if df.empty:
+        raise ValueError(f"{path} lists no interconnect")
+    lat = pd.to_numeric(df["pni_lat"], errors="coerce").to_numpy(dtype=float)
+    lon = pd.to_numeric(df["pni_lon"], errors="coerce").to_numpy(dtype=float)
+    if np.isnan(lat).any() or np.isnan(lon).any():
+        raise ValueError(f"{path}: interconnect rows with no usable coordinate")
+    if (np.abs(lat) > 90).any() or (np.abs(lon) > 180).any():
+        raise ValueError(
+            f"{path}: interconnect rows outside lat [-90, 90] / lon [-180, 180]. "
+            f"Swapped columns?"
+        )
+    return lat, lon
 
 
 def _opt_col(row: "pd.Series", col: str, cols: "pd.Index") -> Optional[str]:

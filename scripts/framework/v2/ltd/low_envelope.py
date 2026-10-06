@@ -1,8 +1,8 @@
 """LowEnvelopeLTD — per-anchor LP best-line RTT-to-distance model (Vanilla CBG).
 
 radius_km = (rtt - intercept) / slope, fit per VP. The per-VP RTTDistanceModel
-submodels are built inside `_fit` from FitSamples (distances computed via
-haversine over the sample coords). The wrapper takes no hyperparameters: the
+submodels are built inside `_fit` from FitSamples (distances from
+`sample_distance_km`: the source's, else haversine over the sample coords). The wrapper takes no hyperparameters: the
 LP fit always tightens against the lower envelope, and predict accepts every
 RTT.
 
@@ -21,10 +21,11 @@ from scripts.framework.v2.ltd.base import (
     FitSample,
     FittingResult,
     LTDResult,
+    sample_distance_km,
 )
 from scripts.framework.v2.registry import register_ltd
 from scripts.framework.v2.types import Coord, Distance, Error, Latency, VpId
-from scripts.libs.cbg.rtt_model import RTTDistanceModel, haversine_distance
+from scripts.libs.cbg.rtt_model import RTTDistanceModel
 
 
 @register_ltd("low_envelope")
@@ -42,9 +43,7 @@ class LowEnvelopeLTD(CircleLTDModel):
             lambda: {"rtts": [], "distances": [], "vp_coord": None}
         )
         for s in samples:
-            d = haversine_distance(
-                s.vp_coord.lat, s.vp_coord.lon, s.probe_coord.lat, s.probe_coord.lon
-            )
+            d = sample_distance_km(s)
             bucket = by_vp[s.vp_id]
             bucket["rtts"].append(float(s.latency))
             bucket["distances"].append(d)

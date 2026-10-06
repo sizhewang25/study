@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 from scripts.framework.v2.types import Coord, Distance, Error, Latency, VpId
+from scripts.libs.cbg.rtt_model import haversine_distance
 
 
 def _require_positive_latency(latency: Latency) -> None:
@@ -31,12 +32,28 @@ def _require_positive_latency(latency: Latency) -> None:
 
 @dataclass(frozen=True)
 class FitSample:
-    """One training observation."""
+    """One training observation.
+
+    `distance_km`, when set, is the VP-to-target distance the LTD learns RTT
+    against, precomputed by the source (e.g. the routing distance through the
+    target's nearest interconnect). None means great-circle between the two
+    coordinates; read it through `sample_distance_km`.
+    """
 
     vp_id: VpId
     vp_coord: Coord
     probe_coord: Coord
     latency: Latency
+    distance_km: Optional[float] = None
+
+
+def sample_distance_km(s: FitSample) -> float:
+    """Distance the LTD learns RTT against: the source's, else great-circle."""
+    if s.distance_km is not None:
+        return s.distance_km
+    return haversine_distance(
+        s.vp_coord.lat, s.vp_coord.lon, s.probe_coord.lat, s.probe_coord.lon
+    )
 
 
 @dataclass(frozen=True)

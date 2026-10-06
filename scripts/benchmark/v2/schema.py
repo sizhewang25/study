@@ -51,6 +51,10 @@ FIT_SAMPLES_SCHEMA = pa.schema([
     pa.field("probe_lat", pa.float64(), nullable=False),
     pa.field("probe_lon", pa.float64(), nullable=False),
     pa.field("latency_ms", pa.float64(), nullable=False),
+    # The distance the LTDs fit RTT against (great-circle, or the routing
+    # distance under `distance: interconnect_distance`). Nullable only so the
+    # schema still describes parquets written before the column existed.
+    pa.field("distance_km", pa.float64(), nullable=True),
 ])
 
 EVAL_OBSERVATIONS_SCHEMA = pa.schema([

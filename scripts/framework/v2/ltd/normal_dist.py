@@ -34,10 +34,10 @@ from scripts.framework.v2.ltd.base import (
     FitSample,
     FittingResult,
     LTDResult,
+    sample_distance_km,
 )
 from scripts.framework.v2.registry import register_ltd
 from scripts.framework.v2.types import Coord, Distance, Error, Latency, VpId
-from scripts.libs.cbg.rtt_model import haversine_distance
 from scripts.libs.spotter.spotter_model import (
     SpotterRTTModel,
     _reject_binning_kwargs,
@@ -79,15 +79,7 @@ class NormalDistLTD(AnnulusLTDModel):
 
         rtts = np.array([float(s.latency) for s in samples], dtype=float)
         dists = np.array(
-            [
-                haversine_distance(
-                    s.vp_coord.lat,
-                    s.vp_coord.lon,
-                    s.probe_coord.lat,
-                    s.probe_coord.lon,
-                )
-                for s in samples
-            ],
+            [sample_distance_km(s) for s in samples],
             dtype=float,
         )
 
