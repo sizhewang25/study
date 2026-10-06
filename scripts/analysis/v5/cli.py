@@ -1911,7 +1911,7 @@ def report_bounds_cmd(
     run_id: list[str] = typer.Option(None, "--run-id", help="Run (repeatable): every run the figures pool."),
     outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
     analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
-) -> None:
+    ) -> None:
     """Compute D and the largest RTT over the runs and check their declarations.
 
     D is the largest distance between any two VP or site coordinates, the RTT
@@ -2782,7 +2782,11 @@ def main(argv: list[str] | None = None) -> None:
         app(args=args)
         return
     try:
+        from scripts.analysis.v5.modules import cross
+        from scripts.analysis.v5.modules.labels import load_group
+
         defaults = group_default_map(group)
+        cross.use_group(load_group(group))  # pooled outputs land in _cross/<kind>/<group>[.<role>]/
     except (typer.BadParameter, MissingArtifactError, ValueError) as exc:
         raise SystemExit(f"--group {group}: {exc}") from exc
     app(args=args, default_map=defaults)

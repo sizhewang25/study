@@ -13,6 +13,8 @@
 #   given on the line still wins, and a key that is not one of the command's
 #   flags is refused. `@seen` expands to the `seen` runs; `@seen:@unseen` zips
 #   the two roles into BASE:LOSO pairs.
+# * Under --group, pooled outputs land in _cross/<kind>/pro-paper.seen/ (the
+#   meshes) or _cross/<kind>/pro-paper/ (meshes + LOSO) instead of a hash.
 #
 # Per-run values (dataset_label, pni_csv, grid) stay in the run configs.
 # ripe-asmix-mesh is not a member: it is a different dataset, drawn in km.

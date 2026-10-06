@@ -26,6 +26,17 @@ that existed to stop the mesh and traffic-weighted arms of one dataset set
 overwriting each other under a heads-only name, and the hash does it without
 parsing.
 
+## ...or the group's name, under `--group`
+
+When the CLI runs with `--group <id>` (`use_group`), a pool whose runs are
+exactly a set of the group's roles is named after them instead of hashed:
+`<id>` for every member, `<id>.<role>` for one role, `<id>.<a>+<b>` for a
+union of roles in the file's order. Any other run set still hashes, so a
+hand-picked `--run-id` subset can never land in the group's directory. A
+group-named directory is not content-addressed, so `cross_dir` refuses one
+whose `runs.json` names different runs (the group's membership was edited):
+delete it and rebuild.
+
 Three guards, all strict: a method must be scored in every run, no TG id may
 appear in two runs, and no two runs may display the same label. The first two
 keep the pooled denominator one population; the third keeps a `groupby` on the
@@ -36,9 +47,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from itertools import combinations
 from pathlib import Path
 
-from scripts.analysis.v5.modules.labels import dataset_label
+from scripts.analysis.v5.modules.labels import dataset_label, group_members
 from scripts.analysis.v5.modules.paths import (
     DEFAULT_ANALYSIS_ROOT,
     DEFAULT_OUTPUTS_ROOT,
@@ -115,8 +127,44 @@ def runs_hash(run_ids: list[str], *, chars: int = SLUG_HASH_CHARS) -> str:
     return hashlib.sha256(joined.encode()).hexdigest()[:chars]
 
 
+#: The group the CLI was invoked with (`--group`), or None. Set once per
+#: process by `cli.main`; read by `cross_name`.
+_ACTIVE_GROUP: dict | None = None
+
+
+def use_group(group: dict | None) -> None:
+    """Name pools after `group` from now on (None: back to hashes only)."""
+    global _ACTIVE_GROUP
+    _ACTIVE_GROUP = group
+
+
+def group_name(run_ids: list[str], group: dict) -> str | None:
+    """`<id>`, `<id>.<role>` or `<id>.<a>+<b>` when `run_ids` is exactly that
+    union of the group's roles; None otherwise."""
+    want = set(run_ids)
+    gid = group["group_id"]
+    if want == set(group_members(group)):
+        return gid
+    runs = group.get("runs")
+    if not isinstance(runs, dict):
+        return None
+    roles = list(runs)
+    for size in range(1, len(roles)):
+        for pick in combinations(roles, size):  # file order within each pick
+            if set().union(*(group_members(group, r) for r in pick)) == want:
+                return f"{gid}.{'+'.join(pick)}"
+    return None
+
+
 def cross_name(run_ids: list[str]) -> str:
-    """`3-runs-8f2a1c`. The count is there so the name says something."""
+    """`3-runs-8f2a1c` -- or the active group's name for the run set (`group_name`).
+
+    The count is there so the hashed name says something.
+    """
+    if _ACTIVE_GROUP is not None:
+        named = group_name(run_ids, _ACTIVE_GROUP)
+        if named is not None:
+            return named
     return f"{len(set(run_ids))}-runs-{runs_hash(run_ids)}"
 
 
@@ -134,7 +182,16 @@ def cross_dir(
     `run_ids`, so rewriting it repairs a directory whose file was lost rather
     than churning content.
     """
-    out = (analysis_root or DEFAULT_ANALYSIS_ROOT) / "_cross" / kind / cross_name(run_ids)
+    name = cross_name(run_ids)
+    out = (analysis_root or DEFAULT_ANALYSIS_ROOT) / "_cross" / kind / name
+    if not name.endswith(f"-runs-{runs_hash(run_ids)}") and (out / RUNS_JSON).exists():
+        held = json.loads((out / RUNS_JSON).read_text()).get("run_ids")
+        if held != sorted(set(run_ids)):
+            raise ValueError(
+                f"{out} holds runs {held}, but group-named pools of {name!r} are now "
+                f"{sorted(set(run_ids))} (the group's membership changed). Delete the "
+                f"directory and rebuild."
+            )
     out.mkdir(parents=True, exist_ok=True)
     (out / RUNS_JSON).write_text(
         json.dumps({"run_ids": sorted(set(run_ids)), "kind": kind}, indent=2)

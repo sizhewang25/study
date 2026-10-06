@@ -163,3 +163,25 @@ now declared once in `configs/groups/pro-paper.yaml`.
 - **Not done.** The bounds are still also copied in the seven run configs.
   They agree, so nothing breaks. Deleting them there would make the group
   file the only source.
+
+### Pooled directories named after the group
+
+When a command runs with `--group`, a pool whose runs are exactly a set of the
+group's roles lands in `_cross/<kind>/<id>[.<role>]/` instead of
+`<n>-runs-<hash>/`.
+
+| Pool | Directory |
+|---|---|
+| the meshes | `pro-paper.seen` |
+| meshes + LOSO (pareto, loso-delta, dataset, variant-delta) | `pro-paper` |
+| any other run set | hashed, as before |
+
+- **Membership guard.** These names are not content-addressed, so a directory
+  whose `runs.json` lists other runs (the membership was edited) is refused.
+- **Paths in the script.** `create_paper_artifacts.sh` builds its `FIGS` paths
+  from the same rule.
+- **Checked.** From an empty root, no hash directory is created, all 17
+  figures are identical, and 1,097 tests pass.
+- **Old directories.** The hash-named directories already in
+  `outputs/analysis/v5/_cross` stay until deleted. A rerun of the script writes
+  the group-named ones beside them.

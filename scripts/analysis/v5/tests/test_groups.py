@@ -157,3 +157,39 @@ def test_the_real_group_file_resolves():
     dm = cli.group_default_map("pro-paper")
     assert dm["plot-pareto"]["seen"] == ["pro-as01-mesh", "pro-as02-mesh", "pro-as03-mesh"]
     assert dm["report-variant-delta"]["pair"][0] == "pro-as01-mesh:pro-as01-loso"
+
+
+# ---- pooled directories named after the group ------------------------------------------
+
+
+GROUP = {"group_id": "g", "runs": {"seen": ["m1", "m2"], "unseen": ["l1", "l2"], "extra": ["r"]}}
+
+
+def test_group_names_roles_and_falls_back_to_the_hash():
+    from scripts.analysis.v5.modules import cross
+
+    assert cross.group_name(["m1", "m2", "l1", "l2", "r"], GROUP) == "g"
+    assert cross.group_name(["m2", "m1"], GROUP) == "g.seen"
+    assert cross.group_name(["m1", "m2", "l1", "l2"], GROUP) == "g.seen+unseen"
+    assert cross.group_name(["m1"], GROUP) is None
+    try:
+        cross.use_group(GROUP)
+        assert cross.cross_name(["m1", "m2"]) == "g.seen"
+        assert cross.cross_name(["m1", "x"]).startswith("2-runs-")
+    finally:
+        cross.use_group(None)
+    assert cross.cross_name(["m1", "m2"]).startswith("2-runs-")
+
+
+def test_a_group_dir_holding_other_runs_is_refused(tmp_path):
+    from scripts.analysis.v5.modules import cross
+
+    try:
+        cross.use_group(GROUP)
+        out = cross.cross_dir(["m1", "m2"], analysis_root=tmp_path, kind="k")
+        assert out.name == "g.seen"
+        cross.use_group({**GROUP, "runs": {**GROUP["runs"], "seen": ["m1", "m3"]}})
+        with pytest.raises(ValueError, match="membership changed"):
+            cross.cross_dir(["m1", "m3"], analysis_root=tmp_path, kind="k")
+    finally:
+        cross.use_group(None)

@@ -741,6 +741,16 @@ python -m scripts.analysis.v5.cli plot-error-cdf --group pro-paper --layout per-
   declare a key they must agree exactly, or the lookup raises
   `ConflictingDeclarationError`, so a stale copy in a run config is caught.
   Per-run values (`dataset_label`, `pni_csv`) stay in the run configs.
+* **Pooled outputs are named after the group.** Under `--group`, a pool whose
+  runs are exactly a set of the group's roles lands in
+  `_cross/<kind>/<id>[.<role>[+<role>]]/` instead of `<n>-runs-<hash>/`. For
+  pro-paper that is `pro-paper.seen` for the meshes and `pro-paper` for meshes
+  plus LOSO twins. Any other run set, such as a hand-picked `--run-id` subset,
+  still hashes. A group-named directory is not content-addressed, so if the
+  group's membership is edited later, writing into it is refused until the
+  directory is deleted. Steps that read another step's pooled output resolve
+  the same name only under the same `--group`, so build a group's pool with
+  `--group` throughout.
 * Membership is declared only in the group file. A run config's own
   `analysis.<command>.combo_ids` still means what it did. Group command
   blocks are flags, never config keys.

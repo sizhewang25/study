@@ -195,8 +195,16 @@ grun report-variant-delta
 
 # ---- the paper's figures --------------------------------------------------------------------
 # paper name -> artifact under the analysis root. The one place the mapping lives.
-X3=$(python -c 'import sys;from scripts.analysis.v5.modules.cross import cross_name;print(cross_name(sys.argv[1:]))' "${MESH[@]}")
-X6=$(python -c 'import sys;from scripts.analysis.v5.modules.cross import cross_name;print(cross_name(sys.argv[1:]))' "${MESH[@]}" "${LOSO[@]}")
+# The pooled directories' names, as `--group` names them (pro-paper.seen, pro-paper).
+pool_name() {
+  python -c 'import sys
+from scripts.analysis.v5.modules import cross
+from scripts.analysis.v5.modules.labels import load_group
+cross.use_group(load_group(sys.argv[1]))
+print(cross.cross_name(sys.argv[2:]))' "$GROUP" "$@"
+}
+X3=$(pool_name "${MESH[@]}")
+X6=$(pool_name "${MESH[@]}" "${LOSO[@]}")
 FIGS=(
   "error_cdf.pooled.norm.cut|_cross/classify/$X3/error_cdf.pooled.norm.cut.png"
   "vp_distance_cdf|_cross/vp-distance-cdf/$X3/vp_distance_cdf.norm.png"
