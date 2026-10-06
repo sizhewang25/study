@@ -40,7 +40,7 @@ choice nothing can derive, so it is the third declared value. Read by
 `declared_combo_ids`; `cli._methods_for` decides precedence and checks the
 names against the tree.
 
-## Never raises (except a malformed `combo_ids`)
+## Never raises (except a malformed `combo_ids` or a conflict)
 
 Every break in the chain falls back to the run id, which is unique by
 construction and so is always a correct-if-verbose label. The breaks are real,
@@ -49,6 +49,26 @@ not hypothetical: five runs have no `target_space.json` at all
 `as7018_us_test01`), and `as01-materialization-test`'s manifest names a config
 that has since been deleted. A missing label is not an error -- only the
 `pro-*` configs declare one.
+
+## Group files: what a pooled set of runs declares once
+
+A **group file**, `configs/groups/<group_id>.yaml`, names a set of runs that
+are pooled together (`runs`, a list or a mapping of role -> list) and holds
+the same `analysis:` shape as a run config:
+
+* `analysis.common` -- values that belong to the set rather than to one run,
+  such as the normalization bounds (D and the largest RTT, taken over the
+  pooled datasets). These are read here: every `analysis.common` lookup
+  resolves the key from the run's own config **and** from every group listing
+  the run. One source is enough; several must agree exactly, or the lookup
+  raises `ConflictingDeclarationError` naming each source, so a run config
+  that kept a stale copy of a group value is caught rather than preferred.
+* `analysis.<command>` -- that command's **CLI flags**, not config keys:
+  `cli --group <id>` loads them as the command's defaults (`cli.group_default_map`).
+  They are never read here, so a run config's `analysis.<command>.combo_ids`
+  means what it always meant.
+
+Membership is declared in the group file only, never in the run config.
 
 Identity is a separate concern and never comes from here: sites key on
 `run_id` (`sites.site_key`), and the pooled cross directory keys on a hash of
@@ -73,6 +93,72 @@ from scripts.analysis.v5.modules.paths import (
 
 #: Where the label is declared, as a path through the config mapping.
 LABEL_PATH = ("analysis", "common", "dataset_label")
+
+#: Where group files live: `configs/groups/<group_id>.yaml`.
+GROUPS_DIR = REPO_ROOT / "configs" / "groups"
+
+#: The only part of a group file merged into run lookups; the per-command
+#: blocks are CLI flags (`cli.group_default_map`).
+GROUP_SHARED = ("analysis", "common")
+
+
+class ConflictingDeclarationError(ValueError):
+    """A key declared by a run config and/or its groups with different values."""
+
+
+def _groups(groups_dir: str) -> tuple[dict, ...]:
+    """Every group file under `groups_dir`, parsed and checked.
+
+    Memoized on the files and their mtimes, so an edited group file is re-read
+    within one process.
+    """
+    files = sorted(Path(groups_dir).glob("*.yaml"))
+    return _parse_groups(tuple((str(f), f.stat().st_mtime_ns) for f in files))
+
+
+@lru_cache(maxsize=None)
+def _parse_groups(files: tuple[tuple[str, int], ...]) -> tuple[dict, ...]:
+    out = []
+    for name, _ in files:
+        path = Path(name)
+        body = yaml.safe_load(path.read_text()) or {}
+        gid = body.get("group_id")
+        if gid != path.stem:
+            raise ValueError(f"{path}: group_id {gid!r} must equal the file stem {path.stem!r}")
+        members = group_members(body)
+        if len(set(members)) != len(members):
+            raise ValueError(f"{path}: a run is listed twice in `runs`")
+        out.append({**body, "_path": str(path)})
+    return tuple(out)
+
+
+def group_members(group: dict, role: str | None = None) -> list[str]:
+    """The run ids a group lists: all of them, or one role's (`runs.<role>`)."""
+    runs = group.get("runs") or []
+    if isinstance(runs, list):
+        if role is not None:
+            raise ValueError(f"group {group.get('group_id')!r} lists runs without roles; no {role!r}")
+        return [str(r) for r in runs]
+    if not isinstance(runs, dict):
+        raise ValueError(f"group {group.get('group_id')!r}: `runs` must be a list or a role mapping")
+    if role is not None:
+        if role not in runs:
+            raise ValueError(f"group {group.get('group_id')!r} has no role {role!r}; it has {sorted(runs)}")
+        return [str(r) for r in runs[role] or []]
+    return [str(r) for v in runs.values() for r in (v or [])]
+
+
+def load_group(group_id: str, groups_dir: Path | str | None = None) -> dict:
+    """The group file `<groups_dir>/<group_id>.yaml`, parsed; raises if absent."""
+    for g in _groups(str(groups_dir or GROUPS_DIR)):
+        if g["group_id"] == group_id:
+            return g
+    raise MissingArtifactError(f"no group {group_id!r} under {groups_dir or GROUPS_DIR}")
+
+
+def groups_of(run_id: str, groups_dir: Path | str | None = None) -> list[dict]:
+    """Every group listing `run_id`, in file order."""
+    return [g for g in _groups(str(groups_dir or GROUPS_DIR)) if run_id in group_members(g)]
 
 
 def _under_repo(value: str) -> Path:
@@ -127,11 +213,12 @@ def dataset_label(run_id: str, root: Path | str = DEFAULT_OUTPUTS_ROOT) -> str:
 
 
 def declared(run_id: str, key_path: tuple[str, ...], root: Path | str = DEFAULT_OUTPUTS_ROOT):
-    """The scalar at `key_path` in the run's config, or None.
+    """The scalar at `key_path` in the run's config or its groups, or None.
 
     None for every break in the chain: no config, an unparsable one, a missing
     key, or a non-scalar value. A non-scalar would be carried into a filename
-    or a CSV column, so it is refused the same way an absent one is.
+    or a CSV column, so it is refused the same way an absent one is. Raises
+    only when two sources declare different values.
     """
     node = _node(run_id, key_path, root)
     if node is None or isinstance(node, (dict, list)):
@@ -139,8 +226,16 @@ def declared(run_id: str, key_path: tuple[str, ...], root: Path | str = DEFAULT_
     return node
 
 
-def _node(run_id: str, key_path: tuple[str, ...], root: Path | str = DEFAULT_OUTPUTS_ROOT):
-    """The raw value at `key_path` in the run's config, or None if any link breaks."""
+def _walk(node, key_path: tuple[str, ...]):
+    for key in key_path:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+    return node
+
+
+def _run_node(run_id: str, key_path: tuple[str, ...], root: Path | str = DEFAULT_OUTPUTS_ROOT):
+    """The raw value at `key_path` in the run's own config, or None if any link breaks."""
     path = config_path(run_id, root)
     if path is None:
         return None
@@ -148,11 +243,35 @@ def _node(run_id: str, key_path: tuple[str, ...], root: Path | str = DEFAULT_OUT
         node = yaml.safe_load(path.read_text())
     except (yaml.YAMLError, OSError):
         return None
-    for key in key_path:
-        if not isinstance(node, dict):
-            return None
-        node = node.get(key)
-    return node
+    return _walk(node, key_path)
+
+
+def _node(run_id: str, key_path: tuple[str, ...], root: Path | str = DEFAULT_OUTPUTS_ROOT):
+    """The value at `key_path` from the run's config (and, under
+    `analysis.common`, its groups), or None.
+
+    Every source that declares the key must declare the same value; otherwise
+    `ConflictingDeclarationError`. An empty `{}` block counts as undeclared.
+    """
+    found = []
+    own = _run_node(run_id, key_path, root)
+    if own is not None and own != {}:
+        found.append((str(config_path(run_id, root)), own))
+    shared = tuple(key_path[:2]) == GROUP_SHARED  # per-command group blocks are CLI flags
+    for g in groups_of(run_id) if shared else ():
+        value = _walk(g, key_path)
+        if value is not None and value != {}:
+            found.append((g["_path"], value))
+    if not found:
+        return None
+    first = found[0][1]
+    if any(v != first for _, v in found[1:]):
+        listing = "; ".join(f"{src}: {v!r}" for src, v in found)
+        raise ConflictingDeclarationError(
+            f"{run_id}: {'.'.join(key_path)} is declared differently by {listing}. "
+            f"Declare it in one place (the group file for a pooled value)."
+        )
+    return first
 
 
 #: Where a run's operator PNI list is declared. Read by `plot-pni-gap` and

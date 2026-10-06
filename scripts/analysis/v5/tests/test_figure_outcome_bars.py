@@ -242,9 +242,10 @@ def test_guard_rejects_a_table_whose_cross_tab_does_not_close(table, tmp_path):
 
 @pytest.mark.parametrize("mode", F.MODES)
 def test_csv_columns_are_all_emitted(table, mode):
+    twin = F.add_of_correct(table.copy())  # the derived columns are added at write time
     missing = [
         c for c in F.csv_columns(mode)
-        if c not in table.columns and c not in ("run_id", "dataset")
+        if c not in twin.columns and c not in ("run_id", "dataset")
     ]
     assert missing == []
     for g in F.GROUPS:

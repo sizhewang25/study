@@ -700,6 +700,119 @@ key (it already refuses `plot-champion-upset`). So run that stage's
 `target_space` and `eval_source` rules on their own, then the benchmark with
 `CBG_SKIP_INSPECT=1`.
 
+## Group files: `--group`
+
+A pooled figure takes the same flags every time: the same `--run-id`s, the
+same methods, the same layout. A **group file**, `configs/groups/<id>.yaml`,
+declares them once, in the same shape as a run config's `analysis:` section:
+
+```yaml
+group_id: pro-paper
+runs:
+  seen: [pro-as01-mesh, pro-as02-mesh, pro-as03-mesh]
+  unseen: [pro-as01-loso, pro-as02-loso, pro-as03-loso]
+analysis:
+  common:                       # shared values, merged into every member's lookups
+    dist_norm_km: {min: 0.0, max: 4387.257}
+    rtt_norm_ms: {min: 0.0, max: 92.395}
+  plot-error-cdf:               # exactly this command's flags
+    layout: pooled
+    unanswered: cut
+    run-id: "@seen"
+    method: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
+  report-loso-delta:
+    pair: "@seen:@unseen"
+```
+
+```bash
+python -m scripts.analysis.v5.cli plot-error-cdf --group pro-paper        # = the flags above
+python -m scripts.analysis.v5.cli plot-error-cdf --group pro-paper --layout per-run   # a flag on the line wins
+```
+
+* **`analysis.<command>`** holds that command's CLI flags, keyed as on the
+  command line (`run-id`, `share-at`, `extrapolate-tgs`, ...). `--group`, given
+  before or after the command, loads them as the command's defaults (Click's
+  `default_map`, `cli.group_default_map`). A key that is not one of the
+  command's flags is refused, naming the flags it has. `@role` expands to that
+  role's runs, and `@a:@b` zips two roles into `BASE:LOSO` pairs.
+* **`analysis.common`** holds values that belong to the set of runs, such as the
+  normalization bounds. Every `analysis.common` lookup (`labels`) reads the
+  run's own config **and** every group listing the run. Where several sources
+  declare a key they must agree exactly, or the lookup raises
+  `ConflictingDeclarationError`, so a stale copy in a run config is caught.
+  Per-run values (`dataset_label`, `pni_csv`) stay in the run configs.
+* Membership is declared only in the group file. A run config's own
+  `analysis.<command>.combo_ids` still means what it did. Group command
+  blocks are flags, never config keys.
+
+**`report-bounds --run-id ...`** (or `--group pro-paper`) computes both bounds
+from the data and checks every run's resolved declaration against them, exiting
+1 on a mismatch:
+* D is the largest distance between any two VP or site coordinates.
+* The RTT bound is the largest per-(VP, TG) minimum RTT.
+
+Both are pooled over the runs and written to `_cross/bounds/<hash>/bounds.json`.
+
+## The paper's artifacts: `create_paper_artifacts.sh`
+
+`create_analysis_artifacts.sh` builds the exploratory set for a group of runs.
+**`create_paper_artifacts.sh`** builds exactly what `cbg-benchmark-paper`
+cites, section by section in the paper's order, and each command is commented
+with the figure, table or sentence it backs. The runs are fixed: the three
+operator meshes, their LOSO twins and the RIPE Atlas mesh. Every pooled call
+is `<command> --group pro-paper`: the script orders the calls and the group
+file holds their flags.
+
+```bash
+./scripts/analysis/v5/create_paper_artifacts.sh                      # into outputs/analysis/v5
+./scripts/analysis/v5/create_paper_artifacts.sh --analysis-root DIR  # a sandbox
+./scripts/analysis/v5/create_paper_artifacts.sh --check-figs ../cbg-benchmark-paper/figs
+./scripts/analysis/v5/create_paper_artifacts.sh --copy-figs  ../cbg-benchmark-paper/figs
+```
+
+`--check-figs` compares each built PNG byte for byte with the paper's copy
+(the script's `FIGS` table is the one place the paper-name → artifact mapping
+lives); `--copy-figs` copies them in under the paper's names. From an empty
+analysis root it rebuilds all 17 v5 figures identical to the paper's.
+
+The rule it enforces: **a number the paper quotes is a file, not a
+calculation.** The readings the text derives from a figure are written beside
+it:
+
+| Reading | File | Command |
+|---|---|---|
+| p99, ratios between methods per percentile, p50/p5 spreads | `error_cdf.pooled.norm.cut{,.ratios}.csv` | `plot-error-cdf` |
+| shares of TGs at stated thresholds; d_sp / d_geo median ratio | `vp_distance_cdf.norm.shares.csv`, manifest `median_ratio` | `plot-vp-distance-cdf --share-at` |
+| per-network accuracy gaps between methods (pp, unrounded) | `outcome_bars[.pooled].<rung>.gaps.csv` | `plot-outcome-bars` |
+| bounded accuracy; each method's correct TGs by pixel distance | `accuracy_bounded`, `of_correct_*` in the outcome-bars CSV | `plot-outcome-bars` |
+| the sites across the has-X / no-X RTT split | `x_cell_rtt.exceptions.csv` | `plot-x-cell-rtt` |
+| S-P per side: correct share, where wrong answers land, misses per run/cluster, near-ties | `sides` in `sp_pni_cells.report.json`; `n_near_tie` per TG | `report-sp-pni-cells` |
+| nesting in S-P's correct set, CBG-adds share, family-only cohorts (+ has-X share), all-or-nothing sites | `correct_upset[.pooled].<metric>.nesting.csv` | `plot-correct-upset` |
+| own-pixel share and bounded accuracy per regime; gain over S-P kept under LOSO | `own_pixel_*`, `acc_bounded_*`, `gain_*` in `loso_delta*.csv` | `report-loso-delta` |
+| batch budget for N TGs on K cores (mean runtime), per network; MTL share; worker memory (heap, RSS) | `cost_box[.pooled].<mem>.extrapolation.csv` | `plot-cost-box --extrapolate-tgs --cores` |
+| leads over S-P, best-worst spreads, frontier steps; pairwise pp and runtime ratios | `pareto.csv`, `pareto.pairs.csv` | `plot-pareto` |
+| VP fleet and identity, partial mesh, replicas per site, shared seeds, folds, D vs max error, filter-removal estimate | `_cross/dataset/<hash>/dataset.csv` | `report-dataset` |
+| the geometric-centroid ablation | `_cross/variant-delta/<hash>/variant_delta*.csv` | `report-variant-delta` |
+
+**`report-dataset --run-id ... [--pair BASE:LOSO]`** writes the methodology's
+numbers, one row per run and one pooled. No pre-filter CSV survives, so the
+filter-removal share is an estimate that assumes `--replicas-per-site` (20)
+per site, and is named `est_*`.
+
+**`report-variant-delta --pair BASE:LOSO [--variant ORIGINAL=VARIANT]`**
+compares a one-phase variant against its original under seen and unseen sites
+(default: OCT-H/OCT-S against their geometric-centroid `_geo` twins). It
+scores both arms in memory with the v5 scorer, since the variants are in no
+config's `combo_ids`, and checks that its scoring of the original reproduces
+`classify`'s parquet. It refuses arms whose TGs, folds or `run.json` differ
+beyond the swapped phase. It replaces
+`tasks/20261004-geo-centroid-variants/compare_geo.py`.
+
+`classify` scores every combo on disk, the `_geo` variants included, so a
+figure whose config block is empty would draw them. The paper's figures each
+name the six methods in their config block, and the script passes them to the
+reports that have none.
+
 ## Guarantees
 
 - `pred_dist_to_tg_km` matches v4's `error_km` row for row on all three meshes,
@@ -783,6 +896,14 @@ python -m scripts.analysis.v5.cli plot-x-cell-rtt --layout pooled \
 python -m scripts.analysis.v5.cli report-loso-delta \
     --pair pro-as01-mesh:pro-as01-loso --pair pro-as02-mesh:pro-as02-loso \
     --pair pro-as03-mesh:pro-as03-loso
+python -m scripts.analysis.v5.cli report-dataset \
+    --run-id pro-as01-mesh --run-id pro-as02-mesh --run-id pro-as03-mesh \
+    --pair pro-as01-mesh:pro-as01-loso --pair pro-as02-mesh:pro-as02-loso \
+    --pair pro-as03-mesh:pro-as03-loso
+python -m scripts.analysis.v5.cli report-variant-delta \
+    --pair pro-as01-mesh:pro-as01-loso --pair pro-as02-mesh:pro-as02-loso \
+    --pair pro-as03-mesh:pro-as03-loso
+./scripts/analysis/v5/create_paper_artifacts.sh --check-figs ../cbg-benchmark-paper/figs
 python -m scripts.analysis.v5.cli plot-pni-gap \
     --run-id as01-260728-260802-mesh --pni-csv datasets/pni/as01-us-pni.approx.csv
 python -m scripts.analysis.v5.cli plot-pni-gap --layout pooled \

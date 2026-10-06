@@ -55,6 +55,15 @@ them in C3), counted as `n_tgs_sp_tie_broken_differently`. The edge CSV and
 PNI list go through `pni_gap.checked_source_csv` like every other consumer of
 the clusters.
 
+## The two sides, and why S-P misses
+
+`sides` reports the has-X / no-X split the paper's table is built on: per
+side, S-P's correct share, where its wrong answers land (an interconnect's
+cell or not), and the misses per run and cluster. Each TG also carries
+`n_near_tie`, how many of its VPs measure within `figure_sp_interconnect.TIE_MS`
+(1 ms) of its minimum RTT; `sides` compares its median on the misses against
+the correct TGs, the "candidate VPs that differ by less than 1 ms" reading.
+
 ## Units
 
 Every share is per TG and carries its site count, since ~20 replicas of a
@@ -77,7 +86,7 @@ from scripts.analysis.v5.modules import classify as C
 from scripts.analysis.v5.modules import grid as G
 from scripts.analysis.v5.modules import pni_gap as P
 from scripts.analysis.v5.modules import sites as S
-from scripts.analysis.v5.modules.figure_sp_interconnect import load_edges
+from scripts.analysis.v5.modules.figure_sp_interconnect import TIE_MS, load_edges
 from scripts.analysis.v5.modules.geodesy import elementwise_km, haversine_km, pairwise_km
 from scripts.analysis.v5.modules.map_answer_space import load_rung
 from scripts.analysis.v5.modules.paths import MissingArtifactError, RunPaths
@@ -205,9 +214,11 @@ def sp_rtt(edges: pd.DataFrame, tgs: pd.DataFrame) -> pd.DataFrame:
     e = edges[["tg_id", "vp_lat", "vp_lon", "rtt_ms"]].merge(
         tgs[["tg_id", "pred_lat", "pred_lon"]], on="tg_id", how="inner", validate="m:1")
     at = elementwise_km(e.vp_lat, e.vp_lon, e.pred_lat, e.pred_lon) <= D_SP_TOL_KM
+    lo = e.groupby("tg_id").rtt_ms.transform("min")
     return pd.DataFrame({
         "sp_rtt_ms": e[at].groupby("tg_id").rtt_ms.min(),
         "min_rtt_ms": e.groupby("tg_id").rtt_ms.min(),
+        "n_near_tie": (e.rtt_ms <= lo + TIE_MS).groupby(e.tg_id).sum().astype(int),
     }).rename_axis("tg_id").reset_index()
 
 
@@ -286,6 +297,40 @@ def rule_misses(tgs: pd.DataFrame) -> list[dict]:
     return rows
 
 
+SIDES = ((True, "has-X"), (False, "no-X"))
+
+
+def sides(tgs: pd.DataFrame) -> dict:
+    """S-P on each side of the has-X split: correct share, where the wrong
+    answers land, and who the misses are (per run and cluster, with their
+    near-tie counts against the correct TGs')."""
+    out = {}
+    for flag, name in SIDES:
+        g = tgs[tgs.tg_cell_holds_x == flag]
+        wrong = g[~g.correct]
+        out[name] = {
+            "n_tgs": int(len(g)),
+            "n_sites": int(g[S.SITE_KEY_COL].nunique()),
+            "correct_pct": _pct(g.correct),
+            "n_wrong": int(len(wrong)),
+            "wrong_in_interconnect_cell_pct": _pct(wrong.pred_in_interconnect_cell),
+            "misses_by_run": {r: int(len(b)) for r, b in wrong.groupby("run_id")},
+            "misses_by_run_cluster": {
+                r: {str(int(c)): {"n_tgs": int(len(cb)), "n_sites": int(cb[S.SITE_KEY_COL].nunique())}
+                    for c, cb in b.groupby(P.CLUSTER_COL)}
+                for r, b in wrong.groupby("run_id")
+            },
+            "n_near_tie_median": {
+                "correct": float(g[g.correct].n_near_tie.median()) if g.correct.any() else None,
+                "wrong": float(wrong.n_near_tie.median()) if len(wrong) else None,
+                "wrong_by_cluster": {str(int(c)): float(cb.n_near_tie.median())
+                                     for c, cb in wrong.groupby(P.CLUSTER_COL)},
+                "tie_ms": TIE_MS,
+            },
+        }
+    return out
+
+
 def report(tgs: pd.DataFrame, cell_meta: dict, meta: dict) -> dict:
     by_cluster = {str(int(c)): g for c, g in tgs.groupby(P.CLUSTER_COL)}
     by_run = dict(tuple(tgs.groupby("run_id")))
@@ -324,6 +369,8 @@ def report(tgs: pd.DataFrame, cell_meta: dict, meta: dict) -> dict:
             "by_run": {r: rule(g) for r, g in by_run.items()},
         },
         "rule_misses": {"unit": "clusters point", "points": rule_misses(tgs)},
+        "sides": {"unit": "TG (n_sites alongside)", "rule": DEFINITIONS["rule_correct"],
+                  **sides(tgs)},
     }
 
 
@@ -386,7 +433,7 @@ def load_runs(
 #: Per-TG columns written to the CSV. No coordinate, no VP or interconnect id.
 CSV_COLUMNS = ("run_id", "tg_id", P.POINT_COL, P.CLUSTER_COL, "tg_seed_id", "pred_seed_id",
                "x_seed_id", "k_seed_id", "d_tg_x_km", "d_sp_vp_k_km", "d_x_seed_km", P.GAP,
-               *FLAGS, "rule_correct", *RANDOM, "sp_tie_broken_differently")
+               *FLAGS, "rule_correct", *RANDOM, "sp_tie_broken_differently", "n_near_tie")
 
 
 def _write(tgs, cell_meta, meta, out_dir) -> Path:

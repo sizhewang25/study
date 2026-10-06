@@ -311,9 +311,9 @@ class TestSentinel:
         E.build_for_runs([run], analysis_root=tmp_path)
         E.build_for_runs([run], analysis_root=tmp_path, unanswered=E.SENTINEL)
         out = run.analysis_dir(CLASSIFY_KIND, root=tmp_path)
-        assert {p.name for p in out.glob("error_cdf*")} == {
-            *E.artifact_names(E.PER_RUN), *E.artifact_names(E.PER_RUN, E.SENTINEL)
-        }
+        names = [*E.artifact_names(E.PER_RUN), *E.artifact_names(E.PER_RUN, E.SENTINEL)]
+        ratios = [E.ratios_name(n) for n in names if n.endswith(".csv")]
+        assert {p.name for p in out.glob("error_cdf*")} == {*names, *ratios}
 
     def test_the_sentinel_csv_declares_its_policy(self, tmp_path):
         run = _write_run(tmp_path, "as01", {"m": _tgs(solved=3, failed=3)})

@@ -1,0 +1,130 @@
+# The paper's pooled operator datasets, declared once.
+#
+#   python -m scripts.analysis.v5.cli plot-error-cdf --group pro-paper
+#
+# Same shape as a run config's `analysis:` section:
+#
+# * analysis.common -- values that belong to the set of runs, not to one run
+#   (the normalization bounds). Every v5 lookup merges them with each member
+#   run's own analysis.common; where both declare a key they must agree
+#   exactly (scripts/analysis/v5/modules/labels.py).
+# * analysis.<command> -- that command's CLI flags, spelt as on the command
+#   line. `--group pro-paper` loads them as the command's defaults; a flag
+#   given on the line still wins, and a key that is not one of the command's
+#   flags is refused. `@seen` expands to the `seen` runs; `@seen:@unseen` zips
+#   the two roles into BASE:LOSO pairs.
+#
+# Per-run values (dataset_label, pni_csv, grid) stay in the run configs.
+# ripe-asmix-mesh is not a member: it is a different dataset, drawn in km.
+
+group_id: pro-paper
+
+runs:
+  seen: [pro-as01-mesh, pro-as02-mesh, pro-as03-mesh]        # K-fold
+  unseen: [pro-as01-loso, pro-as02-loso, pro-as03-loso]      # leave-one-site-out twins
+
+analysis:
+  common:
+    # Every distance axis is d / D: min 0 (a prediction on its TG), max the
+    # footprint span D, the largest great-circle distance between any two VP
+    # or site coordinates over the three datasets. Confidential in the paper.
+    dist_norm_km:
+      min: 0.0
+      max: 4387.257
+    # Every RTT axis is r / R_max: min 0 ms, max the largest (VP, TG) pair
+    # minimum RTT over the three datasets (AS-B's).
+    rtt_norm_ms:
+      min: 0.0
+      max: 92.395
+
+  # -- bounds and datasets (§3) ---------------------------------------------------
+  report-bounds:                  # computes D and R_max, checks analysis.common
+    run-id: "@seen"
+
+  report-dataset:
+    run-id: "@seen"
+    pair: "@seen:@unseen"
+
+  plot-pni-gap:                   # the pooled clusters every PNI step reads
+    layout: pooled
+    run-id: "@seen"
+
+  plot-sp-interconnect:
+    layout: pooled
+    run-id: "@seen"
+
+  # -- §4 error distance ----------------------------------------------------------
+  plot-error-cdf:
+    layout: pooled
+    unanswered: cut
+    run-id: "@seen"
+    method: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
+
+  plot-vp-distance-cdf:
+    run-id: "@seen"
+    share-at: [3.4, 22.8, 228]
+
+  plot-pni-cluster-rtt:
+    layout: pooled
+    run-id: "@seen"
+
+  # -- §5 region classification ---------------------------------------------------
+  # Both modes in one call: the unbounded figure (§5.1) and the bounded one (§5.3).
+  plot-outcome-bars:
+    layout: [pooled, compare]
+    mode: [bounded, unbounded]
+    run-id: "@seen"
+    method: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
+
+  plot-x-cell-rtt:
+    layout: pooled
+    run-id: "@seen"
+
+  report-sp-pni-cells:
+    layout: pooled
+    run-id: "@seen"
+
+  report-loso-delta:              # Table x-cell and Table seen-unseen
+    pair: "@seen:@unseen"
+    method: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
+
+  plot-correct-upset:
+    layout: pooled
+    run-id: "@seen"
+    method: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
+
+  plot-exclusive-error:
+    run-id: "@seen"
+    method-a: spotter_cbg
+    method-b: octant_cbg_hull
+
+  plot-stability:
+    run-id: "@seen"
+    method-a: spotter_cbg
+    method-b: octant_cbg_hull
+
+  plot-peripherality:
+    run-id: "@seen"
+    method-a: spotter_cbg
+    method-b: octant_cbg_hull
+
+  # -- §6 overhead ------------------------------------------------------------------
+  # S-P has no cost and OCT-S costs what OCT-H does, so neither takes a slot;
+  # OCT-H's geometric-centroid twin is drawn dashed on OCT-H's slot.
+  plot-cost-box:
+    layout: pooled
+    run-id: "@seen"
+    method: [million_scale_cbg, vanilla_cbg, octant_cbg_hull, spotter_cbg]
+    overlay: [octant_cbg_hull=octant_cbg_hull_geo]
+    extrapolate-tgs: 1000000
+    cores: 32
+
+  # -- §7 comprehensive --------------------------------------------------------------
+  plot-pareto:
+    seen: "@seen"
+    unseen: "@unseen"
+    method: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
+
+  # -- appendix B ----------------------------------------------------------------------
+  report-variant-delta:
+    pair: "@seen:@unseen"

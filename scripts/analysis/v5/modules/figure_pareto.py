@@ -27,6 +27,16 @@ method is one dot:
 Each panel uses its own regime's runtime: OCT-H's tail differs ~4x between the
 regimes, so a pooled runtime would be right for neither.
 
+## Readings
+
+`pareto.csv` also carries the numbers the text quotes off the panels:
+`lead_vs_sp_pp` (pooled accuracy over S-P's), `spread_pp` (best minus worst
+dataset), and, for each frontier member, the next cheaper member
+(`frontier_prev`, S-P for the cheapest) with the runtime ratio and accuracy
+gain over it. `pareto.pairs.csv` adds each pair's pooled difference
+(`d_acc_pooled_pp`) and runtime ratios (`runtime_p50_ratio`,
+`runtime_mean_ratio`, a over b).
+
 ## The frontier
 
 A method is on the frontier when no method is at least as fast (p50) and at
@@ -46,8 +56,9 @@ lowest, highest) and in how many datasets the first one wins. A lead in every
 dataset is the claim the figure can support; a lead in two of three is not.
 `pareto.datasets.csv` holds each dataset's own accuracy and median runtime.
 
-Memory is not drawn: every method's per-TG peak is under 25 MB, and OCT-H's
-24 MB is its Monte Carlo medoid's fixed buffer (`plot-cost-box`).
+Memory is not drawn: every method's per-TG peak is tens of MB at most, and
+OCT-H's median 24 MB is its Monte Carlo medoid's fixed buffer (`plot-cost-box`,
+whose extrapolation table holds the largest peak).
 
 Command: `plot-pareto`. Needs `classify` on every run. Writes
 `pareto.<metric>.<regime>.png` (one panel each, cell/bounded x seen/unseen,
@@ -254,7 +265,57 @@ def summarize(long: pd.DataFrame, regime: str) -> tuple[pd.DataFrame, pd.DataFra
     pairs = pd.DataFrame(pairs)
     pairs["consistent"] = (pairs["n_a_wins"] == pairs["n_datasets"]) | (
         pairs["n_b_wins"] == pairs["n_datasets"])
-    return table, ds, pairs
+    return add_readings(table), ds, add_pair_readings(pairs, table)
+
+
+def add_readings(table: pd.DataFrame) -> pd.DataFrame:
+    """The differences the text quotes, per (metric, method), in pp and x.
+
+    `lead_vs_sp_pp`: pooled accuracy minus S-P's. `spread_pp`: the best minus
+    the worst dataset. `frontier_prev` is the next cheaper frontier member (S-P
+    for the cheapest), with the runtime ratio (p50) and accuracy gain over it.
+    """
+    out = table.copy()
+    out["spread_pp"] = 100 * (out["acc_max"] - out["acc_min"])
+    out["lead_vs_sp_pp"] = np.nan
+    out["frontier_prev"] = ""
+    out["runtime_ratio_vs_frontier_prev"] = np.nan
+    out["d_acc_pp_vs_frontier_prev"] = np.nan
+    for metric in out["metric"].unique():
+        sel = out["metric"] == metric
+        sp = out.loc[sel & (out["method"] == SHORTEST_PING), "acc"]
+        if len(sp):
+            out.loc[sel, "lead_vs_sp_pp"] = 100 * (out.loc[sel, "acc"] - float(sp.iloc[0]))
+        front = out[sel & out["on_frontier"]].sort_values("runtime_p50_ms")
+        prev = sp.index[0] if len(sp) else None
+        for i in front.index:
+            if prev is not None:
+                out.loc[i, "frontier_prev"] = out.loc[prev, "method"]
+                out.loc[i, "d_acc_pp_vs_frontier_prev"] = 100 * (out.loc[i, "acc"] - out.loc[prev, "acc"])
+                rt_prev = out.loc[prev, "runtime_p50_ms"]
+                if np.isfinite(rt_prev) and rt_prev > 0:
+                    out.loc[i, "runtime_ratio_vs_frontier_prev"] = out.loc[i, "runtime_p50_ms"] / rt_prev
+            prev = i
+    return out
+
+
+def add_pair_readings(pairs: pd.DataFrame, table: pd.DataFrame) -> pd.DataFrame:
+    """Each pair's pooled accuracy difference (pp) and runtime ratios (a / b)."""
+    t = table.set_index(["metric", "method"])
+    out = pairs.copy()
+
+    def look(metric, method, col):
+        return float(t.loc[(metric, method), col]) if (metric, method) in t.index else np.nan
+
+    out["d_acc_pooled_pp"] = [
+        100 * (look(m, a, "acc") - look(m, b, "acc")) for m, a, b in zip(out.metric, out.a, out.b)]
+    for stat in ("p50", "mean"):
+        col = f"runtime_{stat}_ms"
+        ra = np.array([look(m, a, col) for m, a in zip(out.metric, out.a)])
+        rb = np.array([look(m, b, col) for m, b in zip(out.metric, out.b)])
+        with np.errstate(divide="ignore", invalid="ignore"):
+            out[f"runtime_{stat}_ratio"] = np.where(rb > 0, ra / rb, np.nan)
+    return out
 
 
 def frontier(table: pd.DataFrame) -> list[str]:

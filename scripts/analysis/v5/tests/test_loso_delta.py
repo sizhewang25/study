@@ -42,6 +42,8 @@ def _frame(correct: list[bool], errs: list[float], *, status: str = "SUCCESS",
             "pred_lon": [SITES[s][1] for _, s in tgs],
             "pred_dist_to_tg_km": errs,
             "cell_label": ["correct" if c else "wrong" for c in correct],
+            # Own pixel when correct, five pixels out when wrong.
+            C.GRID_OFFSET: [0 if c else 5 for c in correct],
         }
     )
 

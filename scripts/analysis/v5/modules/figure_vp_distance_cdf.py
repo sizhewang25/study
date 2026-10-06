@@ -56,6 +56,16 @@ The axis becomes `dist_norm.X_MIN`-`X_MAX`, the CSV columns and manifest keys
 take `_norm_e3` in place of `_km`, and the files take a `.norm.` infix. Pooled
 runs must declare the same bounds.
 
+## Shares at stated thresholds
+
+A sentence like "half of the TGs have a VP within x" or "the gap exceeds y for
+7% of them" reads a CDF at a chosen x. `--share-at` (repeatable, in the
+figure's unit -- normalized x 10^-3 when the configs declare bounds) writes
+`<stem>.shares.csv`: per series and threshold, the share of TGs at or below it
+and above it. Without thresholds the file is not written. The manifest also
+carries `median_ratio`, the per-population ratio of the series medians
+(d_sp / d_geo), which the text quotes as "n times larger".
+
 Command: `plot-vp-distance-cdf`. Writes `_cross/vp-distance-cdf/<datasets>[@<arm>]/`.
 """
 
@@ -233,6 +243,28 @@ def stats_table(pop: pd.DataFrame, unit: str = "km") -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def shares_name(csv_name: str) -> str:
+    """`vp_distance_cdf.norm.csv` -> `vp_distance_cdf.norm.shares.csv`."""
+    return csv_name.removesuffix(".csv") + ".shares.csv"
+
+
+def shares_table(pop: pd.DataFrame, thresholds: list[float], unit: str = "km") -> pd.DataFrame:
+    """Per series and threshold t: the share of TGs with value <= t and > t.
+
+    Shares in percent over the whole population (every TG has all three
+    series). `t` is in the population's unit, recorded in `unit`.
+    """
+    rows = []
+    for key, values in series(pop).items():
+        for t in thresholds:
+            le = float((values <= t).mean() * 100)
+            rows.append({
+                "series": key, "unit": unit, "threshold": float(t), "n": int(len(values)),
+                "share_le_pct": le, "share_gt_pct": 100.0 - le,
+            })
+    return pd.DataFrame(rows)
+
+
 def _ecdf(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Sorted values against the share of the population at or below each."""
     x = np.sort(values)
@@ -315,15 +347,23 @@ def _manifest(
     pop: pd.DataFrame,
     stats: pd.DataFrame,
     bounds: tuple[float, float] | None = None,
+    share_at: list[float] | None = None,
 ) -> str:
     gap = pop[GAP].to_numpy()
     positive = gap[gap > 0]
     unit = "norm_e3" if bounds else "km"
     png_name, csv_name, _ = artifact_names(bounds is not None)
+    med = {key: float(np.median(v)) for key, v in series(pop).items()}
     return json.dumps(
         {
             "figure": png_name,
             "csv": csv_name,
+            "shares_csv": shares_name(csv_name) if share_at else None,
+            "median_ratio": {
+                "d_sp_over_d_geo": med[SPING] / med[GEO] if med[GEO] > 0 else None,
+                "gap_over_d_geo": med[GAP] / med[GEO] if med[GEO] > 0 else None,
+                "note": "ratios of the series medians (np.median), the 'n times larger' reading.",
+            },
             "kind": KIND,
             "run_ids": meta["run_ids"],
             "nside": meta["nside"],
@@ -392,11 +432,13 @@ def build_for_runs(
     analysis_root: Path | None = None,
     source_csv: dict[str, Path] | None = None,
     dist_norm_km: dict[str, tuple[float, float] | None] | None = None,
+    share_at: list[float] | None = None,
 ) -> list[Path]:
     """PNG, stats CSV and manifest. Returns the PNG in a list, as siblings do.
 
     `dist_norm_km` maps run id to its declared `(min, max)`
     (`labels.declared_dist_norm_km`); the runs must agree, and None draws km.
+    `share_at` adds `<stem>.shares.csv` at those thresholds, in the figure's unit.
     """
     nside = G.validate_nside(nside)
     bounds = DN.common_bounds([r.run_id for r in runs], dist_norm_km)
@@ -405,10 +447,13 @@ def build_for_runs(
     pop = population(long)
     if bounds is not None:
         pop = normalized(pop, bounds)
-    stats = stats_table(pop, "norm_e3" if bounds else "km")
+    unit = "norm_e3" if bounds else "km"
+    stats = stats_table(pop, unit)
 
     png_name, csv_name, manifest_name = artifact_names(bounds is not None)
     out_dir = output_dir(meta["run_ids"], analysis_root=analysis_root)
     stats.to_csv(out_dir / csv_name, index=False)
-    (out_dir / manifest_name).write_text(_manifest(meta, pop, stats, bounds))
+    if share_at:
+        shares_table(pop, list(share_at), unit).to_csv(out_dir / shares_name(csv_name), index=False)
+    (out_dir / manifest_name).write_text(_manifest(meta, pop, stats, bounds, share_at))
     return [plot(pop, meta=meta, out_png=out_dir / png_name, normalized=bounds is not None)]

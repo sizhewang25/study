@@ -53,7 +53,8 @@ consistently ~1,900 km wrong. as01 has such a site.
 ## And the part that cuts the other way
 
 Spotter is *more often* perfectly consistent and *worse* when it is not: its
-per-site spread runs to 15.8 grids where Octant-Hull's stops at 6.5. The
+per-site spread on the as01-03 meshes ran to 15.8 grids where Octant-Hull's
+stopped at 6.5 (the manifest's caveat quotes the current `spread_max`). The
 whiskers are the 5th and 95th percentiles and no outliers are drawn, so
 **that tail is not on the page**. It is in the twin and the manifest as
 `spread_max`, and anyone quoting "more stable" from this figure alone would be
@@ -385,7 +386,7 @@ def draw_spread(ax, series: list, inks: list[str]) -> None:
 
     The whisker ends are the 5th and 95th percentiles, not the extremes and
     not matplotlib's 1.5x IQR. Nothing is drawn past them, so Spotter's worst
-    site -- 15.8 grids against Octant-Hull's 6.5 -- is off the page. That is
+    site (`spread_max`; quoted in the manifest's caveat) is off the page. That is
     the half of this claim that runs the other way, and it survives only in
     `spread_max` in the twin and the manifest.
     """
@@ -587,9 +588,13 @@ def _manifest(
             "rather than the metric -- answering identical coordinates "
             "identically would read the same under any scoring rule, and "
             "paired_std_grid_offset does not use cell_label at all. It cuts "
-            "both ways: the method perfectly consistent on more sites is also "
-            "the worse of the two on its worst, 15.8 grids against 6.5, and "
-            "with whiskers at p5/p95 and no outliers that tail is not drawn."
+            "both ways: the method perfectly consistent on more sites can be "
+            "the worse of the two on its worst site ("
+            + "; ".join(
+                f"{st['method_label']} worst {st['spread_max']} grids"
+                for st in stats if "spread_max" in st
+            )
+            + "), and with whiskers at p5/p95 and no outliers that tail is not drawn."
         ),
     }
     return json.dumps(body, indent=2) + "\n"

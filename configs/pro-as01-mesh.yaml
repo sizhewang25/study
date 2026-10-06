@@ -180,6 +180,9 @@ analysis:
 
   plot-pni-cluster-rtt: {}
 
-  plot-outcome-bars: {}
+  # The paper's six: `classify` also scores the `_geo` EST variants, which
+  # only the cost box (as an overlay) and report-variant-delta draw.
+  plot-outcome-bars:
+    combo_ids: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
 
   plot-outcome-map: {}

@@ -94,6 +94,16 @@ reference. The grey is `_INK_2`, **not** `methods.OTHER_HUE` (== `_MUTED`):
 any unpublished method falls into that bucket, and a baseline sharing its hex
 would be told apart by the dash alone.
 
+## The ratios the text quotes are a table, not arithmetic
+
+Every "X is n times ahead of S-P at p25" sentence is a ratio of two cells of
+the percentile CSV, so `<stem>.ratios.csv` writes all of them: one row per
+(percentile, method, reference) with `ratio = method / reference` -- below 1
+the method is closer -- and `ratio_inv`, the "n times ahead" reading. A
+percentile a method leaves undefined (NaN under `cut`) stays NaN. Within-method
+spreads (`SPREADS`, e.g. p50/p5) ride in the same file with `reference` set to
+the method itself and `percentile` naming the pair.
+
 Command: `plot-error-cdf`.
 """
 
@@ -137,8 +147,13 @@ READ_COLUMNS: tuple[str, ...] = ("tg_id", "status", DIST_COLUMN)
 
 #: Computed per method and written to the CSV. 50 and 90 are the two
 #: `accuracy.csv` publishes, so this CSV joins to it on its headline numbers,
-#: and 90 is the rank cascade's tail term.
-PERCENTILES: tuple[int, ...] = (5, 25, 50, 75, 90, 95)
+#: and 90 is the rank cascade's tail term. 99 is the paper table's last column.
+PERCENTILES: tuple[int, ...] = (5, 25, 50, 75, 90, 95, 99)
+
+#: The within-method spreads `ratios` reports beside the pairwise ratios:
+#: `(numerator, denominator)` percentiles. p50/p5 is how concentrated a
+#: method's errors are -- the paper's "SPO's median is only 3.4x its p5".
+SPREADS: tuple[tuple[int, int], ...] = ((50, 5), (95, 5), (99, 50))
 
 #: Axis text sizes (pt) for `PAPER_FIGSIZE`. Set for the printed page rather
 #: than scaled from the canvas: at 4 inches wide a proportional scale would put
@@ -592,6 +607,55 @@ def percentile_table(loaded: dict[str, dict]) -> pd.DataFrame:
     return table.sort_values(list(_RANK_KEYS), ascending=list(_RANK_ASC)).reset_index(drop=True)
 
 
+def ratio_table(table: pd.DataFrame, col=pcol) -> pd.DataFrame:
+    """Every pairwise ratio of the percentile table, plus within-method spreads.
+
+    `col(p)` names percentile p's column (`pcol` in km, `ncol` normalized; a
+    ratio is unit-free, so both give the same numbers). One row per
+    `(percentile, method, reference)` for every ordered pair of distinct
+    methods, `ratio = method / reference`; then one row per `(method,
+    SPREADS)` with `reference == method` and `percentile` as `"p50/p5"`.
+    `ratio_inv` is `1 / ratio`. Zero or NaN denominators give NaN.
+    """
+    def div(a: float, b: float) -> float:
+        return float(a / b) if np.isfinite(a) and np.isfinite(b) and b > 0 else np.nan
+
+    values = {
+        m: {p: float(row[col(p)]) for p in PERCENTILES}
+        for m, row in table.set_index("method").iterrows()
+    }
+    methods = list(values)
+    rows: list[dict] = []
+    for p in PERCENTILES:
+        for m in methods:
+            for ref in methods:
+                if m == ref:
+                    continue
+                r = div(values[m][p], values[ref][p])
+                rows.append({
+                    "percentile": f"p{p}", "method": m, "reference": ref,
+                    "value": values[m][p], "reference_value": values[ref][p],
+                    "ratio": r, "ratio_inv": div(1.0, r) if np.isfinite(r) else np.nan,
+                })
+    for m in methods:
+        for hi, lo in SPREADS:
+            r = div(values[m][hi], values[m][lo])
+            rows.append({
+                "percentile": f"p{hi}/p{lo}", "method": m, "reference": m,
+                "value": values[m][hi], "reference_value": values[m][lo],
+                "ratio": r, "ratio_inv": div(1.0, r) if np.isfinite(r) else np.nan,
+            })
+    out = pd.DataFrame(rows)
+    out.insert(2, "method_label", out["method"].map(method_label))
+    out.insert(4, "reference_label", out["reference"].map(method_label))
+    return out
+
+
+def ratios_name(csv_name: str) -> str:
+    """`error_cdf.pooled.norm.cut.csv` -> `error_cdf.pooled.norm.cut.ratios.csv`."""
+    return csv_name.removesuffix(".csv") + ".ratios.csv"
+
+
 def curve_order(table: pd.DataFrame) -> list[str]:
     """Legend and box order: `methods.TERM_ORDER`, not the table's ranking.
 
@@ -865,6 +929,7 @@ def _manifest(
     body: dict = {
         "figure": png_name,
         "csv": csv_name,
+        "ratios_csv": ratios_name(csv_name),
         "layout": layout,
         "runs": list(run_ids),
         "dataset": cross.dataset_slug(run_ids),
@@ -1058,6 +1123,9 @@ def _write(
         table = table.rename(columns={pcol(p): ncol(p) for p in PERCENTILES})
     cols = csv_columns(normalized)
     table[[c for c in cols if c in table.columns]].to_csv(out_dir / csv_name, index=False)
+    ratio_table(table, ncol if normalized else pcol).to_csv(
+        out_dir / ratios_name(csv_name), index=False
+    )
     png = plot_cdf(
         drawn, table, out_dir / png_name,
         min_x_km=min_x_km, max_x_km=max_x_km, sentinel_km=mark,

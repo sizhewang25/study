@@ -77,6 +77,8 @@ from scripts.analysis.v5.modules import (
     figure_vp_distance_cdf,
     figure_vp_proximity,
     figure_x_cell_rtt,
+    bounds,
+    dataset_summary,
     loso_delta,
     map_answer_space,
     map_bipartite,
@@ -86,6 +88,7 @@ from scripts.analysis.v5.modules import (
     pni_gap,
     ripe_vs_databases,
     sp_pni_cells,
+    variant_delta,
 )
 from scripts.analysis.v5.modules import grid as G
 from scripts.analysis.v5.modules.paths import (
@@ -99,7 +102,12 @@ from scripts.analysis.v5.modules.status import SHORTEST_PING
 
 app = typer.Typer(
     add_completion=False,
-    help="Grid + cell answer space and two-label classification (v5).",
+    help=(
+        "Grid + cell answer space and two-label classification (v5).\n\n"
+        "--group NAME (before or after the command) loads "
+        "configs/groups/NAME.yaml and takes the command's flags from its "
+        "analysis.<command> block; flags given on the line still win."
+    ),
 )
 
 _NSIDE_HELP = (
@@ -918,7 +926,9 @@ def plot_ripe_vs_databases_cmd(
             f"{figure_error_cdf.EXCLUDE}: drop rows a series did not answer -- a "
             f"method's refusals and a database's uncovered TGs alike. "
             f"{figure_error_cdf.SENTINEL}: park them at --sentinel-km, so each "
-            f"curve's height there is its answer rate. Writes `.sentinel.` names."
+            f"curve's height there is its answer rate. Writes `.sentinel.` names. "
+            f"{figure_error_cdf.CUT}: keep them in the denominator and stop each "
+            f"curve at its last answer (the paper's). Writes `.cut.` names."
         ),
     ),
     sentinel_km: float = typer.Option(
@@ -1323,6 +1333,16 @@ def plot_cost_box_cmd(
             "overrides the configs' analysis.plot-cost-box.overlay."
         ),
     ),
+    extrapolate_tgs: int = typer.Option(
+        figure_cost_box.EXTRAPOLATE_TGS,
+        "--extrapolate-tgs",
+        help="TG count the extrapolation table budgets for (mean runtime x N).",
+    ),
+    cores: int = typer.Option(
+        figure_cost_box.CORES,
+        "--cores",
+        help="Parallel workers the extrapolation table divides the budget over.",
+    ),
     outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
     analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
 ) -> None:
@@ -1385,6 +1405,8 @@ def plot_cost_box_cmd(
                 analysis_root=analysis_root,
                 source=source,
                 overlays=given_overlays or _cost_box_overlays(group, outputs_root),
+                extrapolate_tgs=extrapolate_tgs,
+                cores=cores,
             )
         ]
     except (ValueError, MissingArtifactError) as exc:
@@ -1574,6 +1596,15 @@ def plot_vp_distance_cdf_cmd(
         "-n",
         help="Which rung's *_tgs.parquet is read. It does not change the answer.",
     ),
+    share_at: list[float] = typer.Option(
+        None,
+        "--share-at",
+        help=(
+            "Threshold, in the figure's unit (normalized x1e-3 when the configs "
+            "declare bounds), at which to report each series' share of TGs at or "
+            "below and above. Repeatable; writes <stem>.shares.csv."
+        ),
+    ),
     outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
     analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
 ) -> None:
@@ -1607,6 +1638,7 @@ def plot_vp_distance_cdf_cmd(
             nside=nside,
             analysis_root=analysis_root,
             dist_norm_km={r.run_id: declared_dist_norm_km(r.run_id, outputs_root) for r in runs},
+            share_at=share_at or None,
         )
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -1864,6 +1896,132 @@ def report_loso_delta_cmd(
         written = loso_delta.build(
             pairs, methods=list(method) if method else None, nside=nside,
             analysis_root=analysis_root, source="cli" if method else "all",
+            dist_norm_km={
+                r.run_id: declared_dist_norm_km(r.run_id, outputs_root) for pr in pairs for r in pr
+            },
+        )
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for path in written.values():
+        typer.echo(f"wrote {path}")
+
+
+@app.command("report-bounds")
+def report_bounds_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Run (repeatable): every run the figures pool."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """Compute D and the largest RTT over the runs and check their declarations.
+
+    D is the largest distance between any two VP or site coordinates, the RTT
+    bound the largest per-pair minimum RTT, both pooled over the runs. Every
+    run's resolved `analysis.common.dist_norm_km` / `rtt_norm_ms` (its config
+    merged with its group files) must match. Writes `bounds.json` into
+    `_cross/bounds/<n>-runs-<hash>/`; exits 1 on any mismatch.
+    """
+    if not run_id:
+        raise typer.BadParameter("pass at least one --run-id")
+    try:
+        path, problems = bounds.build(
+            [resolve_run(r, outputs_root) for r in run_id],
+            analysis_root=analysis_root, outputs_root=outputs_root,
+        )
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"wrote {path}")
+    for p in problems:
+        typer.echo(f"MISMATCH {p}", err=True)
+    if problems:
+        raise typer.Exit(1)
+
+
+@app.command("report-dataset")
+def report_dataset_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Seen-site (mesh) run (repeatable)."),
+    pair: list[str] = typer.Option(
+        None, "--pair",
+        help="BASE:LOSO -- also check BASE's unseen-site twin's folds (repeatable).",
+    ),
+    replicas_per_site: int = typer.Option(
+        dataset_summary.REPLICAS_PER_SITE, "--replicas-per-site",
+        help="Replicas each site was collected with; the filter-removal estimate counts the shortfall.",
+    ),
+    nside: int = typer.Option(dataset_summary.SOURCE_NSIDE, "--nside", "-n", help="Answer-space rung to read."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """The datasets' shape: VPs, replicas per site, shared seeds, folds, D.
+
+    One row per run and one pooled: the VP fleet (and whether it is the same
+    for every run), TGs measured by fewer than all VPs, replicas per site,
+    sites merged into a shared seed, the K-fold layout (and the LOSO twin's
+    with --pair), the footprint span D against the largest error, and an
+    estimate -- assuming --replicas-per-site per site -- of how many TGs the
+    sanity filter removed.
+
+    Writes `dataset.{csv,manifest.json}` into `_cross/dataset/<n>-runs-<hash>/`.
+    Needs `build-answer-space` and `classify` on every run.
+    """
+    if not run_id:
+        raise typer.BadParameter("pass at least one --run-id")
+    try:
+        from scripts.analysis.v5.modules.labels import declared_dist_norm_km
+
+        runs = [resolve_run(r, outputs_root) for r in run_id]
+        pairs = {}
+        for spec in pair or []:
+            base, loso = loso_delta.parse_pair(spec)
+            pairs[base] = resolve_run(loso, outputs_root)
+        written = dataset_summary.build(
+            runs, pairs=pairs, nside=nside, analysis_root=analysis_root, cap=replicas_per_site,
+            dist_norm_km={r.run_id: declared_dist_norm_km(r.run_id, outputs_root) for r in runs},
+        )
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for path in written.values():
+        typer.echo(f"wrote {path}")
+
+
+@app.command("report-variant-delta")
+def report_variant_delta_cmd(
+    pair: list[str] = typer.Option(
+        None, "--pair", help="BASE:LOSO -- a seen-site run and its unseen-site twin (repeatable)."
+    ),
+    variant: list[str] = typer.Option(
+        None, "--variant",
+        help=(
+            "ORIGINAL=VARIANT combo ids differing in one phase (repeatable). Default: "
+            + ", ".join(f"{o}={v}" for o, v in variant_delta.DEFAULT_VARIANTS.items())
+        ),
+    ),
+    nside: int = typer.Option(variant_delta.SOURCE_NSIDE, "--nside", "-n", help="Answer-space rung to score against."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """A one-phase variant against its original, under seen and unseen sites.
+
+    Scores both arms in memory with the v5 scorer (the variants are in no
+    config's combo_ids, so `classify` never writes them) and reports the
+    accuracy difference, flipped TGs and the sites they sit at, both medians,
+    how far the variant moves the prediction, has-X / no-X when available,
+    the seen->unseen drop of each arm and its difference, and the EST and
+    pipeline runtime of both. Refuses arms whose TGs, folds or run.json differ
+    beyond the swapped phase.
+
+    Writes `variant_delta.*` into `_cross/variant-delta/<n>-runs-<hash>/`.
+    """
+    if not pair:
+        raise typer.BadParameter("pass at least one --pair BASE:LOSO")
+    try:
+        from scripts.analysis.v5.modules.labels import declared_dist_norm_km
+
+        pairs = [
+            tuple(resolve_run(r, outputs_root) for r in loso_delta.parse_pair(p)) for p in pair
+        ]
+        variants = dict(variant_delta.parse_variant(v) for v in variant) if variant else None
+        written = variant_delta.build(
+            pairs, variants=variants, nside=nside, analysis_root=analysis_root,
             dist_norm_km={
                 r.run_id: declared_dist_norm_km(r.run_id, outputs_root) for pr in pairs for r in pr
             },
@@ -2530,5 +2688,105 @@ def report_octant_finetuning_cmd(
                     typer.echo(f"{label} {v} vs {b} [{lay}] · wrote {path}")
 
 
+# ---- group files: a pooled command's flags, declared once -----------------------
+
+#: A group-file value that names a role's runs (`@seen`), or zips two roles
+#: into BASE:LOSO pairs (`@seen:@unseen`).
+ROLE_PREFIX = "@"
+
+
+def _expand_roles(value, group: dict):
+    """`@role` -> that role's run ids; `@a:@b` -> `a_i:b_i` pairs; lists element-wise."""
+    from scripts.analysis.v5.modules.labels import group_members
+
+    if isinstance(value, list):
+        out = []
+        for v in value:
+            e = _expand_roles(v, group)
+            out.extend(e if isinstance(e, list) else [e])
+        return out
+    if not (isinstance(value, str) and value.startswith(ROLE_PREFIX)):
+        return value
+    left, sep, right = value.partition(":")
+    if not sep:
+        return group_members(group, left[1:])
+    if not right.startswith(ROLE_PREFIX):
+        raise typer.BadParameter(f"group {group['group_id']!r}: {value!r} pairs a role with a non-role")
+    a, b = group_members(group, left[1:]), group_members(group, right[1:])
+    if len(a) != len(b):
+        raise typer.BadParameter(
+            f"group {group['group_id']!r}: {value!r} zips roles of different sizes ({len(a)} vs {len(b)})"
+        )
+    return [f"{x}:{y}" for x, y in zip(a, b)]
+
+
+def group_default_map(group_id: str, groups_dir: Path | None = None) -> dict:
+    """The group's `analysis.<command>` blocks as Click defaults, `{command: {param: value}}`.
+
+    Each block's keys must be exactly that command's long flags, spelt as on
+    the command line (`run-id`, `unanswered`, `share-at`, `us-only`, ...);
+    anything else is refused, naming the flags the command has. `analysis.common`
+    is not a command: its values reach the commands through `labels`.
+    """
+    from scripts.analysis.v5.modules.labels import GROUP_SHARED, load_group
+
+    group = load_group(group_id, groups_dir)
+    blocks = {k: v for k, v in (group.get("analysis") or {}).items() if k != GROUP_SHARED[1]}
+    root = typer.main.get_command(app)
+    out: dict[str, dict] = {}
+    for name, block in blocks.items():
+        cmd = root.commands.get(name)
+        if cmd is None:
+            raise typer.BadParameter(f"group {group_id!r}: analysis.{name} is not a v5 command")
+        params = {}
+        for p in cmd.params:
+            for opt in (*p.opts, *getattr(p, "secondary_opts", ())):
+                if opt.startswith("--"):
+                    params[opt[2:]] = p
+        values = {}
+        for key, value in (block or {}).items():
+            p = params.get(key)
+            if p is None or key.startswith("no-"):
+                raise typer.BadParameter(
+                    f"group {group_id!r}: analysis.{name}.{key} is not a flag of {name}; "
+                    f"its flags are {sorted(k for k in params if not k.startswith('no-'))}"
+                )
+            value = _expand_roles(value, group)
+            if getattr(p, "multiple", False) and not isinstance(value, list):
+                value = [value]
+            values[p.name] = value
+        out[name] = values
+    return out
+
+
+def _split_group(argv: list[str]) -> tuple[str | None, list[str]]:
+    """`--group NAME` / `--group=NAME` anywhere in argv, removed."""
+    rest, group, it = [], None, iter(argv)
+    for a in it:
+        if a == "--group":
+            group = next(it, None)
+            if group is None:
+                raise SystemExit("--group needs a group id")
+        elif a.startswith("--group="):
+            group = a.split("=", 1)[1]
+        else:
+            rest.append(a)
+    return group, rest
+
+
+def main(argv: list[str] | None = None) -> None:
+    import sys
+
+    group, args = _split_group(list(sys.argv[1:] if argv is None else argv))
+    if group is None:
+        app(args=args)
+        return
+    try:
+        defaults = group_default_map(group)
+    except (typer.BadParameter, MissingArtifactError, ValueError) as exc:
+        raise SystemExit(f"--group {group}: {exc}") from exc
+    app(args=args, default_map=defaults)
+
+
 if __name__ == "__main__":
-    app()
+    main()

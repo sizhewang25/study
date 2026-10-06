@@ -63,6 +63,22 @@ always over the same TGs.
 * **The LTD fit.** Once per `(combo, fold)`, in `run.json`. It amortises
   over the fold and is not a per-TG cost.
 
+## Extrapolation to operator scale
+
+`<stem>.extrapolation.csv` turns the per-TG runtime into a batch budget, per
+method and per scope (each run, plus `all` when pooled). The **mean** pipeline
+runtime sets it, not the median: every TG is processed once and independently,
+so the total is mean x N. `core_hours` is that total for `--extrapolate-tgs`
+TGs (default one million), `wall_hours`/`wall_days` the same on `--cores`
+parallel workers (default 32). It also carries `mean_over_p50` (how far the
+tail lifts the budget above the median), MTL's share of the mean runtime, and
+two memory budgets for `--cores` concurrent workers: the largest per-TG peak
+(the channel drawn) times the workers, and the largest per-process RSS
+(`run.json` `run_peak_rss_bytes` over the method's folds) times the workers --
+the second is what a machine must actually hold, interpreter and inputs
+included. An extrapolation, not a measurement: it assumes contention-free
+scaling, and the timings were taken with folds running in parallel.
+
 ## Pooling
 
 Every run's per-TG rows are concatenated, then percentiled. Coverage is strict,
@@ -556,10 +572,79 @@ def _manifest(
     return json.dumps(body, indent=2) + "\n"
 
 
+#: Defaults for the extrapolation: one million TGs on one 32-core machine.
+EXTRAPOLATE_TGS = 1_000_000
+CORES = 32
+
+_MS_PER_HOUR = 3_600_000.0
+
+
+def peak_rss_mb(runs: list[RunPaths], methods: list[str]) -> dict[str, dict[str, float]]:
+    """`{run_id: {method: max run_peak_rss_bytes over folds, in MB}}`; NaN when unrecorded."""
+    out: dict[str, dict[str, float]] = {}
+    for run in runs:
+        out[run.run_id] = {}
+        for method in methods:
+            peaks = []
+            for fold in run.fold_ids:
+                path = run.combo_dir(method, fold) / "run.json"
+                if path.exists():
+                    v = json.loads(path.read_text()).get("run_peak_rss_bytes")
+                    if v is not None:
+                        peaks.append(float(v))
+            out[run.run_id][method] = max(peaks) * C.COST_SPECS[DEFAULT_MEMORY].scale if peaks else float("nan")
+    return out
+
+
+def extrapolation_table(
+    frames: dict[str, pd.DataFrame], *, memory: str, n_tgs: int = EXTRAPOLATE_TGS,
+    cores: int = CORES, rss: dict[str, dict[str, float]] | None = None,
+    overlays: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """Per `(scope, method)`: the batch budget for `n_tgs` TGs on `cores` workers."""
+    host_of = {variant: host for host, variant in (overlays or {}).items()}
+    runtime, mem = C.COST_SPECS[RUNTIME], C.COST_SPECS[memory]
+    rows = []
+    for method, df in frames.items():
+        run_ids = sorted(set(df["run_id"]))
+        scopes = [(r, df[df["run_id"] == r]) for r in run_ids]
+        if len(run_ids) > 1:
+            scopes.append(("all", df))
+        for scope, g in scopes:
+            total = C.per_target_cost(g, runtime)
+            mtl = C.per_stage_cost(g, runtime)["mtl"].to_numpy(float)
+            mean, p50 = float(np.nanmean(total)), float(np.nanmedian(total))
+            heap_max = float(np.nanmax(C.per_target_cost(g, mem)))
+            rss_runs = [(rss or {}).get(r, {}).get(method, float("nan")) for r in sorted(set(g["run_id"]))]
+            rss_max = float(np.nanmax(rss_runs)) if np.isfinite(rss_runs).any() else float("nan")
+            core_h = mean * n_tgs / _MS_PER_HOUR
+            rows.append({
+                "scope": scope, "method": method, "method_label": method_label(method),
+                "overlay_on": host_of.get(method, ""), "n_rows": int(len(g)),
+                "runtime_mean_ms": mean, "runtime_p50_ms": p50,
+                "mean_over_p50": mean / p50 if p50 > 0 else float("nan"),
+                "mtl_share_of_mean": float(np.nanmean(mtl)) / mean if mean > 0 else float("nan"),
+                "extrapolate_tgs": int(n_tgs), "cores": int(cores),
+                "core_hours": core_h, "wall_hours": core_h / cores, "wall_days": core_h / cores / 24,
+                "wall_minutes": core_h / cores * 60,
+                "memory_channel": memory, "peak_per_tg_max_mb": heap_max,
+                "peak_per_tg_x_cores_mb": heap_max * cores,
+                "process_rss_max_mb": rss_max, "process_rss_x_cores_mb": rss_max * cores,
+            })
+    return pd.DataFrame(rows)
+
+
+def extrapolation_name(names: dict[str, str]) -> str:
+    """`cost_box.pooled.heap.csv` -> `cost_box.pooled.heap.extrapolation.csv`."""
+    return names["csv"].removesuffix(".csv") + ".extrapolation.csv"
+
+
 def _write(
     frames: dict[str, pd.DataFrame], out_dir: Path, layout: str, *,
     run_ids: list[str], memory: str, rows: str, source: str = "all",
     overlays: dict[str, str] | None = None,
+    extrapolate_tgs: int = EXTRAPOLATE_TGS, cores: int = CORES,
+    rss: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, Path]:
     names = artifact_names(layout, memory, rows)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -569,6 +654,9 @@ def _write(
     table.insert(2, "rows", rows)
     written = {k: out_dir / v for k, v in names.items()}
     table[list(CSV_COLUMNS)].to_csv(written["csv"], index=False)
+    extrapolation_table(
+        frames, memory=memory, n_tgs=extrapolate_tgs, cores=cores, rss=rss, overlays=overlays,
+    ).to_csv(out_dir / extrapolation_name(names), index=False)
     plot_boxes(table, written["png"], memory=memory)
     any_frame = next(iter(frames.values()))
     per_run = {str(k): int(v) for k, v in any_frame["run_id"].value_counts().sort_index().items()}
@@ -583,6 +671,7 @@ def build_for_run(
     run: RunPaths, *, memory: str = DEFAULT_MEMORY, rows: str = DEFAULT_ROWS,
     methods: list[str] | None = None, analysis_root: Path | None = None,
     source: str | None = None, overlays: dict[str, str] | None = None,
+    extrapolate_tgs: int = EXTRAPOLATE_TGS, cores: int = CORES,
 ) -> dict[str, Path]:
     """One run's figure, CSV and manifest, into `<run>/cost/`."""
     validate(memory, rows)
@@ -591,6 +680,7 @@ def build_for_run(
         frames, run.analysis_dir(COST_KIND, root=analysis_root), PER_RUN,
         run_ids=[run.run_id], memory=memory, rows=rows,
         source=methods_source(methods, source), overlays=overlays,
+        extrapolate_tgs=extrapolate_tgs, cores=cores, rss=peak_rss_mb([run], list(frames)),
     )
 
 
@@ -599,8 +689,12 @@ def build_for_runs(
     memory: str = DEFAULT_MEMORY, rows: str = DEFAULT_ROWS,
     methods: list[str] | None = None, analysis_root: Path | None = None,
     source: str | None = None, overlays: dict[str, str] | None = None,
+    extrapolate_tgs: int = EXTRAPOLATE_TGS, cores: int = CORES,
 ) -> list[dict[str, Path]]:
-    """Render the requested layouts; one artifact set per figure, layout-major."""
+    """Render the requested layouts; one artifact set per figure, layout-major.
+
+    `extrapolate_tgs`/`cores` size the extrapolation table (see the module docstring).
+    """
     ordered = tuple(dict.fromkeys(layouts)) or (PER_RUN,)
     unknown = [x for x in ordered if x not in LAYOUTS]
     if unknown:
@@ -612,7 +706,8 @@ def build_for_runs(
         if layout == PER_RUN:
             out.extend(
                 build_for_run(run, memory=memory, rows=rows, methods=methods,
-                              analysis_root=analysis_root, source=source, overlays=overlays)
+                              analysis_root=analysis_root, source=source, overlays=overlays,
+                              extrapolate_tgs=extrapolate_tgs, cores=cores)
                 for run in runs
             )
             continue
@@ -628,6 +723,8 @@ def build_for_runs(
                 frames, cross.cross_dir(run_ids, analysis_root=analysis_root, kind=COST_KIND),
                 POOLED, run_ids=run_ids, memory=memory, rows=rows,
                 source=methods_source(methods, source), overlays=overlays,
+                extrapolate_tgs=extrapolate_tgs, cores=cores,
+                rss=peak_rss_mb(runs, list(frames)),
             )
         )
     return out

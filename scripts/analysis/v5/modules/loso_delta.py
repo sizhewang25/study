@@ -40,7 +40,14 @@ coordinate lands in the right cell, and it ranks last in the error median.
   `analysis.common.dist_norm_km`, normalized (`_norm_e3`, units of 10^-3);
 * the unanswered share in each run;
 * the cell transitions -- correct->wrong (a seen-site win that needed the
-  site) and wrong->correct, with the sites they occur at.
+  site) and wrong->correct, with the sites they occur at;
+* the share predicted in the TG's own pixel (`own_pixel_*`, an answered row
+  with pixel distance 0) and the bounded accuracy (`acc_bounded_*`, correct
+  cell and within `BOUND_PIXELS` pixels) in each run;
+* the gain over S-P in the same scope and breakdown (`gain_base`,
+  `gain_loso`) and the share of it kept under LOSO (`gain_kept`) -- "OCT-H
+  keeps about two fifths of its no-X gain" -- NaN for S-P itself or a
+  non-positive base gain.
 
 ## Breakdowns
 
@@ -121,8 +128,11 @@ NAMES = {
 
 _TG_COLUMNS = (
     "tg_id", "tg_lat", "tg_lon", "tg_seed_id", "status", "pred_lat", "pred_lon",
-    "pred_dist_to_tg_km", "cell_label",
+    "pred_dist_to_tg_km", "cell_label", C.GRID_OFFSET,
 )
+
+#: Bounded accuracy's pixel limit -- the same constant `figure_pareto.BOUND_PIXELS` is.
+BOUND_PIXELS = C.MAX_RING
 
 
 # ---- loading -----------------------------------------------------------------
@@ -211,6 +221,9 @@ def load_pair(
             # An unanswered TG is wrong even when its fallback coordinate (the
             # S-P VP's) lands in the right cell: the paper's denominator.
             frame[f"{tag}_correct"] = solved & (df["cell_label"] == "correct").to_numpy()
+            off = df[C.GRID_OFFSET].to_numpy(float)
+            frame[f"{tag}_own_pixel"] = solved & (off == 0)
+            frame[f"{tag}_bounded"] = frame[f"{tag}_correct"].to_numpy() & (off >= 0) & (off <= BOUND_PIXELS)
             frame[f"{tag}_solved"] = solved
             frame[f"{tag}_err_km"] = np.where(solved, df["pred_dist_to_tg_km"].to_numpy(float), np.nan)
             frame[f"{tag}_pred_lat"] = df["pred_lat"].to_numpy(float)
@@ -324,7 +337,27 @@ def _stats(g: pd.DataFrame, bounds: tuple[float, float] | None = None) -> dict:
         "n_wrong_to_correct": int((~bc & lc).sum()),
         "n_sites_correct_to_wrong": int(g.loc[bc & ~lc, "site_key"].nunique()),
         "n_sites_wrong_to_correct": int(g.loc[~bc & lc, "site_key"].nunique()),
+        "own_pixel_base": float(g["base_own_pixel"].mean()) if n else float("nan"),
+        "own_pixel_loso": float(g["loso_own_pixel"].mean()) if n else float("nan"),
+        "acc_bounded_base": float(g["base_bounded"].mean()) if n else float("nan"),
+        "acc_bounded_loso": float(g["loso_bounded"].mean()) if n else float("nan"),
     })
+    return out
+
+
+def add_gain(table: pd.DataFrame, by: str | None = None) -> pd.DataFrame:
+    """`gain_base/loso` = accuracy minus S-P's in the same scope (and `by`
+    group); `gain_kept` = gain_loso / gain_base where the base gain is positive."""
+    keys = ["scope"] + ([by] if by else [])
+    sp = table[table["method"] == SHORTEST_PING].set_index(keys)[["acc_base", "acc_loso"]]
+    if sp.empty:
+        return table.assign(gain_base=np.nan, gain_loso=np.nan, gain_kept=np.nan)
+    ref = table.join(sp, on=keys, rsuffix="_sp")
+    out = table.copy()
+    out["gain_base"] = (ref["acc_base"] - ref["acc_base_sp"]).to_numpy()
+    out["gain_loso"] = (ref["acc_loso"] - ref["acc_loso_sp"]).to_numpy()
+    kept = out["gain_loso"] / out["gain_base"]
+    out["gain_kept"] = kept.where((out["gain_base"] > 0) & (out["method"] != SHORTEST_PING))
     return out
 
 
@@ -342,7 +375,7 @@ def summary_table(
             row[by] = key[1]
         row.update(_stats(g, bounds))
         rows.append(row)
-    out = pd.DataFrame(rows)
+    out = add_gain(pd.DataFrame(rows), by)
     order = {m: i for i, m in enumerate(method_order(long["method"].unique()))}
     sort = ["_o"] + ([by] if by else [])
     return out.assign(_o=out["method"].map(order)).sort_values(sort).drop(columns="_o").reset_index(drop=True)

@@ -53,6 +53,15 @@ paper prints no absolute TG or site count. Counts stay in the CSV.
 
 No coordinate, VP id or interconnect id is written.
 
+## The exceptions, by site
+
+The text names the sites on the wrong side of the split -- has-X TGs above it,
+no-X TGs at or below it -- with their RTT range. `x_cell_rtt.exceptions.csv`
+lists them: one row per `(run, site, side)` with any TG across the line, the
+site as a per-run index in sorted-key order (never its coordinate), its
+`plot-pni-gap` cluster(s), how many of its TGs cross, and their min/max RTT
+(`_norm` twins when normalized). Empty, with its header, when nothing crosses.
+
 Command: `plot-x-cell-rtt`. Needs `classify` and `plot-pni-gap`. Writes
 `x_cell_rtt.{png,csv,manifest.json}` beside the clusters.
 """
@@ -147,7 +156,8 @@ def load_runs(
         raise ValueError(f"the flags and the RTTs resolved to different directories: {out_dir} vs {rtt_dir}")
     key = ["run_id", "tg_id"]
     floor = pairs.groupby(key, as_index=False).rtt_ms.min().rename(columns={"rtt_ms": FLOOR_COL})
-    out = tgs[key + [GROUP_COL, ANY_COL, S.SITE_KEY_COL]].merge(
+    keep = key + [GROUP_COL, ANY_COL, S.SITE_KEY_COL] + (["cluster"] if "cluster" in tgs else [])
+    out = tgs[keep].merge(
         floor, on=key, how="outer", validate="1:1", indicator=True)
     lost = out[out._merge != "both"]
     if len(lost):
@@ -194,6 +204,52 @@ def stats_table(tgs: pd.DataFrame, run_ids: list[str]) -> pd.DataFrame:
                          block[["run_id", S.SITE_KEY_COL]].drop_duplicates().shape[0]),
             })
     return pd.DataFrame(rows)
+
+
+EXCEPTIONS_NAME = "x_cell_rtt.exceptions.csv"
+
+
+def exceptions_table(tgs: pd.DataFrame, rtt_norm_ms: R.Bounds | None = None) -> pd.DataFrame:
+    """The sites whose TGs sit on the wrong side of `SPLIT_MS`.
+
+    Wrong side: a has-X TG above the split, or a no-X TG at or below it. One
+    row per `(run, site, side)` with at least one such TG. `site` is the
+    site's index among its run's sites in sorted `site_key` order -- stable,
+    and free of the coordinate the key embeds. `clusters` joins the TGs'
+    `plot-pni-gap` clusters when the frame carries them.
+    """
+    t = tgs.copy()
+    t["site"] = t.groupby("run_id")[S.SITE_KEY_COL].rank(method="dense").astype(int) - 1
+    across = np.where(t[GROUP_COL].astype(bool), t[FLOOR_COL] > SPLIT_MS, t[FLOOR_COL] <= SPLIT_MS)
+    t = t[across]
+    cols = ["run_id", "dataset", "side", "site", "clusters", "n_tgs_site", "n_tgs_across",
+            "min_rtt_ms", "max_rtt_ms"]
+    if rtt_norm_ms is not None:
+        cols += ["min_rtt_norm", "max_rtt_norm"]
+    if t.empty:
+        return pd.DataFrame(columns=cols)
+    sizes = tgs.groupby(["run_id", S.SITE_KEY_COL]).size()
+    rows = []
+    for (run_id, key, flag), g in t.groupby(["run_id", S.SITE_KEY_COL, GROUP_COL], sort=True):
+        row = {
+            "run_id": run_id,
+            "dataset": dataset_label(run_id),
+            "side": dict((f, name) for f, _, name in GROUPS)[bool(flag)],
+            "site": int(g["site"].iloc[0]),
+            "clusters": (
+                "+".join(str(c) for c in sorted(g["cluster"].dropna().unique()))
+                if "cluster" in g else ""
+            ),
+            "n_tgs_site": int(sizes.loc[(run_id, key)]),
+            "n_tgs_across": int(len(g)),
+            "min_rtt_ms": float(g[FLOOR_COL].min()),
+            "max_rtt_ms": float(g[FLOOR_COL].max()),
+        }
+        if rtt_norm_ms is not None:
+            row["min_rtt_norm"] = float(R.to_norm(row["min_rtt_ms"], rtt_norm_ms))
+            row["max_rtt_norm"] = float(R.to_norm(row["max_rtt_ms"], rtt_norm_ms))
+        rows.append(row)
+    return pd.DataFrame(rows, columns=cols).sort_values(["run_id", "side", "site"]).reset_index(drop=True)
 
 
 def outliers(tgs: pd.DataFrame, stats: pd.DataFrame) -> dict[tuple[str, bool], list[float]]:
@@ -318,6 +374,7 @@ def _manifest(meta: dict, tgs: pd.DataFrame, stats: pd.DataFrame,
         {
             "figure": PNG_NAME,
             "csv": CSV_NAME,
+            "exceptions_csv": EXCEPTIONS_NAME,
             "layout": meta.get("layout"),
             "run_ids": meta["run_ids"],
             "clusters_from": P.MANIFEST_NAME,
@@ -368,6 +425,7 @@ def _write(tgs: pd.DataFrame, meta: dict, out_dir: Path,
         _check_bounds(tgs, rtt_norm_ms)
     table = stats if rtt_norm_ms is None else R.normalized(stats, rtt_norm_ms)
     table.to_csv(out_dir / CSV_NAME, index=False)
+    exceptions_table(tgs, rtt_norm_ms).to_csv(out_dir / EXCEPTIONS_NAME, index=False)
     (out_dir / MANIFEST_NAME).write_text(_manifest(meta, tgs, stats, rtt_norm_ms) + "\n")
     return plot(stats, run_ids=run_ids, out_png=out_dir / PNG_NAME, fliers=outliers(tgs, stats),
                 rtt_norm_ms=rtt_norm_ms)

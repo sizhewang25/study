@@ -355,6 +355,74 @@ def _add_shares(table: pd.DataFrame) -> pd.DataFrame:
     return table
 
 
+#: The tiers a correct-cell TG can sit at, cumulated for `of_correct_*`:
+#: `(column suffix, tiers summed)`. "Correct almost only within 1 pixel" is
+#: `of_correct_le_ring1`; "59% of its correct TGs lie beyond 2 pixels" is
+#: `of_correct_beyond`.
+OF_CORRECT: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("ring0", ("ring0",)),
+    ("le_ring1", ("ring0", "ring1")),
+    ("le_ring2", ("ring0", "ring1", "ring2")),
+    ("beyond", ("beyond",)),
+)
+
+#: Bounded accuracy: correct cell AND within 2 pixels -- the paper's bounded
+#: criterion. Not `accuracy_ring2`, which counts ring<=2 whatever the cell.
+BOUNDED_TIERS: tuple[str, ...] = ("ring0", "ring1", "ring2")
+
+
+def add_of_correct(table: pd.DataFrame) -> pd.DataFrame:
+    """Each method's correct-cell TGs split by pixel distance, as shares of
+    its own correct count (`of_correct_<suffix>`), plus `accuracy_bounded`.
+
+    Derived from the count columns, so they are the drawn segments re-based:
+    `of_correct_beyond` is the beyond segment over the correct group. NaN for
+    a method with no correct TG.
+    """
+    correct = table[group_col("correct")]
+    for suffix, tiers in OF_CORRECT:
+        n = sum(table[count_col(t, "correct")] for t in tiers)
+        table[f"of_correct_{suffix}"] = (n / correct).where(correct > 0)
+    table["accuracy_bounded"] = sum(table[count_col(t, "correct")] for t in BOUNDED_TIERS) / table["n_tgs"]
+    return table
+
+
+def gaps_name(csv_name: str) -> str:
+    """`outcome_bars.pooled.healpix-128.csv` -> `outcome_bars.pooled.healpix-128.gaps.csv`."""
+    return csv_name.removesuffix(".csv") + ".gaps.csv"
+
+
+def gap_table(table: pd.DataFrame) -> pd.DataFrame:
+    """Every ordered method pair's accuracy difference, per dataset, in pp.
+
+    One row per `(dataset, method, reference)`: unbounded (`accuracy_cell_correct`)
+    and bounded (`accuracy_bounded`) for both, and `d_*_pp = method - reference`
+    from the unrounded shares -- so "SPO leads OCT-H by n pp in AS-A" is read
+    here rather than subtracted from rounded table values.
+    """
+    t = add_of_correct(table.copy())
+    rows: list[dict] = []
+    for (run_id, dataset), g in t.groupby(["run_id", "dataset"], sort=False):
+        g = g.set_index("method")
+        for m in g.index:
+            for ref in g.index:
+                if m == ref:
+                    continue
+                a, b = g.loc[m], g.loc[ref]
+                rows.append({
+                    "run_id": run_id, "dataset": dataset,
+                    "method": m, "method_label": method_label(m),
+                    "reference": ref, "reference_label": method_label(ref),
+                    "acc": float(a["share_" + group_col("correct")]),
+                    "acc_reference": float(b["share_" + group_col("correct")]),
+                    "d_acc_pp": 100 * float(a["share_" + group_col("correct")] - b["share_" + group_col("correct")]),
+                    "acc_bounded": float(a["accuracy_bounded"]),
+                    "acc_bounded_reference": float(b["accuracy_bounded"]),
+                    "d_acc_bounded_pp": 100 * float(a["accuracy_bounded"] - b["accuracy_bounded"]),
+                })
+    return pd.DataFrame(rows)
+
+
 def load_rung(run: RunPaths, nside: int, *, analysis_root: Path | None = None) -> pd.DataFrame:
     """One run's `accuracy.csv` at one rung."""
     path = run.classify_dir(nside, root=analysis_root) / C.ACCURACY_CSV
@@ -800,6 +868,7 @@ def csv_columns(mode: str = BOUNDED) -> list[str]:
         "run_id", "dataset", "method", "n_tgs", "n_solved", *groups, *counts,
         *[f"share_{c}" for c in (*groups, *counts)],
         "accuracy_ring0", "accuracy_ring1", "accuracy_ring2", "accuracy_cell_correct",
+        "accuracy_bounded", *[f"of_correct_{suffix}" for suffix, _ in OF_CORRECT],
         "pred_dist_to_tg_km_p50", "pred_dist_to_tg_km_p90",
         "pred_dist_to_seed_km_p50", "pred_dist_to_seed_km_p90",
     ]
@@ -934,9 +1003,11 @@ def build_for_runs(
                 names = {k: v.format(slug=slug, mode=tok) for k, v in
                          zip(("png", "csv", "man"), (png_t, csv_t, man_t))}
                 table = builders[layout](runs, nside, methods=methods, analysis_root=analysis_root)
-                table[[c for c in csv_columns(mode) if c in table.columns]].to_csv(
+                twin = add_of_correct(table.copy())
+                twin[[c for c in csv_columns(mode) if c in twin.columns]].to_csv(
                     out_dir / names["csv"], index=False
                 )
+                gap_table(table).to_csv(out_dir / gaps_name(names["csv"]), index=False)
                 size = (
                     {
                         "panel_w": POOLED_PANEL_W,
