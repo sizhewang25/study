@@ -316,7 +316,7 @@ def plot(pop: pd.DataFrame, *, meta: dict, out_png: Path, normalized: bool = Fal
     # a reader who misses the caption misreads the whole curve.
     ax.plot([x_min], [zero_share], marker="o", ms=st["ms"], color=_GAP_HUE,
             clip_on=False, zorder=5)
-    ax.text(x_min * 1.18, zero_share + 3.0, f"{zero_share:.1f}%",
+    ax.text(x_min * 1.18, zero_share + 3.0, f"{zero_share:.0f}%",
             fontsize=st["note"], color=_GAP_HUE, ha="left", va="bottom", zorder=5)
 
     ax.set_xscale("log")
