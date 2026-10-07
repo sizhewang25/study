@@ -1,0 +1,158 @@
+# S-P-interconnect-distance twin of test-as01-mesh.yaml.
+# Identical benchmark except `distance: sp_interconnect_distance`: the LTDs fit
+# RTT against d(VP, X_sp) + d(X_sp, TG), X_sp the interconnect nearest the
+# TG's S-P (lowest-RTT) VP, baked into fit_samples.parquet at materialize
+# time. Eval and error distances stay great-circle. Baselines: pro-as01-mesh
+# (air distance) and test-as01-mesh-icd (the TG-nearest interconnect).
+run_id: test-as01-mesh-spicd
+
+benchmark:
+  source: generic_csv
+  setup: anchors_to_probes
+  slices: [fold_0, fold_1, fold_2, fold_3, fold_4]
+
+  source_kwargs:
+    csv_path: datasets/final/as01-20260728-20260802.mainland.sanitized.csv
+    k: 5
+    seed: 42
+    asn_bucket_top_n: 20
+    distance: sp_interconnect_distance
+    interconnect_csv_path: datasets/pni/as01-us-pni.approx.csv
+
+  enable_fallback: true
+  seed: 42
+
+  combos:
+    - combo_id: vanilla_cbg
+      ltd: low_envelope
+      mtl: planar_circle
+      ctr: geometric_centroid
+      mtl_kwargs:
+        n_pts: 64
+        enable_circle_filter: true
+
+    - combo_id: million_scale_cbg
+      ltd: speed_of_internet
+      mtl: planar_circle
+      ctr: geometric_centroid
+      ltd_kwargs:
+        speed_ratio: 0.6667
+      mtl_kwargs:
+        n_pts: 64
+        enable_circle_filter: true
+
+    - combo_id: octant_cbg_hull
+      ltd: bounded_spline
+      mtl: planar_annulus_weighted
+      ctr: monte_carlo_medoid
+      ltd_kwargs:
+        fit_spline: false
+        cutoff_min_points: 5
+        bin_size_ms: 5.0
+      mtl_kwargs:
+        n_pts: 64
+        enable_circle_filter: true
+        weight_mode: inv_power
+        weight_k: 2
+        highest_weight_only: true
+      ctr_kwargs:
+        n_samples: 1024
+
+    - combo_id: octant_cbg_spl
+      ltd: bounded_spline
+      mtl: planar_annulus_weighted
+      ctr: monte_carlo_medoid
+      ltd_kwargs:
+        fit_spline: true
+        spline_n_knots: 4
+        target_coverage: 0.9
+        cutoff_min_points: 5
+        bin_size_ms: 5.0
+      mtl_kwargs:
+        n_pts: 64
+        enable_circle_filter: true
+        weight_mode: inv_power
+        weight_k: 2
+        highest_weight_only: true
+      ctr_kwargs:
+        n_samples: 1024
+
+    - combo_id: spotter_cbg
+      ltd: normal_dist
+      mtl: gaussian_density
+      ctr: density_argmax
+      ltd_kwargs:
+        deg_mu: 3
+        deg_sigma: 2
+        cutoff_min_points: 5
+      mtl_kwargs:
+        grid: healpix
+        resolution: 128
+        coarse_resolution: 16
+        top_k: 8
+        neighbor_ring: 1
+
+analysis:
+  common:
+    # The dataset this run belongs to, for v5's cross-dataset figures.
+    # Declared rather than parsed: v5 used to split the run id on its first
+    # hyphen, which reads `pro` for every run here.
+    dataset_label: AS-A
+    grid: healpix
+    resolution: [128]
+    pni_csv: datasets/pni/as01-us-pni.approx.csv
+    peer_asn: 20940
+    # Every distance axis is min-max normalized with these bounds, so no
+    # figure prints an absolute distance: min 0 (a prediction on its TG), max
+    # the footprint span D, the largest great-circle distance between any two
+    # VPs or sites pooled over the three pro datasets (4,387.257 km; computed
+    # by scripts/analysis/v5/modules/footprint.py). The same bounds in every
+    # pro config.
+    dist_norm_km:
+      min: 0.0
+      max: 4387.257
+    # Every RTT axis is min-max normalized with these bounds, so no figure
+    # prints an absolute RTT: min 0 (a 0 ms RTT), max the largest (VP, TG)
+    # pair RTT pooled over the three pro mesh datasets (as02's, 92.395 ms).
+    # The same bounds in every pro config.
+    rtt_norm_ms:
+      min: 0.0
+      max: 92.395
+
+  # One block per v5 plotting command that create_analysis_artifacts.sh runs.
+  # `combo_ids` narrows a figure to the methods it names (S-P included only
+  # when `shortest_ping` is listed); an empty block draws every combo on disk.
+  # `--method` on the CLI still wins.
+
+  plot-answer-space: {}
+
+  plot-bipartite-graph: {}
+
+  plot-error-cdf:
+    combo_ids: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
+
+  plot-champion-upset:
+    combo_ids: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, spotter_cbg]
+
+  # Per-TG correctness, all six methods: who is right on the same TGs.
+  plot-correct-upset:
+    combo_ids: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
+
+  # S-P has no cost and OCT-S costs what OCT-H does, so neither takes a slot.
+  # Accuracy against runtime, seen beside unseen sites: run with this
+  # dataset's mesh and LOSO twins (`plot-pareto --seen ... --unseen ...`).
+  plot-pareto:
+    combo_ids: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
+
+  plot-cost-box:
+    combo_ids: [million_scale_cbg, vanilla_cbg, octant_cbg_hull, spotter_cbg]
+
+  plot-pni-gap: {}
+
+  plot-pni-cluster-rtt: {}
+
+  # The paper's six.
+  plot-outcome-bars:
+    combo_ids: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
+
+  plot-outcome-map: {}

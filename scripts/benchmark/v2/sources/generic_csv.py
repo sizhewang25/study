@@ -56,7 +56,7 @@ Source kwargs (defaults match the prior VultrCSVSource):
                        LTDs fit RTT against (see "Fit distance" below).
   interconnect_csv_path : Path | str = None — interconnect (PNI) list,
                        `pni_lat, pni_lon` columns at least; required by and
-                       only accepted with `distance: interconnect_distance`.
+                       only accepted with the two interconnect modes.
 
 Fit distance (`distance`):
   air_distance           — great-circle VP-to-target (`FitSample.distance_km`
@@ -70,6 +70,14 @@ Fit distance (`distance`):
                            the interconnect the traffic actually crosses.
                            Eval observations and error distances are
                            unaffected: they stay great-circle.
+  sp_interconnect_distance — the same path through X_sp instead: the
+                           interconnect nearest the target's S-P VP (its
+                           lowest-RTT VP), the interconnect the traffic is
+                           evidenced to cross. d(VP, X_sp) + d(X_sp, target).
+                           Uses only the target's own RTTs, which a fit target
+                           exposes anyway, so no eval information enters. The
+                           S-P VP is the first lowest-RTT VP in vp_id order,
+                           the tie-break v5's `figure_sp_interconnect` uses.
 
 This source is weight-AWARE but never weight-FILTERING: it reads and validates
 an optional `weight` column and carries it into `obs_weights` (so the required
@@ -141,7 +149,10 @@ FOLD_BY = ("distgeo", "site")
 #: `distance` values: which VP-to-target distance the LTDs fit against.
 AIR_DISTANCE = "air_distance"
 INTERCONNECT_DISTANCE = "interconnect_distance"
-DISTANCE_MODES = (AIR_DISTANCE, INTERCONNECT_DISTANCE)
+SP_INTERCONNECT_DISTANCE = "sp_interconnect_distance"
+DISTANCE_MODES = (AIR_DISTANCE, INTERCONNECT_DISTANCE, SP_INTERCONNECT_DISTANCE)
+#: The modes that route through an interconnect, and so need the list.
+ROUTED_MODES = (INTERCONNECT_DISTANCE, SP_INTERCONNECT_DISTANCE)
 
 #: Decimals a target coordinate is rounded to before it names a site. Matches
 #: v5's `sites.SITE_DECIMALS`; kept here rather than imported, so this source
@@ -178,14 +189,14 @@ class GenericCSVSource(DataSource):
             raise ValueError(
                 f"unknown distance {distance!r}; expected one of {DISTANCE_MODES}"
             )
-        if distance == INTERCONNECT_DISTANCE and interconnect_csv_path is None:
+        if distance in ROUTED_MODES and interconnect_csv_path is None:
             raise ValueError(
-                f"distance={INTERCONNECT_DISTANCE!r} requires `interconnect_csv_path`"
+                f"distance={distance!r} requires `interconnect_csv_path`"
             )
         if distance == AIR_DISTANCE and interconnect_csv_path is not None:
             raise ValueError(
-                f"`interconnect_csv_path` is only used with "
-                f"distance={INTERCONNECT_DISTANCE!r}; got distance={distance!r}"
+                f"`interconnect_csv_path` is only used with distance in "
+                f"{ROUTED_MODES}; got distance={distance!r}"
             )
         if setup not in DataSource.ALLOWED_SETUPS:
             raise ValueError(
@@ -280,7 +291,7 @@ class GenericCSVSource(DataSource):
 
     def iter_fit_samples(self) -> Iterator[FitSample]:
         df = self._ensure_loaded()
-        routed = self.distance_mode == INTERCONNECT_DISTANCE
+        routed = self.distance_mode in ROUTED_MODES
         for row in df.itertuples(index=False):
             tg_id = str(row.target_id)
             if self._fit_targets is not None and tg_id not in self._fit_targets:
@@ -333,7 +344,7 @@ class GenericCSVSource(DataSource):
     def _ensure_loaded(self) -> pd.DataFrame:
         if self._df is None:
             self._load_csv()
-            if self.distance_mode == INTERCONNECT_DISTANCE:
+            if self.distance_mode in ROUTED_MODES:
                 self._add_interconnect_distance()
             if self._fold_index is not None:
                 self._apply_stratification()
@@ -504,25 +515,34 @@ class GenericCSVSource(DataSource):
         return algo.compute_fold_assignments(targets)
 
     def _add_interconnect_distance(self) -> None:
-        """Add `distance_km` = d(VP, X*) + d(X*, target) per row, X* being the
-        interconnect nearest the target."""
+        """Add `distance_km` = d(VP, X) + d(X, target) per row.
+
+        X is the interconnect nearest the target (`interconnect_distance`), or
+        the one nearest the target's S-P VP (`sp_interconnect_distance`).
+        """
         assert self._df is not None and self.interconnect_csv_path is not None
         x_lat, x_lon = _load_interconnects(self.interconnect_csv_path)
         df = self._df
-        tg_lat = df["target_lat"].to_numpy(dtype=float)
-        tg_lon = df["target_lon"].to_numpy(dtype=float)
-        tg_to_x = haversine_distance(
-            tg_lat[:, None], tg_lon[:, None], x_lat[None, :], x_lon[None, :]
-        )
-        nearest = tg_to_x.argmin(axis=1)
+        if self.distance_mode == SP_INTERCONNECT_DISTANCE:
+            k = df["target_id"].map(_sp_interconnect(df, x_lat, x_lon)).to_numpy()
+        else:
+            k = haversine_distance(
+                df["target_lat"].to_numpy(dtype=float)[:, None],
+                df["target_lon"].to_numpy(dtype=float)[:, None],
+                x_lat[None, :], x_lon[None, :],
+            ).argmin(axis=1)
         vp_to_x = haversine_distance(
             df["vp_lat"].to_numpy(dtype=float), df["vp_lon"].to_numpy(dtype=float),
-            x_lat[nearest], x_lon[nearest],
+            x_lat[k], x_lon[k],
         )
-        df["distance_km"] = vp_to_x + tg_to_x[np.arange(len(df)), nearest]
+        x_to_tg = haversine_distance(
+            df["target_lat"].to_numpy(dtype=float), df["target_lon"].to_numpy(dtype=float),
+            x_lat[k], x_lon[k],
+        )
+        df["distance_km"] = vp_to_x + x_to_tg
         logger.info(
             "distance=%s: %d interconnects from %s",
-            INTERCONNECT_DISTANCE, len(x_lat), self.interconnect_csv_path,
+            self.distance_mode, len(x_lat), self.interconnect_csv_path,
         )
 
     def _apply_min_obs_filter(self) -> None:
@@ -537,6 +557,26 @@ class GenericCSVSource(DataSource):
         if self._fit_targets is not None:
             self._fit_targets &= surviving
         logger.info("min_obs=%d: %d → %d targets", self._min_obs, before, after)
+
+
+def _sp_interconnect(df: pd.DataFrame, x_lat: np.ndarray, x_lon: np.ndarray) -> pd.Series:
+    """`target_id -> index of the interconnect nearest the target's S-P VP`.
+
+    The S-P VP is the lowest-RTT VP over the (target, VP) pair minima; ties go
+    to the first in vp_id order, as in v5's `figure_sp_interconnect.tg_frame`,
+    so the side report and the fit see the same X_sp.
+    """
+    pairs = (
+        df.groupby(["target_id", "vp_id"], sort=True)
+        .agg(rtt_ms=("rtt_ms", "min"), vp_lat=("vp_lat", "first"), vp_lon=("vp_lon", "first"))
+        .reset_index()
+    )
+    sp = pairs.loc[pairs.groupby("target_id", sort=False)["rtt_ms"].idxmin()]
+    k = haversine_distance(
+        sp["vp_lat"].to_numpy(dtype=float)[:, None], sp["vp_lon"].to_numpy(dtype=float)[:, None],
+        x_lat[None, :], x_lon[None, :],
+    ).argmin(axis=1)
+    return pd.Series(k, index=sp["target_id"].to_numpy())
 
 
 def _load_interconnects(path: Path) -> tuple[np.ndarray, np.ndarray]:

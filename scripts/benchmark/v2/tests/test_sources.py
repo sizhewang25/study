@@ -585,6 +585,72 @@ class TestGenericCSVSource_InterconnectDistance(unittest.TestCase):
         self.assertEqual([sample_distance_km(fs) for fs in old], expected_air)
 
 
+class TestGenericCSVSource_SPInterconnectDistance(unittest.TestCase):
+    """`distance: sp_interconnect_distance` routes every fit pair of a target
+    through X_sp, the interconnect nearest the target's S-P (lowest-RTT) VP,
+    instead of the one nearest the target."""
+
+    #: X1 Chicago, X2 Seattle. `t-chi` sits at X1 but its S-P VP is in Seattle;
+    #: `t-tie` has both VPs at one RTT, so the tie goes to `v-a-chi` (vp_id order).
+    X = {"x1": (41.85, -87.62), "x2": (47.61, -122.33)}
+    VP = {"v-a-chi": (41.80, -87.60), "v-b-sea": (47.60, -122.30)}
+    TG = {"t-chi": (41.90, -87.70), "t-tie": (44.00, -100.00)}
+    RTT = {("t-chi", "v-a-chi"): 9.0, ("t-chi", "v-b-sea"): 5.0,
+           ("t-tie", "v-a-chi"): 7.0, ("t-tie", "v-b-sea"): 7.0}
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        tmp = Path(self.tmpdir.name)
+        rows = ["vp_id,vp_lat,vp_lon,target_id,target_lat,target_lon,rtt_ms"]
+        for (t, v), r in self.RTT.items():
+            # A second, slower observation per pair: S-P is chosen on pair minima.
+            for rtt in (r, r + 3.0):
+                rows.append(f"{v},{self.VP[v][0]},{self.VP[v][1]},{t},{self.TG[t][0]},{self.TG[t][1]},{rtt}")
+        self.csv_path = tmp / "mesh.csv"
+        self.csv_path.write_text("\n".join(rows) + "\n")
+        self.x_path = tmp / "pni.csv"
+        self.x_path.write_text(
+            "pni_id,pni_lat,pni_lon\n" + "".join(f"{k},{a},{b}\n" for k, (a, b) in self.X.items())
+        )
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def _samples(self, distance: str) -> dict:
+        src = GenericCSVSource(
+            slice="all", setup="anchors_to_probes", csv_path=self.csv_path,
+            distance=distance, interconnect_csv_path=self.x_path,
+        )
+        out = {}
+        for fs in src.iter_fit_samples():
+            t = next(k for k, c in self.TG.items() if c == (fs.probe_coord.lat, fs.probe_coord.lon))
+            out.setdefault((t, str(fs.vp_id)), set()).add(round(fs.distance_km, 9))
+        return out
+
+    def _via(self, x: str, t: str, v: str) -> float:
+        from scripts.libs.cbg.rtt_model import haversine_distance as hav
+
+        return round(hav(*self.VP[v], *self.X[x]) + hav(*self.TG[t], *self.X[x]), 9)
+
+    def test_routes_through_the_sp_vps_interconnect(self) -> None:
+        sp = self._samples("sp_interconnect_distance")
+        tg = self._samples("interconnect_distance")
+        for v in self.VP:
+            # t-chi: S-P is v-b-sea, so X_sp = Seattle for EVERY VP of t-chi,
+            # while the TG-nearest mode routes through Chicago.
+            self.assertEqual(sp[("t-chi", v)], {self._via("x2", "t-chi", v)})
+            self.assertEqual(tg[("t-chi", v)], {self._via("x1", "t-chi", v)})
+
+    def test_tie_goes_to_first_vp_id(self) -> None:
+        sp = self._samples("sp_interconnect_distance")
+        for v in self.VP:
+            self.assertEqual(sp[("t-tie", v)], {self._via("x1", "t-tie", v)})
+
+    def test_requires_the_interconnect_list(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires `interconnect_csv_path`"):
+            GenericCSVSource(slice="all", csv_path=self.csv_path, distance="sp_interconnect_distance")
+
+
 class TestTgConfigsParquetWriter(unittest.TestCase):
     """materialize_inputs() writes tg_configs.parquet with the declared schema
     and the per-setup row count (one row per unique target)."""
