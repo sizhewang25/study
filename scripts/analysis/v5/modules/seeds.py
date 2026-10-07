@@ -93,9 +93,16 @@ _HULL_EDGE_TOL = 1e-9
 def peripheral_seeds(seed_lat, seed_lon) -> np.ndarray:
     """Per seed, whether its cell is unbounded: on the spherical convex hull.
 
+    Method: gnomonic-project the seeds onto the plane tangent at their mean
+    direction. That projection maps great circles to straight lines, so the
+    spherical hull is the planar `ConvexHull` of the projected points. Seeds
+    on a hull edge (which Qhull omits from `vertices`) count too.
+
     Three or fewer seeds, or seeds on one great circle, are all peripheral.
-    Refuses seeds that do not fit in
-    an open hemisphere, where "the footprint's outside" is undefined.
+    Refuses seeds that are not all in front of their mean direction (the
+    projection needs depth > 0), where "the footprint's outside" is
+    undefined. That is stricter than "fits in an open hemisphere", but no
+    footprint comes close.
     """
     from scipy.spatial import ConvexHull
 

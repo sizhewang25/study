@@ -32,7 +32,19 @@ analysis:
       max: 92.395
 ```
 
-## Step 2: Get dataset stats
+## Step 2: Prerequisites per dataset
+
+```
+for r in pro-as0{1,2,3}-{mesh,loso}; do
+  python -m scripts.analysis.v5.cli build-answer-space --run-id $r   # sites, seeds, pixels → answer-space/healpix-128/{meta.json,sites.csv,…}
+  python -m scripts.analysis.v5.cli classify --run-id $r             # per-TG labels → classify/healpix-128/<method>_tgs.parquet (holds each TG's fold)
+done
+```
+
+We get per-target classification.
+
+
+## Step 3: Get dataset stats
 
 python -m scripts.analysis.v5.cli report-dataset --group pro-paper
 
