@@ -51,6 +51,7 @@ def _edges() -> pd.DataFrame:
 def frames():
     routed = I.route_edges(_edges(), PNIS)
     tgs = I.tg_frame(routed, PNIS, run_id="r")
+    routed = I.route_edges_via_sp(routed, tgs, PNIS)
     return routed, tgs, I.report(routed, tgs, {"run_id": "r"})
 
 
@@ -81,6 +82,15 @@ class TestTwoInterconnects:
         # The S-P VP's own edge: broken through X*, not through its own X.
         assert fv["sp_edge"]["via_tg_nearest_pct"] == 50.0
         assert fv["sp_edge"]["via_sp_nearest_pct"] == 0.0
+
+    def test_routing_through_sp_interconnect_keeps_the_floor(self, frames):
+        """Both TGs route through X2 under X_sp; t-far's S-P edge is then its
+        air path, so nothing breaks the floor."""
+        routed, _, rep = frames
+        row = routed.set_index(["tg_id", "vp_id"]).loc[("t-far", "v-x2")]
+        assert row.d_route_sp_km == pytest.approx(row.d_km)
+        assert rep["floor_violations"]["edges_via_sp_interconnect"]["route_pct"] == 0.0
+        assert (routed.d_route_sp_km >= routed.d_km - 1e-9).all()
 
     def test_no_credible_sp_without_rho(self, frames):
         """Two VPs per TG leave rho undefined, so no TG counts as credible."""

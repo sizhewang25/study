@@ -16,6 +16,9 @@ this report measures both, per run:
   under `d_air` teaches the fit that an RTT covers more distance than physics
   allows. Reported over every (VP, TG) edge, split by whether S-P agrees with
   X* on that TG, and on the S-P VP's own edge through X* against through X_sp.
+* **The same floor and stretch with every edge routed through X_sp**, the
+  path `distance: sp_interconnect_distance` fits on, so the two routed modes
+  read side by side whichever one the run used (`fit_distance`).
 
 The edge set is every (VP, TG) pair at its minimum RTT (`load_edges`): the fit
 universe pooled over folds, since each TG is a fit target in all folds but its
@@ -84,6 +87,26 @@ def route_edges(edges: pd.DataFrame, pnis: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def route_edges_via_sp(routed: pd.DataFrame, tgs: pd.DataFrame, pnis: pd.DataFrame) -> pd.DataFrame:
+    """`routed` plus the same path through X_sp, the interconnect nearest each
+    TG's S-P VP: `d_route_sp_km`, `violates_route_sp`, `stretch_sp`.
+
+    `d_route_sp_km` is the distance `sp_interconnect_distance` bakes into fit
+    samples (the source picks X_sp with the same tie-break).
+    """
+    out = routed.copy()
+    k = out.tg_id.map(tgs.set_index("tg_id").sp_interconnect_index).to_numpy(dtype=int)
+    x_lat, x_lon = pnis.pni_lat.to_numpy()[k], pnis.pni_lon.to_numpy()[k]
+    out["d_route_sp_km"] = (
+        haversine_km(out.vp_lat.to_numpy(float), out.vp_lon.to_numpy(float), x_lat, x_lon)
+        + haversine_km(out.tg_lat.to_numpy(float), out.tg_lon.to_numpy(float), x_lat, x_lon)
+    )
+    out["violates_route_sp"] = out.d_route_sp_km > FLOOR_KM_PER_MS * out.rtt_ms
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out["stretch_sp"] = np.where(out.d_km > 0, out.d_route_sp_km / out.d_km, np.nan)
+    return out
+
+
 def tg_frame(routed: pd.DataFrame, pnis: pd.DataFrame, *, run_id: str) -> pd.DataFrame:
     """`figure_sp_interconnect.tg_frame` plus X* vs X_sp and the per-TG edge shares.
 
@@ -99,6 +122,8 @@ def tg_frame(routed: pd.DataFrame, pnis: pd.DataFrame, *, run_id: str) -> pd.Dat
     k_tg = F._to_interconnects(tgs.tg_lat, tgs.tg_lon, pnis).argmin(axis=1)
     k_sp = F._to_interconnects(sp.vp_lat, sp.vp_lon, pnis).argmin(axis=1)
     tgs["x_separation_km"] = haversine_km(x_lat[k_tg], x_lon[k_tg], x_lat[k_sp], x_lon[k_sp])
+    # Kept for `route_edges_via_sp`; not written to the CSV (no interconnect ids).
+    tgs["sp_interconnect_index"] = k_sp
     tgs["sp_credible"] = tgs[f"sp_at_{CREDIBLE_RADIUS_KM:g}km"] & (tgs.rho >= LOW_RHO)
     tgs["sp_violates_via_tg"] = tgs.d_via_tg_km > FLOOR_KM_PER_MS * tgs.rtt_sp_ms
     tgs["sp_violates_via_sp"] = tgs.d_via_sp_km > FLOOR_KM_PER_MS * tgs.rtt_sp_ms
@@ -149,8 +174,16 @@ def _floor(e: pd.DataFrame) -> dict:
     }
 
 
+def _stretch(s: pd.Series) -> dict:
+    s = s.dropna()
+    return {**{f"p{q:g}": F._q(s, q / 100) for q in (50, 90, 99)}, "max": float(s.max())}
+
+
 def report(routed: pd.DataFrame, tgs: pd.DataFrame, meta: dict) -> dict:
-    """Every number of the side report, as one JSON-ready dict."""
+    """Every number of the side report, as one JSON-ready dict.
+
+    `routed` carries both routed paths: `route_edges` then `route_edges_via_sp`.
+    """
     same = routed.tg_id.map(tgs.set_index("tg_id").same_interconnect).to_numpy(dtype=bool)
     credible = tgs[tgs.sp_credible]
     return {
@@ -160,6 +193,7 @@ def report(routed: pd.DataFrame, tgs: pd.DataFrame, meta: dict) -> dict:
             "floor_violations.edges": "per (VP, TG) min-RTT edge = the fit universe pooled over folds",
             "floor_violations.sp_edge": "per TG, the S-P VP's edge only",
             "stretch": "per (VP, TG) edge with d_air > 0",
+            "*_via_sp_interconnect": "the same, every edge routed through its TG's X_sp",
         },
         "thresholds": {
             "floor_km_per_ms": FLOOR_KM_PER_MS,
@@ -179,11 +213,14 @@ def report(routed: pd.DataFrame, tgs: pd.DataFrame, meta: dict) -> dict:
                 "via_sp_nearest_pct": F._pct(tgs.sp_violates_via_sp),
                 "via_tg_nearest_sites": _site_shares(tgs, "sp_violates_via_tg"),
             },
+            "edges_via_sp_interconnect": {
+                "air_pct": F._pct(routed.violates_air),
+                "route_pct": F._pct(routed.violates_route_sp),
+                "route_only_pct": F._pct(routed.violates_route_sp & ~routed.violates_air),
+            },
         },
-        "stretch": {
-            **{f"p{q:g}": F._q(routed.stretch.dropna(), q / 100) for q in (50, 90, 99)},
-            "max": float(routed.stretch.max()),
-        },
+        "stretch": _stretch(routed.stretch),
+        "stretch_via_sp_interconnect": _stretch(routed.stretch_sp),
     }
 
 
@@ -239,6 +276,7 @@ def build(
     pnis = P.load_pnis(pni_csv)
     routed = route_edges(F.load_edges(csv), pnis)
     tgs = tg_frame(routed, pnis, run_id=run.run_id)
+    routed = route_edges_via_sp(routed, tgs, pnis)
     meta = {
         "run_id": run.run_id,
         "source_csv": str(csv),
