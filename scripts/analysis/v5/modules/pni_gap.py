@@ -656,13 +656,15 @@ def write(tgs: pd.DataFrame, pts: pd.DataFrame, meta: dict, out_dir: Path) -> di
         **meta,
         "clusters_csv": CLUSTERS_CSV,
         "points_csv": POINTS_CSV,
-        "clusters": json.loads(summary.round(3).to_json(orient="records")),
+        # 6 dp, not the 3 a reader would quote: a quoted value is rounded once,
+        # from this, never from an already-rounded copy (0.8147 -> 0.815 -> 0.82).
+        "clusters": json.loads(summary.round(6).to_json(orient="records")),
         "clusters_by_run": clusters_by_run(tgs),
         "spearman": {
             "x": D_PNI,
             "y": GAP,
-            "rho_tgs": round(spearman_rho(tgs), 3),
-            "rho_points": round(spearman_rho(pts), 3),
+            "rho_tgs": round(spearman_rho(tgs), 6),
+            "rho_points": round(spearman_rho(pts), 6),
             "note": (
                 "Overall here; per cluster as rho_tgs / rho_points in `clusters`. "
                 "rho_tgs ranks every TG (a point weighted by its replicas); rho_points "

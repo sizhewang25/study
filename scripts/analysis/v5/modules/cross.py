@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from itertools import combinations
 from pathlib import Path
 
@@ -136,6 +137,22 @@ def use_group(group: dict | None) -> None:
     """Name pools after `group` from now on (None: back to hashes only)."""
     global _ACTIVE_GROUP
     _ACTIVE_GROUP = group
+
+
+@contextmanager
+def using_group(group: dict | None):
+    """`use_group(group)` for a `with` block, then back to whatever was active."""
+    previous = _ACTIVE_GROUP
+    use_group(group)
+    try:
+        yield
+    finally:
+        use_group(previous)
+
+
+def active_group() -> dict | None:
+    """The group `use_group` set, or None."""
+    return _ACTIVE_GROUP
 
 
 def group_name(run_ids: list[str], group: dict) -> str | None:

@@ -1976,6 +1976,46 @@ def report_bounds_cmd(
         raise typer.Exit(1)
 
 
+@app.command("report-paper")
+def report_paper_cmd(
+    section: str = typer.Option(..., "--section", "-s", help="Paper section to report (4)."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 wrote the artifacts."),
+) -> None:
+    """Every statistic one paper section quotes, formatted the way the paper writes it.
+
+    Reads only artifacts already built under the group (run with --group; see
+    create_paper_artifacts.sh) and formats each value once, from its unrounded
+    form (scripts/analysis/v5/paper/fmt.py). Needs nothing from the paper itself.
+    Writes `paper_numbers.s<N>.{md,json}` into `_cross/paper/<group>/`.
+    """
+    import importlib
+
+    from scripts.analysis.v5.modules import cross
+    from scripts.analysis.v5.modules.labels import group_members
+    from scripts.analysis.v5.paper import core
+
+    group = cross.active_group()
+    if group is None:
+        raise typer.BadParameter("report-paper reads a group's artifacts; run it with --group <id>")
+    module = _PAPER_SECTIONS.get(section)
+    if module is None:
+        raise typer.BadParameter(f"no reader for section {section!r}; have {sorted(_PAPER_SECTIONS)}")
+    mod = importlib.import_module(f"scripts.analysis.v5.paper.{module}")
+    try:
+        claims, tables, sources = mod.build(core.Context(group=group, analysis_root=analysis_root))
+    except MissingArtifactError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    md = core.render(mod.SECTION, mod.TITLE, claims, tables, group_id=group["group_id"], sources=sources)
+    out_dir = cross.cross_dir(group_members(group), analysis_root=analysis_root, kind=core.KIND)
+    for path in core.write(out_dir, mod.SECTION, md, claims, tables).values():
+        typer.echo(f"wrote {path}")
+    typer.echo(f"§{mod.SECTION}: {len(claims)} statistics, {len(tables)} table(s)")
+
+
+#: `--section` -> reader module under scripts/analysis/v5/paper/.
+_PAPER_SECTIONS = {"4": "s4_error_distance"}
+
+
 @app.command("report-dataset")
 def report_dataset_cmd(
     run_id: list[str] = typer.Option(None, "--run-id", help="Seen-site (mesh) run (repeatable)."),

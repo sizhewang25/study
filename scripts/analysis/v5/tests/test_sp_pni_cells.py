@@ -18,12 +18,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from scripts.analysis.v5.modules import cross
 from scripts.analysis.v5.modules import answer_space as A
 from scripts.analysis.v5.modules import classify as C
 from scripts.analysis.v5.modules import figure_pni_gap as F
 from scripts.analysis.v5.modules import pni_gap as P
 from scripts.analysis.v5.modules import sp_pni_cells as M
 from scripts.analysis.v5.modules.geodesy import haversine_km, pairwise_km
+from scripts.analysis.v5.modules.labels import load_group
 from scripts.analysis.v5.modules.paths import MissingArtifactError
 from scripts.analysis.v5.modules.status import SHORTEST_PING
 from scripts.analysis.v5.tests.conftest import PNI_VPS
@@ -217,6 +219,10 @@ class TestPrivacy:
         assert "pni-a" not in text and "pni-b" not in text and "vp-" not in text
 
 
+#: The group whose pooled folders the real-data numbers are read from.
+GROUP = "pro-paper"
+
+
 class TestTheRealPaperNumbers:
     """The numbers the S-P subsection quotes, pinned against the default analysis tree.
 
@@ -240,7 +246,8 @@ class TestTheRealPaperNumbers:
         if any(p is None or not p.exists() for p in pnis.values()):
             pytest.skip("a pro-as0* config declares no existing interconnect list")
         try:
-            tgs, cell_meta, meta, _ = M.load_runs(runs, pnis, layout=P.POOLED)
+            with cross.using_group(load_group(GROUP)):  # the pooled folders are group-named
+                tgs, cell_meta, meta, _ = M.load_runs(runs, pnis, layout=P.POOLED)
         except MissingArtifactError as exc:
             pytest.skip(f"run `classify` and `plot-pni-gap --layout pooled` first: {exc}")
         return M.report(tgs, cell_meta, meta)

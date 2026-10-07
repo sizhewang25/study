@@ -15,11 +15,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from scripts.analysis.v5.modules import cross
 from scripts.analysis.v5.modules import figure_pni_gap as F
 from scripts.analysis.v5.modules import figure_x_cell_rtt as X
 from scripts.analysis.v5.modules import pni_gap as P
 from scripts.analysis.v5.modules import sites as S
 from scripts.analysis.v5.modules import sp_pni_cells as M
+from scripts.analysis.v5.modules.labels import load_group
 from scripts.analysis.v5.modules.paths import MissingArtifactError
 from scripts.analysis.v5.tests.test_sp_pni_cells import write_classify
 
@@ -174,6 +176,10 @@ class TestPrivacy:
         assert "pni-a" not in text and "pni-b" not in text and "vp-" not in text
 
 
+#: The group whose pooled folders the real-data numbers are read from.
+GROUP = "pro-paper"
+
+
 class TestTheRealPaperNumbers:
     """The numbers the region-classification section quotes, against the default tree.
 
@@ -196,7 +202,8 @@ class TestTheRealPaperNumbers:
         if any(p is None or not p.exists() for p in pnis.values()):
             pytest.skip("a pro-as0* config declares no existing interconnect list")
         try:
-            tgs, meta, _ = X.load_runs(runs, pnis, layout=P.POOLED)
+            with cross.using_group(load_group(GROUP)):  # the pooled folders are group-named
+                tgs, meta, _ = X.load_runs(runs, pnis, layout=P.POOLED)
         except MissingArtifactError as exc:
             pytest.skip(f"run `classify` and `plot-pni-gap --layout pooled` first: {exc}")
         assert (tgs[X.GROUP_COL] != tgs[X.ANY_COL]).sum() == 0
