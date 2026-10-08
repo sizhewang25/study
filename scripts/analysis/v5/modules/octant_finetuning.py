@@ -878,10 +878,8 @@ def assemble(run: RunPaths, variant: str) -> tuple[pd.DataFrame, list[str]]:
     if wide is None:
         raise MissingArtifactError(
             f"no sweep arms scored for {variant} under {run.run_id}; run "
-            f"./cli.sh --configfile <that run's config> first. The config is "
-            f"named by {run.target_space_json}, and is not always "
-            f"configs/<run_id>.yaml -- the grafted runs record the config they "
-            f"were produced against.")
+            f"./cli.sh --configfile <the config declaring run_id: {run.run_id}> "
+            f"first.")
     return wide, present
 
 

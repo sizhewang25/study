@@ -24,7 +24,9 @@ DEFAULT_OUTPUTS_ROOT = REPO_ROOT / "outputs" / "benchmark" / "v2"
 #: Where v5 writes. Beside v4's rather than over it.
 DEFAULT_ANALYSIS_ROOT = REPO_ROOT / "outputs" / "analysis" / "v5"
 
-#: Directories under a run that are not a measurement `source`.
+#: Directories under a run that are not a measurement `source`. v5 reads none
+#: of them; they are listed so older trees that still hold them are discovered
+#: correctly.
 _NON_SOURCE_DIRS = frozenset({"eval_source", "eval_dataset", "bench_eval"})
 
 
@@ -74,43 +76,6 @@ class RunPaths:
     @property
     def setup_dir(self) -> Path:
         return self.run_dir / self.source / self.setup
-
-    @property
-    def eval_source_dir(self) -> Path:
-        return self.run_dir / "eval_source"
-
-    @property
-    def target_space_json(self) -> Path:
-        """Provenance of `targets.csv`/`vps.csv`, written by
-        `materialize-target-space`.
-
-        Its `csv` key is the only record of a run's canonical edge CSV before
-        `eval_source/` exists, which is why `edges.resolve_source_csv` falls
-        back to it.
-        """
-        return self.setup_dir / "target_space.json"
-
-    def eval_file(self, suffix: str) -> Path:
-        """`eval_source/<basename>_<suffix>` — the dataset-scored sidecar.
-
-        The basename is the canonical CSV's, not the run id, so it is globbed
-        rather than constructed. Exactly one match is required: two would mean
-        two datasets were scored into one run and picking either silently
-        changes the population.
-        """
-        hits = sorted(self.eval_source_dir.glob(f"*_{suffix}"))
-        if not hits:
-            raise MissingArtifactError(
-                f"no eval_source/*_{suffix} under {self.eval_source_dir}; "
-                f"run the benchmark's eval-source stage first"
-            )
-        if len(hits) > 1:
-            raise MissingArtifactError(
-                f"{len(hits)} eval_source/*_{suffix} files under "
-                f"{self.eval_source_dir}: {[h.name for h in hits]}. Each scores a "
-                f"different dataset; keep one."
-            )
-        return hits[0]
 
     @property
     def fold_ids(self) -> list[str]:

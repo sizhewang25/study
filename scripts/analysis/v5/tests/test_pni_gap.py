@@ -342,9 +342,12 @@ class TestTheConfigDeclaresTheList:
         root = tmp_path / "outputs"
         setup = root / "pro-x" / "generic_csv" / "setup"
         (setup / "fold_0").mkdir(parents=True)
-        cfg = tmp_path / "pro-x.yaml"
-        cfg.write_text(yaml.safe_dump({"analysis": {"common": common}} if common is not None else {}))
-        (setup / "target_space.json").write_text(json.dumps({"run_id": "pro-x", "config": str(cfg)}))
+        cfg = tmp_path / "configs" / "pro-x.yaml"
+        cfg.parent.mkdir()
+        body = {"run_id": "pro-x"}
+        if common is not None:
+            body["analysis"] = {"common": common}
+        cfg.write_text(yaml.safe_dump(body))
         return root
 
     def test_a_relative_path_resolves_under_the_repo(self, tmp_path):

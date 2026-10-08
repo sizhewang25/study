@@ -58,6 +58,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
+from scripts.analysis.v5.modules import bench_inputs
 from scripts.analysis.v5.modules import edges as E
 from scripts.analysis.v5.modules.geodesy import elementwise_km
 from scripts.analysis.v5.modules.methods import method_label, method_term_table
@@ -105,17 +106,6 @@ DEFAULT_MAX_POINTS_PER_VP = 400
 # only a pinned stratification.
 
 
-def _inputs_fold_dir(run: RunPaths, fold_id: str, inputs_root: Path) -> Path:
-    """`<inputs_root>/<source>/<run_id>/<setup>/<fold>/`.
-
-    Built from `RunPaths` rather than `benchmark.v2.inputs.inputs_dir_for`, which
-    derives the same path from a live `DataSource` instance — constructing one
-    here would mean re-deriving the source kwargs this layer deliberately does
-    not carry.
-    """
-    return inputs_root / run.source / run.run_id / run.setup / fold_id
-
-
 def _fold_index(fold_id: str) -> int:
     """`"fold_3"` -> `3`. The same split `RunPaths.fold_ids` sorts on."""
     return int(fold_id.split("_")[1])
@@ -158,7 +148,7 @@ def load_fit_samples(
     and guessing at it, and it costs nothing to check. Verified to hold exactly
     on all five as01 folds (fold_4: 42704).
     """
-    parquet = _inputs_fold_dir(run, fold_id, inputs_root) / "fit_samples.parquet"
+    parquet = bench_inputs.fold_dir(run, fold_id, inputs_root) / "fit_samples.parquet"
     if parquet.exists():
         columns = ["vp_id", "vp_lat", "vp_lon", "probe_lat", "probe_lon", "latency_ms"]
         # The distance the LTDs were fit against (the routing distance under

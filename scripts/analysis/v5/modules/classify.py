@@ -149,27 +149,24 @@ def load_method_frame(
     return pd.concat(frames, ignore_index=True).rename(columns=BENCHMARK_TG_COLUMNS)
 
 
-_SPING_COLUMNS = ("target_id", "shortest_ping_vp_lat", "shortest_ping_vp_lon")
-
-
-def load_shortest_ping_frame(run: RunPaths, roster: pd.DataFrame) -> pd.DataFrame:
+def load_shortest_ping_frame(
+    run: RunPaths, roster: pd.DataFrame, *, inputs_root: Path | None = None
+) -> pd.DataFrame:
     """The Shortest-Ping control, shaped like any method frame.
 
-    Read from `eval_source` (the benchmark's own resolution of the lowest-RTT
-    VP) and scored over the evaluated `roster`, so it shares every CBG arm's
-    denominator: eval-source TGs the run never evaluated are dropped, and
-    evaluated TGs without a row keep one with no prediction.
+    The min-RTT VP of each TG over the observations its fold was scored on
+    (`bench_inputs.shortest_ping`, read off the benchmark's materialized
+    inputs), joined on `(tg_id, fold)` to the evaluated `roster` so it shares
+    every CBG arm's denominator. An evaluated TG without observations keeps a
+    row with no prediction.
     """
-    path = run.eval_file("eval_per_target.csv")
-    raw = pd.read_csv(path)
-    missing = [c for c in _SPING_COLUMNS if c not in raw.columns]
-    if missing:
-        raise MissingArtifactError(f"{path} is missing {missing}")
-    sping = raw[list(_SPING_COLUMNS)].drop_duplicates("target_id").set_index("target_id")
+    from scripts.analysis.v5.modules.bench_inputs import shortest_ping
+
+    sping = shortest_ping(run, inputs_root).set_index(["tg_id", "fold"])
     out = roster[["tg_id", "tg_lat", "tg_lon", "fold"]].copy()
-    hit = sping.reindex(out["tg_id"])
-    out["pred_lat"] = hit["shortest_ping_vp_lat"].to_numpy()
-    out["pred_lon"] = hit["shortest_ping_vp_lon"].to_numpy()
+    hit = sping.reindex(pd.MultiIndex.from_frame(out[["tg_id", "fold"]]))
+    out["pred_lat"] = hit["sping_vp_lat"].to_numpy()
+    out["pred_lon"] = hit["sping_vp_lon"].to_numpy()
     out["status"] = "BASELINE"
     out.attrs["n_evaluated_without_baseline"] = int(out["pred_lat"].isna().sum())
     return out
@@ -383,8 +380,13 @@ def score_rung(
     *,
     methods: list[str] | None = None,
     analysis_root: Path | None = None,
+    inputs_root: Path | None = None,
 ) -> pd.DataFrame:
-    """Score every method at one rung, write the rung's artifacts, return the summary."""
+    """Score every method at one rung, write the rung's artifacts, return the summary.
+
+    `inputs_root` is the benchmark's materialized inputs tree, which the
+    Shortest-Ping control is read from (default `DEFAULT_INPUTS_ROOT`).
+    """
     space_dir = run.answer_space_dir(nside, root=analysis_root)
     if not (space_dir / "meta.json").exists():
         raise MissingArtifactError(
@@ -399,7 +401,9 @@ def score_rung(
         if method == SHORTEST_PING:
             if not combos:
                 continue
-            frame = load_shortest_ping_frame(run, load_method_frame(run, combos[0]))
+            frame = load_shortest_ping_frame(
+                run, load_method_frame(run, combos[0]), inputs_root=inputs_root
+            )
         else:
             frame = load_method_frame(run, method)
         scored[method] = score_method(frame, space)
@@ -462,10 +466,13 @@ def score_for_run(
     nsides: tuple[int, ...] = G.NSIDE_LADDER,
     methods: list[str] | None = None,
     analysis_root: Path | None = None,
+    inputs_root: Path | None = None,
 ) -> pd.DataFrame:
     """Score every rung and write `accuracy_by_grid.csv`. Returns the long frame."""
     parts = [
-        score_rung(run, nside, methods=methods, analysis_root=analysis_root)
+        score_rung(
+            run, nside, methods=methods, analysis_root=analysis_root, inputs_root=inputs_root
+        )
         for nside in sorted({G.validate_nside(n) for n in nsides}, reverse=True)
     ]
     long = pd.concat(parts, ignore_index=True)

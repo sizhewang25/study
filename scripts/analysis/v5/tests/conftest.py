@@ -248,3 +248,64 @@ def pni_two_runs(tmp_path):
         "pni_csvs": {"run-a": a[1], "run-b": b[1]},
         "root": tmp_path / "analysis",
     }
+
+
+# ---- run configs -------------------------------------------------------------
+#
+# `labels.config_path` raises for a run no config declares. Most tests build a
+# synthetic run (`r`, `syn-...-mesh`) whose config would say nothing, and the
+# few that care write one under `tmp_path/configs/`. So, per test: that
+# directory first, then the repo's `configs/` (the real-tree tests), then an
+# empty stub declaring only the `run_id` -- what a config with no `analysis:`
+# block reads as. `@pytest.mark.strict_configs` drops the stub, for the tests
+# of the missing-config error itself.
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "strict_configs: no stub config; a run without one raises"
+    )
+
+
+def _registry(dirs, stub_dir, *, strict=False):
+    """A `config_path` searching `dirs` in order, then stubbing (unless strict)."""
+    from scripts.analysis.v5.modules import labels as L
+
+    def config_path(run_id, root=None):
+        for d in dirs:
+            try:
+                return L.find_config(run_id, d)
+            except L.MissingConfigError:
+                if strict and d == dirs[-1]:
+                    raise
+        stub_dir.mkdir(parents=True, exist_ok=True)
+        stub = stub_dir / f"{run_id}.yaml"
+        stub.write_text(f"run_id: {run_id}\n")
+        return stub
+
+    return config_path
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _session_config_registry(tmp_path_factory):
+    """For module-scoped fixtures, which are built before any test's own."""
+    from scripts.analysis.v5.modules import labels as L
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(L, "config_path", _registry(
+            (L.CONFIGS_DIR,), tmp_path_factory.mktemp("stub_configs"),
+        ))
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _config_registry(request, tmp_path, monkeypatch):
+    from scripts.analysis.v5.modules import labels as L
+
+    strict = request.node.get_closest_marker("strict_configs") is not None
+    monkeypatch.setattr(L, "config_path", _registry(
+        (tmp_path / "configs", L.CONFIGS_DIR), tmp_path / "_stub_configs", strict=strict,
+    ))
+    L.dataset_label.cache_clear()
+    yield
+    L.dataset_label.cache_clear()

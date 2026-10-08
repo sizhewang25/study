@@ -87,9 +87,9 @@ def _make_run(
         "run_id": run_id,
         "benchmark": {"source_kwargs": {"mesh_csv_path": str(mesh_csv)}},
     }
-    cfg_path = tmp_path / f"{run_id}.yaml"
+    cfg_path = tmp_path / "configs" / f"{run_id}.yaml"
+    cfg_path.parent.mkdir(exist_ok=True)
     cfg_path.write_text(yaml.safe_dump(body))
-    (setup / "target_space.json").write_text(json.dumps({"config": str(cfg_path)}))
     return RunPaths(run_id=run_id, root=tmp_path / "outputs", source=source,
                     setup="anchors_to_probes")
 
@@ -149,10 +149,11 @@ class TestItIsRefusedNotDefaulted:
         with pytest.raises(MissingArtifactError, match="does not exist"):
             _build(_make_run(tmp_path, mesh=False), tmp_path)
 
+    @pytest.mark.strict_configs
     def test_no_config_reachable(self, tmp_path):
         run = _make_run(tmp_path)
-        run.target_space_json.write_text(json.dumps({}))
-        with pytest.raises(MissingArtifactError, match="no config is reachable"):
+        (tmp_path / "configs" / "wrun.yaml").unlink()
+        with pytest.raises(MissingArtifactError, match="no config under .* declares"):
             _build(run, tmp_path)
 
     def test_a_scored_tg_absent_from_the_mesh(self, tmp_path):

@@ -40,7 +40,6 @@ def _run(tmp_path, run_id, analysis=None, *, combos=COMBOS, first_id=0):
     cfg = tmp_path / "configs" / f"{run_id}.yaml"
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text(yaml.safe_dump({"run_id": run_id, "analysis": analysis or {}}))
-    (setup / "target_space.json").write_text(json.dumps({"config": str(cfg)}))
     return root
 
 

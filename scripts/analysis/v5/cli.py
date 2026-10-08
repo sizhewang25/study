@@ -274,6 +274,9 @@ def classify_cmd(
     method: list[str] = typer.Option(None, "--method", "-m", help="Score only these."),
     outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
     analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+    inputs_root: Path = typer.Option(
+        None, help="Benchmark inputs root, where each fold's materialized observations "
+                   "and VPs live. Default: the benchmark's."),
 ) -> None:
     """Label every prediction with its ring and its cell.
 
@@ -287,6 +290,7 @@ def classify_cmd(
             nsides=_nsides(nside),
             methods=list(method) if method else None,
             analysis_root=analysis_root,
+            inputs_root=inputs_root,
         )
         for _, r in long[long.nside == long.nside.max()].iterrows():
             typer.echo(
@@ -344,11 +348,14 @@ def build_bipartite_graph_cmd(
     nside: list[int] = typer.Option(None, "--nside", "-n", help=_NSIDE_HELP),
     source_csv: Path = typer.Option(
         None,
-        help="Canonical (vp_id, target_id, rtt_ms) CSV. Defaults to the path the "
-             "run's eval_stats.json records.",
+        help="Canonical (vp_id, target_id, rtt_ms) CSV. Defaults to the CSV the "
+             "run's config names.",
     ),
     outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
     analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+    inputs_root: Path = typer.Option(
+        None, help="Benchmark inputs root, where each fold's materialized observations "
+                   "and VPs live. Default: the benchmark's."),
 ) -> None:
     """VP nodes, TG nodes and measured edges -- the §7.3 dataset geometry.
 
@@ -362,7 +369,8 @@ def build_bipartite_graph_cmd(
         for n in _nsides(nside):
             try:
                 graph, out_dir = bipartite.build_for_run(
-                    run, nside=n, analysis_root=analysis_root, source_csv=source_csv
+                    run, nside=n, analysis_root=analysis_root, source_csv=source_csv,
+                    inputs_root=inputs_root,
                 )
             except (ValueError, MissingArtifactError) as exc:
                 raise typer.BadParameter(str(exc)) from exc
@@ -2401,6 +2409,9 @@ def plot_mtl_map_cmd(
     ),
     outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
     analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+    inputs_root: Path = typer.Option(
+        None, help="Benchmark inputs root, where each fold's materialized observations "
+                   "and VPs live. Default: the benchmark's."),
 ) -> None:
     """Interactive per-TG map of one method's MTL result and BOTH verdicts.
 
@@ -2435,6 +2446,7 @@ def plot_mtl_map_cmd(
             nside=nside,
             extent=extent,
             analysis_root=analysis_root,
+            inputs_root=inputs_root,
             regions=not no_regions,
             workers=max(1, int(workers)),
             progress=typer.echo,

@@ -351,14 +351,9 @@ def _mesh_tgs_for_weighted_run(run: RunPaths) -> tuple[pd.DataFrame, str]:
     """
     from scripts.analysis.v5.modules import labels
 
+    # Raises `MissingConfigError` when no config declares the run: the
+    # pre-filter mesh is only named there, and the post-filter TGs are refused.
     cfg = labels.run_config_path(run)
-    if cfg is None:
-        raise MissingArtifactError(
-            f"{run.run_id} is a {WEIGHTED_SOURCE} run, so its answer space is built "
-            f"from the pre-filter mesh, but no config is reachable through "
-            f"{run.target_space_json} (its `config` key). Refusing to fall back to "
-            f"the run's own post-filter TGs."
-        )
     node = yaml.safe_load(cfg.read_text()) or {}
     kwargs = (node.get("benchmark") or {}).get("source_kwargs") or {}
     raw = kwargs.get("mesh_csv_path")

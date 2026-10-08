@@ -188,7 +188,7 @@ def _walk(node):
 
 
 def _real_run(run_id: str = "as01-260728-260802-mesh"):
-    """A real benchmark run, or a skip. The map reads parquets and vps.csv, so
+    """A real benchmark run, or a skip. The map reads parquets and the materialized inputs, so
     the paths-and-refusals tests need a real tree rather than a stub."""
     try:
         run = resolve_run(run_id)

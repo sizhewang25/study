@@ -109,7 +109,8 @@ run() {
 
 # The run config's declared `analysis.common.pni_csv`, or empty. Read through
 # `labels.declared_pni_csv`, the one place v5 reads a config, so this and the
-# CLI's own default cannot disagree about which list a run uses.
+# CLI's own default cannot disagree about which list a run uses. Exits non-zero
+# when no config declares the run's run_id -- a failure, not a skip.
 declared_pni_csv() {
   python -c 'import sys
 from scripts.analysis.v5.modules.labels import declared_pni_csv
@@ -263,8 +264,9 @@ for R in "${ALL[@]}"; do
   # The RTT boxes read the clusters off disk, so they run only if the
   # clustering just succeeded. Otherwise they would draw the previous run's
   # clusters, which their staleness checks catch only when an input changed.
-  pni=$(declared_pni_csv "$R")
-  if [ -n "$pni" ]; then
+  if ! pni=$(declared_pni_csv "$R"); then
+    FAILED+=("$R :: no config under configs/ declares run_id $R")
+  elif [ -n "$pni" ]; then
     if run plot-pni-gap $V5 plot-pni-gap --run-id "$R" --pni-csv "$pni"; then
       run plot-pni-cluster-rtt $V5 plot-pni-cluster-rtt --run-id "$R" --pni-csv "$pni"
       # Fig. B of the S-P subsection, and the report holding every number it quotes.

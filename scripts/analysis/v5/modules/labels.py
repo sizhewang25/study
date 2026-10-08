@@ -21,9 +21,11 @@ there is one source of truth. This is the documented exception, kept in one
 module so it stays one exception. The label is a *display* name -- nothing in
 the tree records it, and nothing can derive it, which is the whole point.
 
-The run reaches its config through `target_space.json`'s `config` key, written
-by the benchmark alongside the `csv` key that `edges.resolve_source_csv`
-already reads the same way.
+The run reaches its config through the config's own `run_id` key: every
+`configs/*.yaml` is indexed by the `run_id` it declares (`config_path`). The
+benchmark's output tree is not consulted, so nothing written by
+`materialize-target-space` is needed -- `edges.resolve_source_csv` reaches the
+run's CSV through the same lookup.
 
 ## Also: the PNI list
 
@@ -40,15 +42,14 @@ choice nothing can derive, so it is the third declared value. Read by
 `declared_combo_ids`; `cli._methods_for` decides precedence and checks the
 names against the tree.
 
-## Never raises (except a malformed `combo_ids` or a conflict)
+## A run with no config raises
 
-Every break in the chain falls back to the run id, which is unique by
-construction and so is always a correct-if-verbose label. The breaks are real,
-not hypothetical: five runs have no `target_space.json` at all
-(`as0{1,2,3}-260728-260802`, `as01-260728-260802-mesh-heapfix`,
-`as7018_us_test01`), and `as01-materialization-test`'s manifest names a config
-that has since been deleted. A missing label is not an error -- only the
-`pro-*` configs declare one.
+`MissingConfigError`, naming the run id and the directory searched. It used to
+fall back -- to the run id as label, to km and ms for the normalizers, to every
+method for a figure -- and a figure built that way looks finished. A missing
+*key* in a config that exists is still not an error: only the `pro-*` configs
+declare a label, and the run id stands in for it. Also raised: a malformed
+`combo_ids` / `overlay`, and a conflict between a run and its groups.
 
 ## Group files: what a pooled set of runs declares once
 
@@ -78,7 +79,6 @@ same one -- `cross.guard_distinct_labels` is what refuses to pool those.
 
 from __future__ import annotations
 
-import json
 from functools import lru_cache
 from pathlib import Path
 
@@ -88,11 +88,13 @@ from scripts.analysis.v5.modules.paths import (
     DEFAULT_OUTPUTS_ROOT,
     REPO_ROOT,
     MissingArtifactError,
-    resolve_run,
 )
 
 #: Where the label is declared, as a path through the config mapping.
 LABEL_PATH = ("analysis", "common", "dataset_label")
+
+#: Where run configs live: `configs/*.yaml`, each declaring its `run_id`.
+CONFIGS_DIR = REPO_ROOT / "configs"
 
 #: Where group files live: `configs/groups/<group_id>.yaml`.
 GROUPS_DIR = REPO_ROOT / "configs" / "groups"
@@ -162,47 +164,100 @@ def groups_of(run_id: str, groups_dir: Path | str | None = None) -> list[dict]:
 
 
 def _under_repo(value: str) -> Path:
-    """Manifest paths are repo-root-relative (the benchmark's `_repo_relative`)."""
+    """Config-declared paths are repo-root-relative unless absolute."""
     p = Path(value)
     return p if p.is_absolute() else REPO_ROOT / p
 
 
-def config_path(run_id: str, root: Path | str = DEFAULT_OUTPUTS_ROOT) -> Path | None:
-    """The config that produced `run_id`, or None if it cannot be reached.
+class MissingConfigError(MissingArtifactError):
+    """No config under `CONFIGS_DIR` declares the run id."""
 
-    Note the run id is **not** the config stem in general: the `-mesh-grafted`
-    runs record the non-grafted config they were produced against, which is why
-    this reads the manifest rather than guessing `configs/<run_id>.yaml`.
+
+def _run_id_of(body) -> str | None:
+    """A config's `run_id`: top level, or under `benchmark:` (the flat shape)."""
+    if not isinstance(body, dict):
+        return None
+    rid = body.get("run_id")
+    if rid is None and isinstance(body.get("benchmark"), dict):
+        rid = body["benchmark"].get("run_id")
+    return None if rid is None else str(rid)
+
+
+def _config_index(configs_dir: str) -> tuple[dict[str, tuple[str, ...]], tuple[str, ...]]:
+    """`({run_id: config paths}, unparsable paths)` over `configs_dir/*.yaml`.
+
+    Memoized on the files and their mtimes, as `_groups` is. `groups/` is a
+    subdirectory, so the flat glob never reaches it; `template.yaml` is skipped
+    by name.
     """
-    try:
-        run = resolve_run(run_id, root)
-    except (MissingArtifactError, OSError):
-        return None
-    return run_config_path(run)
+    files = sorted(f for f in Path(configs_dir).glob("*.yaml") if f.name != "template.yaml")
+    return _parse_config_index(tuple((str(f), f.stat().st_mtime_ns) for f in files))
 
 
-def run_config_path(run) -> Path | None:
-    """`config_path` for a run already resolved: its `target_space.json`'s `config`.
+@lru_cache(maxsize=None)
+def _parse_config_index(
+    files: tuple[tuple[str, int], ...],
+) -> tuple[dict[str, tuple[str, ...]], tuple[str, ...]]:
+    index: dict[str, list[str]] = {}
+    broken: list[str] = []
+    for name, _ in files:
+        try:
+            body = yaml.safe_load(Path(name).read_text())
+        except (yaml.YAMLError, OSError):
+            # One half-edited config must not break every other run's lookup;
+            # it is named in the error only if the lookup comes up empty.
+            broken.append(name)
+            continue
+        rid = _run_id_of(body)
+        if rid is not None:
+            index.setdefault(rid, []).append(name)
+    return {k: tuple(v) for k, v in index.items()}, tuple(broken)
 
-    Split out for `answer_space`, which holds a `RunPaths` and must read the
-    config of *that* run -- resolving the id again against a default root could
-    find a different tree.
+
+def config_path(run_id: str, root: Path | str = DEFAULT_OUTPUTS_ROOT) -> Path:
+    """The config under `CONFIGS_DIR` whose `run_id` is `run_id`.
+
+    Found by the key, not by guessing `configs/<run_id>.yaml`: the file name is
+    a convention, the `run_id` is what the benchmark ran under. Raises
+    `MissingConfigError` when no config declares it -- every value this module
+    serves (labels, normalizers, the PNI list, figure methods) would otherwise
+    fall back silently, and a figure in km with run-id labels looks finished.
+    Raises when two configs declare it, rather than picking one.
+
+    `root` is unused and kept so every caller's signature stays the same: the
+    outputs tree no longer takes part in finding a config.
     """
-    if not run.target_space_json.exists():
-        return None
-    try:
-        recorded = json.loads(run.target_space_json.read_text()).get("config")
-    except (json.JSONDecodeError, OSError):
-        return None
-    if not recorded:
-        return None
-    p = _under_repo(recorded)
-    return p if p.exists() else None
+    del root
+    return find_config(run_id, CONFIGS_DIR)
+
+
+def find_config(run_id: str, configs_dir: Path | str) -> Path:
+    """`config_path` against an explicit directory. Same errors."""
+    index, broken = _config_index(str(configs_dir))
+    hits = index.get(str(run_id), ())
+    if len(hits) > 1:
+        raise MissingConfigError(
+            f"{run_id}: several configs declare this run_id: {list(hits)}. Keep one."
+        )
+    if not hits:
+        hint = f" Unparsable configs skipped: {list(broken)}." if broken else ""
+        raise MissingConfigError(
+            f"{run_id}: no config under {configs_dir} declares `run_id: {run_id}`. "
+            f"Restore the config the run was produced with.{hint}"
+        )
+    return Path(hits[0])
+
+
+def run_config_path(run) -> Path:
+    """`config_path` for a run already resolved. Same lookup, keyed on its id."""
+    return config_path(run.run_id)
 
 
 @lru_cache(maxsize=None)
 def dataset_label(run_id: str, root: Path | str = DEFAULT_OUTPUTS_ROOT) -> str:
     """The run's declared `analysis.common.dataset_label`, else the run id.
+
+    Raises `MissingConfigError` for a run with no config at all.
 
     Memoized: a pooled figure asks for the same handful of run ids once per
     panel, per CSV row group and again for the manifest, and each miss is a
@@ -215,10 +270,10 @@ def dataset_label(run_id: str, root: Path | str = DEFAULT_OUTPUTS_ROOT) -> str:
 def declared(run_id: str, key_path: tuple[str, ...], root: Path | str = DEFAULT_OUTPUTS_ROOT):
     """The scalar at `key_path` in the run's config or its groups, or None.
 
-    None for every break in the chain: no config, an unparsable one, a missing
-    key, or a non-scalar value. A non-scalar would be carried into a filename
-    or a CSV column, so it is refused the same way an absent one is. Raises
-    only when two sources declare different values.
+    None for a missing key or a non-scalar value. A non-scalar would be
+    carried into a filename or a CSV column, so it is refused the same way an
+    absent one is. Raises when the run has no config (`MissingConfigError`) and
+    when two sources declare different values.
     """
     node = _node(run_id, key_path, root)
     if node is None or isinstance(node, (dict, list)):
@@ -235,15 +290,10 @@ def _walk(node, key_path: tuple[str, ...]):
 
 
 def _run_node(run_id: str, key_path: tuple[str, ...], root: Path | str = DEFAULT_OUTPUTS_ROOT):
-    """The raw value at `key_path` in the run's own config, or None if any link breaks."""
+    """The raw value at `key_path` in the run's own config, or None if the key
+    is absent. A run with no config raises (`config_path`)."""
     path = config_path(run_id, root)
-    if path is None:
-        return None
-    try:
-        node = yaml.safe_load(path.read_text())
-    except (yaml.YAMLError, OSError):
-        return None
-    return _walk(node, key_path)
+    return _walk(yaml.safe_load(path.read_text()), key_path)
 
 
 def _node(run_id: str, key_path: tuple[str, ...], root: Path | str = DEFAULT_OUTPUTS_ROOT):

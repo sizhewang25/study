@@ -10,6 +10,22 @@ Scope: the answer space, classify, the answer-space map, the outcome bars,
 the outcome map, the error-distance CDF, the VP-proximity violins, the MTL
 case viewer and the LTD fit viewer.
 
+## What v5 reads
+
+Three things, and nothing written by the benchmark's `eval-source` or
+`materialize-target-space`:
+
+| what | where | for |
+|---|---|---|
+| run outputs | `outputs/benchmark/v2/<run>/<source>/<setup>/<fold>/<combo>/` | every method's predictions (`targets.parquet`), `run.json` |
+| materialized inputs | `inputs/benchmark/v2/<source>/<run>/<setup>/<fold>/` | the VP roster (`vp_configs.parquet`) and the S-P baseline (`eval_observations.parquet`, `bench_inputs.py`); `--inputs-root` moves it |
+| the run's config | the `configs/*.yaml` declaring `run_id: <run>` | labels, normalizers, `pni_csv`, figure methods, the edge CSV |
+
+S-P is the min-RTT VP over the observations each fold was scored on -- after
+the source's eval filters (`min_obs`, the traffic-weighted flow mask) and the
+runner's `pair_weight_min` -- not over the raw CSV. A run no config declares
+raises `MissingConfigError`; it used to fall back to run-id labels and km.
+
 ## Glossary
 
 Every name in v5 follows this table. `answer_space.GLOSSARY` writes it into
@@ -504,8 +520,8 @@ Two routes, tried in order, and **both are load-bearing**:
 
 1. `inputs/benchmark/v2/<source>/<run>/<setup>/<fold>/fit_samples.parquet` — the
    exact artifact the runner consumed. The three meshes have this, all five folds.
-2. The dataset CSV (via `edges.resolve_source_csv`, off the run's own
-   `eval_source/`) filtered by its pinned `.stratification.json`: the fit set is
+2. The dataset CSV (via `edges.resolve_source_csv`, the CSV the run's config
+   names) filtered by its pinned `.stratification.json`: the fit set is
    every row whose TG is in one of the other K−1 folds. `as01-260728-260802` has
    only this. A weighted arm has neither — no file holds its pruned flows — and
    `MeshSupersetError` degrades that to a per-fold skip carrying its own hint.
@@ -537,7 +553,8 @@ its own sweep script, `create_ltd_modeling_html.sh`, for the reason
 rather than once per method, because the per-method failure isolation is already
 inside `build_for_run` and a run's methods share one per-fold scatter cache.
 
-**`build-bipartite-graph`** reads the VP roster (`vps.csv`) and the run's
+**`build-bipartite-graph`** reads the VP roster (the materialized
+`vp_configs.parquet`, unioned over folds) and the run's
 canonical edge CSV, and writes §7.3's dataset geometry against the answer
 space's grid: edge density and connected components over `|VP| x |TG|`,
 nearest-VP distance and edge length each as an **observed** (measured edges)

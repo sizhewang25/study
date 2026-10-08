@@ -902,7 +902,7 @@ def replay_mtl(
 # ---- run inputs -------------------------------------------------------------
 
 
-# `vps.csv` lives with the bipartite graph, the other reader of the VP roster.
+# The VP roster loader lives with the bipartite graph, its other reader.
 from scripts.analysis.v5.modules.bipartite import load_vps  # noqa: E402
 
 
@@ -924,34 +924,23 @@ def load_rung(run: RunPaths, nside: int, *, analysis_root: Path | None = None) -
     return space
 
 
-#: Two fields of context, both plain columns of `eval_per_target.csv`.
-_CONTEXT_COLUMNS = {"shortest_ping_vp_id": "sping_vp_id", "min_inflation": "min_inflation"}
-
-
-def eval_context(run: RunPaths) -> pd.DataFrame:
+def eval_context(run: RunPaths, inputs_root: Path | None = None) -> pd.DataFrame:
     """`tg_id, sping_vp_id, min_inflation`, or an empty frame.
 
-    Absent `eval_source/` is not an error: the map's own layers are all built
-    from the benchmark tree and the answer space, and these two are context. A
-    run without them renders with both fields null rather than failing.
+    From `bench_inputs.shortest_ping`, the same reduction the S-P page is
+    scored from. Absent inputs are not an error: the map's own layers are all
+    built from the benchmark tree and the answer space, and these two are
+    context. A run without them renders with both fields null rather than
+    failing.
     """
-    empty = pd.DataFrame(columns=["tg_id", *_CONTEXT_COLUMNS.values()])
+    from scripts.analysis.v5.modules.bench_inputs import shortest_ping
+
+    empty = pd.DataFrame(columns=["tg_id", "sping_vp_id", "min_inflation"])
     try:
-        raw = pd.read_csv(run.eval_file("eval_per_target.csv"))
+        sp = shortest_ping(run, inputs_root)
     except (MissingArtifactError, FileNotFoundError):
         return empty
-    have = [c for c in _CONTEXT_COLUMNS if c in raw.columns]
-    if "target_id" not in raw.columns or not have:
-        return empty
-    out = raw[["target_id", *have]].drop_duplicates("target_id")
-    out = out.rename(columns={"target_id": "tg_id", **_CONTEXT_COLUMNS})
-    # Both columns, always. `build_payload` indexes each by name on any frame
-    # this returns, so a CSV carrying one of the two would raise a KeyError
-    # rather than degrade to the null field this is supposed to give it.
-    for col in _CONTEXT_COLUMNS.values():
-        if col not in out.columns:
-            out[col] = None
-    return out[["tg_id", *_CONTEXT_COLUMNS.values()]]
+    return sp.drop_duplicates("tg_id")[["tg_id", "sping_vp_id", "min_inflation"]].reset_index(drop=True)
 
 
 def _load_edges(run: RunPaths, *, progress: Any = None) -> pd.DataFrame:
@@ -1335,6 +1324,7 @@ def build_for_run(
     nside: int = G.DEFAULT_NSIDE,
     extent: tuple[float, float, float, float] = CELL_FRAME,
     analysis_root: Path | None = None,
+    inputs_root: Path | None = None,
     regions: bool = True,
     workers: int = 1,
     progress: Any = None,
@@ -1348,9 +1338,9 @@ def build_for_run(
     """
     nside = G.validate_nside(nside)
     space = load_rung(run, nside, analysis_root=analysis_root)
-    vps = load_vps(run)
+    vps = load_vps(run, inputs_root)
     edge_table = _load_edges(run, progress=progress)
-    context = eval_context(run)
+    context = eval_context(run, inputs_root)
 
     polygons, frame = fit_extent(space.seeds, extent, progress=progress)
     # Simplify FIRST, then measure: the number the page prints has to describe
@@ -1381,7 +1371,9 @@ def build_for_run(
                     f"{run.setup_dir} holds no combo with a targets.parquet; "
                     f"the Shortest-Ping control has no roster to be scored over"
                 )
-            frame_df = C.load_shortest_ping_frame(run, C.load_method_frame(run, combos[0]))
+            frame_df = C.load_shortest_ping_frame(
+                run, C.load_method_frame(run, combos[0]), inputs_root=inputs_root
+            )
         else:
             frame_df = C.load_method_frame(run, method, columns=NESTED_COLUMNS)
         scored = C.score_method(frame_df, space)

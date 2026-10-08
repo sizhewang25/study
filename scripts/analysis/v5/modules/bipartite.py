@@ -393,16 +393,15 @@ def _node_block(
 # ---- inputs -----------------------------------------------------------------
 
 
-def load_vps(run: RunPaths) -> pd.DataFrame:
-    """`vps.csv` -- the run's vantage points, shared across every fold."""
-    path = run.setup_dir / "vps.csv"
-    if not path.exists():
-        raise MissingArtifactError(f"{path} missing; cannot draw the VP side")
-    vps = pd.read_csv(path)
-    missing = {"vp_id", "vp_lat", "vp_lon"} - set(vps.columns)
-    if missing:
-        raise ValueError(f"{path} is missing {sorted(missing)}")
-    return vps
+def load_vps(run: RunPaths, inputs_root: Path | None = None) -> pd.DataFrame:
+    """The run's vantage points, shared across every fold.
+
+    Read off the benchmark's materialized inputs (`bench_inputs.load_vps`:
+    every fold's `vp_configs.parquet`, unioned).
+    """
+    from scripts.analysis.v5.modules.bench_inputs import load_vps as _load
+
+    return _load(run, inputs_root)
 
 
 def load_edges(csv_path: Path) -> tuple[pd.DataFrame, int]:
@@ -536,7 +535,7 @@ def build_bipartite(
     """Compute §7.3's geometry over one run's bipartite graph.
 
     The node sets are pinned to the run's own inputs rather than inferred from
-    the edge list: VPs are `vps.csv`'s roster and TGs are the answer space's
+    the edge list: VPs are the materialized roster (`load_vps`) and TGs are the answer space's
     `tgs`. Edges naming anything outside those are dropped and counted, which is
     what makes `edge_density` read against `|VP roster| x |answer-space TGs|`
     instead of against whatever the CSV happened to contain.
@@ -556,7 +555,7 @@ def build_bipartite(
     edges = edges.loc[known_vp & known_tg].reset_index(drop=True)
     if edges.empty:
         raise ValueError(
-            "no edge survives the join against vps.csv and the answer space; "
+            "no edge survives the join against the VP roster and the answer space; "
             "the CSV and the run do not describe the same graph"
         )
 
@@ -792,6 +791,7 @@ def build_for_run(
     nside: int = G.DEFAULT_NSIDE,
     analysis_root: Path | None = None,
     source_csv: Path | None = None,
+    inputs_root: Path | None = None,
 ) -> tuple[BipartiteGraph, Path]:
     """`build_bipartite` for one run at one rung, written. Returns `(graph, dir)`."""
     space = load_rung(run, nside, analysis_root=analysis_root)
@@ -799,7 +799,7 @@ def build_for_run(
     edges, n_obs = load_edges(csv_path)
     graph = build_bipartite(
         space,
-        load_vps(run),
+        load_vps(run, inputs_root),
         edges,
         n_obs=n_obs,
         source_label=f"{run.run_id}/{run.source}/{run.setup}",

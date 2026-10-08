@@ -18,37 +18,25 @@ import yaml
 from scripts.analysis.v5.modules import cross, labels
 
 
-def _run_tree(tmp_path, run_id, *, label=None, config_name=None, manifest=True):
+def _run_tree(tmp_path, run_id, *, label=None, config_name=None):
     """A run directory v5 can resolve, optionally with a config declaring a label.
 
     Mirrors the real layout: `<root>/<run>/<source>/<setup>/fold_*` is what
-    `discover_runs` looks for, and `target_space.json` sits beside the folds.
+    `discover_runs` looks for. The config is found by the `run_id` it declares
+    under `configs/` (here `tmp_path/configs/`, see conftest), not by its name.
     """
     root = tmp_path / "outputs"
     setup = root / run_id / "generic_csv" / "anchors_to_probes"
     (setup / "fold_0").mkdir(parents=True, exist_ok=True)
 
-    if manifest:
-        body = {"run_id": run_id, "source": "generic_csv"}
-        if config_name is not None:
-            cfg = tmp_path / "configs" / config_name
-            cfg.parent.mkdir(parents=True, exist_ok=True)
-            if label is not None:
-                cfg.write_text(yaml.safe_dump(
-                    {"run_id": run_id, "analysis": {"common": {"dataset_label": label}}}
-                ))
-            body["config"] = str(cfg)
-        (setup / "target_space.json").write_text(json.dumps(body))
+    if config_name is not None:
+        cfg = tmp_path / "configs" / config_name
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        body = {"run_id": run_id}
+        if label is not None:
+            body["analysis"] = {"common": {"dataset_label": label}}
+        cfg.write_text(yaml.safe_dump(body))
     return root
-
-
-@pytest.fixture(autouse=True)
-def _clear_label_cache():
-    """`dataset_label` is memoized on (run_id, root); tmp_path makes the root
-    unique per test, but the cache still grows across them."""
-    labels.dataset_label.cache_clear()
-    yield
-    labels.dataset_label.cache_clear()
 
 
 class TestTheDeclaredLabelWins:
@@ -79,44 +67,63 @@ class TestTheDeclaredLabelWins:
 
 
 class TestTheFallbackIsTheRunId:
-    """Never raises, and never guesses. A run id is always a correct label."""
+    """A config that declares no label reads as the run id -- always correct."""
+
+    def test_a_config_declaring_no_label(self, tmp_path):
+        root = _run_tree(tmp_path, "r1", config_name="r1.yaml")
+        (tmp_path / "configs" / "r1.yaml").write_text(
+            yaml.safe_dump({"run_id": "r1", "analysis": {"common": {"grid": "h3"}}}))
+        assert cross.short_dataset("r1", outputs_root=root) == "r1"
+
+    def test_the_config_is_found_by_run_id_not_file_name(self, tmp_path):
+        root = _run_tree(tmp_path, "r1", label="as01", config_name="something-else.yaml")
+        assert cross.short_dataset("r1", outputs_root=root) == "as01"
+
+    def test_a_non_scalar_label_is_refused(self, tmp_path):
+        """It would be carried into a CSV column and a caption."""
+        root = _run_tree(tmp_path, "r1", config_name="r1.yaml")
+        (tmp_path / "configs" / "r1.yaml").write_text(yaml.safe_dump(
+            {"run_id": "r1", "analysis": {"common": {"dataset_label": ["as01", "as02"]}}}))
+        assert cross.short_dataset("r1", outputs_root=root) == "r1"
+
+
+@pytest.mark.strict_configs
+class TestNoConfigRaises:
+    """A run no config declares is an error, not a run-id label: the same
+    break would also drop its normalizers and its figure's methods."""
 
     def test_an_unknown_run(self, tmp_path):
         root = _run_tree(tmp_path, "other", label="x", config_name="other.yaml")
-        assert cross.short_dataset("nope", outputs_root=root) == "nope"
-
-    def test_a_run_with_no_manifest(self, tmp_path):
-        root = _run_tree(tmp_path, "as7018_us_test01", manifest=False)
-        assert cross.short_dataset(
-            "as7018_us_test01", outputs_root=root) == "as7018_us_test01"
-
-    def test_a_manifest_with_no_config_key(self, tmp_path):
-        root = _run_tree(tmp_path, "r1", config_name=None)
-        assert cross.short_dataset("r1", outputs_root=root) == "r1"
+        with pytest.raises(labels.MissingConfigError, match="nope"):
+            cross.short_dataset("nope", outputs_root=root)
 
     def test_a_config_that_has_been_deleted(self, tmp_path):
         """`as01-materialization-test` is this case on the real tree."""
         root = _run_tree(tmp_path, "r1", label="as01", config_name="gone.yaml")
         (tmp_path / "configs" / "gone.yaml").unlink()
-        assert cross.short_dataset("r1", outputs_root=root) == "r1"
+        with pytest.raises(labels.MissingConfigError, match="r1"):
+            cross.short_dataset("r1", outputs_root=root)
 
-    def test_a_config_declaring_no_label(self, tmp_path):
-        root = _run_tree(tmp_path, "r1", label=None, config_name="r1.yaml")
-        (tmp_path / "configs" / "r1.yaml").write_text(
-            yaml.safe_dump({"run_id": "r1", "analysis": {"common": {"grid": "h3"}}}))
-        assert cross.short_dataset("r1", outputs_root=root) == "r1"
+    def test_a_config_that_is_not_valid_yaml_is_named(self, tmp_path):
+        d = tmp_path / "configs"
+        d.mkdir()
+        (d / "r1.yaml").write_text("{ this: is: not: yaml")
+        with pytest.raises(labels.MissingConfigError, match="Unparsable"):
+            labels.find_config("r1", d)
 
-    def test_a_config_that_is_not_valid_yaml(self, tmp_path):
-        root = _run_tree(tmp_path, "r1", label="as01", config_name="r1.yaml")
-        (tmp_path / "configs" / "r1.yaml").write_text("{ this: is: not: yaml")
-        assert cross.short_dataset("r1", outputs_root=root) == "r1"
+    def test_two_configs_declaring_one_run_id(self, tmp_path):
+        _run_tree(tmp_path, "r1", label="a", config_name="one.yaml")
+        _run_tree(tmp_path, "r1", label="b", config_name="two.yaml")
+        with pytest.raises(labels.MissingConfigError, match="several configs"):
+            labels.find_config("r1", tmp_path / "configs")
 
-    def test_a_non_scalar_label_is_refused(self, tmp_path):
-        """It would be carried into a CSV column and a caption."""
-        root = _run_tree(tmp_path, "r1", label=None, config_name="r1.yaml")
-        (tmp_path / "configs" / "r1.yaml").write_text(yaml.safe_dump(
-            {"analysis": {"common": {"dataset_label": ["as01", "as02"]}}}))
-        assert cross.short_dataset("r1", outputs_root=root) == "r1"
+    def test_template_and_groups_are_not_configs(self, tmp_path):
+        d = tmp_path / "configs"
+        (d / "groups").mkdir(parents=True)
+        (d / "template.yaml").write_text(yaml.safe_dump({"run_id": "r1"}))
+        (d / "groups" / "r1.yaml").write_text(yaml.safe_dump({"run_id": "r1"}))
+        with pytest.raises(labels.MissingConfigError):
+            labels.find_config("r1", d)
 
 
 class TestTheSlugStaysReadable:
@@ -198,7 +205,7 @@ class TestGuardDistinctLabels:
     def test_the_run_id_fallback_never_trips_it(self, tmp_path):
         """Two runs with no declared label fall back to run ids, which are
         distinct by construction -- so the fallback is safe to pool."""
-        root = _run_tree(tmp_path, "r1", manifest=False)
-        _run_tree(tmp_path, "r2", manifest=False)
+        root = _run_tree(tmp_path, "r1", config_name="r1.yaml")
+        _run_tree(tmp_path, "r2", config_name="r2.yaml")
         got = cross.labels_for(["r1", "r2"], outputs_root=root)
         assert cross.guard_distinct_labels(got) == {"r1": "r1", "r2": "r2"}

@@ -39,6 +39,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from scripts.analysis.v5.modules import bench_inputs
 from scripts.analysis.v5.modules import figure_sp_interconnect as F
 from scripts.analysis.v5.modules import pni_gap as P
 from scripts.analysis.v5.modules import sites as S
@@ -231,11 +232,11 @@ def _fit_distance(run: RunPaths, inputs_root: Path) -> tuple[str, str | None]:
     """`(distance mode, interconnect_csv_path)` the run's LTDs were fit with.
 
     Read off the per-fold inputs manifests, the record of what was actually
-    materialized, rather than the config: v5 reaches a config only through
-    `target_space.json`, and a run without one must not read as air distance.
+    materialized, rather than the config: the config says what was asked for,
+    the manifest what the folds were actually fit with.
     Manifests written before the `distance` key existed are air distance.
     """
-    manifests = sorted((inputs_root / run.source / run.run_id / run.setup).glob("*/manifest.json"))
+    manifests = sorted(bench_inputs.setup_dir(run, inputs_root).glob("*/manifest.json"))
     if not manifests:
         raise MissingArtifactError(
             f"{run.run_id}: no materialized inputs under {inputs_root}; "

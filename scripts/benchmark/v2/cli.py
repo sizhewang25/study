@@ -635,28 +635,11 @@ def cmd_label_geo_for_targets(
 
 # ---- materialize-target-space (answer-space materialization) ----------------------
 
-def _resolve_bench_config(path: Path) -> dict:
-    """Flatten a benchmark config: `benchmark:` wins key by key over the top level.
-
-    Both accepted shapes -- unified (`configs/<run_id>.yaml`) and flat
-    (`scripts/benchmark/v2/config/*.yaml`) -- collapse to one dict, exactly as
-    `Snakefile`'s `bcfg` resolves them. Duplicated rather than imported because
-    a Snakefile is not a module; `test_cli.py` pins the two against each other
-    so a config that drives a run keeps driving the target space identically.
-    """
-    import yaml
-
-    cfg = yaml.safe_load(Path(path).read_text()) or {}
-    if not isinstance(cfg, dict):
-        raise TypeError(f"{path}: top level must be a mapping, got {type(cfg).__name__}")
-    bench = cfg.get("benchmark") or {}
-    if not isinstance(bench, dict):
-        raise TypeError(
-            f"{path}: `benchmark:` must be a mapping, got {type(bench).__name__}"
-        )
-    merged = {k: v for k, v in cfg.items() if k != "benchmark"}
-    merged.update(bench)
-    return merged
+# Pure readers, shared with scripts.analysis.v5; kept under their old names.
+from scripts.benchmark.v2.config_io import (  # noqa: E402
+    edge_csv_from_kwargs as _edge_csv_from_kwargs,
+    resolve_bench_config as _resolve_bench_config,
+)
 
 
 def _source_kwargs_from_config(cfg: dict, source_cls) -> dict:
@@ -685,28 +668,6 @@ def _source_kwargs_from_config(cfg: dict, source_cls) -> dict:
             )
         kwargs[flag] = value
     return kwargs
-
-
-def _edge_csv_from_kwargs(kwargs: dict) -> tuple[Optional[Path], bool]:
-    """`(path, is_mesh_superset)` for the CSV holding this run's edge set.
-
-    For `traffic_weighted_csv` in precomputed mode that is `weighted_csv_path`:
-    the pruned flows *are* the graph the run evaluates. On-the-fly mode has no
-    such file, so the mesh comes back with the flag set -- it is a strict
-    superset of the evaluated edges, and `build-bipartite-graph` reading it
-    would report the mesh's density as the weighted arm's.
-    """
-    weighted = kwargs.get("weighted_csv_path")
-    if weighted:
-        return Path(weighted), False
-    mesh = kwargs.get("mesh_csv_path") or kwargs.get("csv_path")
-    if not mesh:
-        return None, False
-    superset = (
-        kwargs.get("eval_kept_traffic_fraction") is not None
-        or kwargs.get("eval_pair_weight_min") is not None
-    )
-    return Path(mesh), superset
 
 
 def _node_sets_from_config(source_cls, setup: str, slices: list, kwargs: dict):

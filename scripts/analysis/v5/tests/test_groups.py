@@ -31,11 +31,12 @@ def _group(tmp_path, body: dict, name: str = "g") -> str:
 
 
 @pytest.fixture
-def configs(tmp_path, monkeypatch):
-    """`run-a` has RUN_CONFIG; `run-b` has no config at all."""
-    cfg = tmp_path / "run-a.yaml"
-    cfg.write_text(yaml.safe_dump(RUN_CONFIG))
-    monkeypatch.setattr(L, "config_path", lambda run_id, root=None: cfg if run_id == "run-a" else None)
+def configs(tmp_path):
+    """`run-a` has RUN_CONFIG; `run-b` has a config with no `analysis:` block."""
+    d = tmp_path / "configs"
+    d.mkdir()
+    (d / "run-a.yaml").write_text(yaml.safe_dump({"run_id": "run-a", **RUN_CONFIG}))
+    (d / "run-b.yaml").write_text(yaml.safe_dump({"run_id": "run-b"}))
     return tmp_path
 
 
