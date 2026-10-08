@@ -1,6 +1,6 @@
 # Paper Numbers Reader — Report
 
-**Status**: In Progress (§4 reader built; report awaiting review)
+**Status**: In Progress (all sections built as data tables; awaiting user review)
 **Created**: 2026-10-07
 **Last Updated**: 2026-10-07
 
@@ -40,6 +40,24 @@ entry carries its artifact source and proposed format. The §4 reader is built (
 - E.14, E.15, E.17, E.25 and E.26 report the data behind a qualitative sentence.
 - `pni_gap` manifest now keeps ρ and the cluster stats at 6 dp; they were 3 dp, the source
   of the double rounding.
+
+### 2026-10-07: every section, as data tables
+
+- `report-paper --group pro-paper [-s 3 -s 4 ...]` (all sections by default) writes
+  `paper_numbers.s{3,4,5,6,7,A-B}.{md,json}` and the combined `paper_numbers.md` into
+  `_cross/paper/pro-paper/`. `create_paper_artifacts.sh` runs it last.
+- Tables per section:
+  - §3: datasets, folds, bounds
+  - §4: percentile table, VP distances (+ thresholds), clusters, cluster RTT
+  - §5: overall bars, Table x-cell, x-cell RTT (+ exceptions), S-P by side, Table
+    cell-correct-sites, upset (+ cohorts), bounded bars (+ per network), the three
+    SPO-vs-OCT-H panels, peripheral cells, Table seen-unseen (+ pixels, per network,
+    has-X / no-X)
+  - §6: cost boxes, phases, batch budget
+  - §7: Table sota, per network, frontier
+  - Appendices: HEALPix levels, appendix B accuracy / has-X / drop / runtime
+- No × ratios and no sentence templates. Differences in pp appear only where a paper
+  table has a Δ column, or as the lead over S-P and the best–worst spread in §7.
 
 ## Conclusions
 

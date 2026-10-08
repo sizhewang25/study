@@ -69,6 +69,16 @@ def pct(value: float, *, sign: bool = True) -> str:
     return out + ("%" if sign else "")
 
 
+def frac(value: float, *, sign: bool = True) -> str:
+    """A share given as a fraction (0.735), printed as `pct` (74%)."""
+    return pct(100 * value, sign=sign) if defined(value) else UNDEFINED
+
+
+def frac1(value: float, *, sign: bool = True) -> str:
+    """A fraction printed to one decimal percent (0.0016 -> 0.2%)."""
+    return pct1(100 * value, sign=sign) if defined(value) else UNDEFINED
+
+
 def pct1(value: float, *, sign: bool = True) -> str:
     """One decimal percent, for a share the paper states below 1% (0.1%)."""
     if not defined(value):

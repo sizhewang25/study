@@ -47,6 +47,14 @@ Appendix C (traffic-filtered).
 
 
 
+## Revision (2026-10-07, user)
+
+The reader reports **data, not sentences**: one table per paper figure or table (plus the
+datasets and bounds), holding the absolute values and percentages behind it (percentiles,
+medians, accuracies, shares, counts for inspection). It reports no relative ratios (×) and
+tracks no sentence of the text, since the text keeps changing. The per-statistic inventory
+below is kept as a reference for what each table must cover.
+
 ## Goals
 
 1. **This step:** an agreed list of every statistic the paper quotes, in section order

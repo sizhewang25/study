@@ -193,6 +193,13 @@ section "appendix"
 # flipped sites, displacement, drop difference, EST runtime ratio).
 grun report-variant-delta
 
+# ---- the data behind every section, as the paper writes it -------------------------
+section "data report"
+# One table per paper figure / table, every value formatted once from its
+# unrounded artifact (paper_numbers.s<N>.md and paper_numbers.md under
+# _cross/paper/<group>/). Reads only what the sections above built.
+grun report-paper
+
 # ---- the paper's figures --------------------------------------------------------------------
 # paper name -> artifact under the analysis root. The one place the mapping lives.
 # The pooled directories' names, as `--group` names them (pro-paper.seen, pro-paper).

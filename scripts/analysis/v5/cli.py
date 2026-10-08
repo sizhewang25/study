@@ -1976,17 +1976,34 @@ def report_bounds_cmd(
         raise typer.Exit(1)
 
 
+#: `--section` -> reader module under scripts/analysis/v5/paper/, in paper order.
+_PAPER_SECTIONS = {
+    "3": "s3_methodology",
+    "4": "s4_error_distance",
+    "5": "s5_region_classification",
+    "6": "s6_overhead",
+    "7": "s7_comprehensive",
+    "A-B": "sB_appendix",
+}
+_PAPER_ALIASES = {"A": "A-B", "B": "A-B", "appendix": "A-B"}
+
+
 @app.command("report-paper")
 def report_paper_cmd(
-    section: str = typer.Option(..., "--section", "-s", help="Paper section to report (4)."),
+    section: list[str] = typer.Option(
+        None, "--section", "-s",
+        help=f"Paper section(s) to report, repeatable: {', '.join(_PAPER_SECTIONS)}. Default: all.",
+    ),
     analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 wrote the artifacts."),
 ) -> None:
-    """Every statistic one paper section quotes, formatted the way the paper writes it.
+    """The data behind each paper section's figures and tables, formatted as the paper writes it.
 
-    Reads only artifacts already built under the group (run with --group; see
-    create_paper_artifacts.sh) and formats each value once, from its unrounded
-    form (scripts/analysis/v5/paper/fmt.py). Needs nothing from the paper itself.
-    Writes `paper_numbers.s<N>.{md,json}` into `_cross/paper/<group>/`.
+    One table per paper figure or table: the absolute values and percentages it
+    draws or prints, each cell formatted once from its unrounded artifact value
+    (scripts/analysis/v5/paper/fmt.py). Reads only artifacts already built under
+    the group (run with --group; see create_paper_artifacts.sh) and nothing from
+    the paper itself. Writes `paper_numbers.s<N>.{md,json}` per section into
+    `_cross/paper/<group>/`, and `paper_numbers.md` with every section reported.
     """
     import importlib
 
@@ -1997,23 +2014,29 @@ def report_paper_cmd(
     group = cross.active_group()
     if group is None:
         raise typer.BadParameter("report-paper reads a group's artifacts; run it with --group <id>")
-    module = _PAPER_SECTIONS.get(section)
-    if module is None:
-        raise typer.BadParameter(f"no reader for section {section!r}; have {sorted(_PAPER_SECTIONS)}")
-    mod = importlib.import_module(f"scripts.analysis.v5.paper.{module}")
-    try:
-        claims, tables, sources = mod.build(core.Context(group=group, analysis_root=analysis_root))
-    except MissingArtifactError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    md = core.render(mod.SECTION, mod.TITLE, claims, tables, group_id=group["group_id"], sources=sources)
+    wanted = [_PAPER_ALIASES.get(s, s) for s in (section or _PAPER_SECTIONS)]
+    unknown = [s for s in wanted if s not in _PAPER_SECTIONS]
+    if unknown:
+        raise typer.BadParameter(f"no reader for section(s) {unknown}; have {list(_PAPER_SECTIONS)}")
     out_dir = cross.cross_dir(group_members(group), analysis_root=analysis_root, kind=core.KIND)
-    for path in core.write(out_dir, mod.SECTION, md, claims, tables).values():
-        typer.echo(f"wrote {path}")
-    typer.echo(f"§{mod.SECTION}: {len(claims)} statistics, {len(tables)} table(s)")
+    ctx = core.Context(group=group, analysis_root=analysis_root)
+    reports = []
+    for s in dict.fromkeys(wanted):
+        mod = importlib.import_module(f"scripts.analysis.v5.paper.{_PAPER_SECTIONS[s]}")
+        try:
+            tables, sources = mod.build(ctx)
+        except MissingArtifactError as exc:
+            raise typer.BadParameter(f"§{s}: {exc}") from exc
+        md = core.render(mod.SECTION, mod.TITLE, tables, group_id=group["group_id"], sources=sources)
+        reports.append(md)
+        for path in core.write(out_dir, mod.SECTION, md, tables).values():
+            typer.echo(f"wrote {path}")
+        typer.echo(f"§{mod.SECTION}: {len(tables)} table(s)")
+    if len(reports) > 1:
+        (out_dir / "paper_numbers.md").write_text("\n\n".join(reports))
+        typer.echo(f"wrote {out_dir / 'paper_numbers.md'}")
 
 
-#: `--section` -> reader module under scripts/analysis/v5/paper/.
-_PAPER_SECTIONS = {"4": "s4_error_distance"}
 
 
 @app.command("report-dataset")

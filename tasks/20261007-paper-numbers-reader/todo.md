@@ -16,15 +16,15 @@
 - [x] `report-paper --group <id> [--section N]` command; `.md` + `.json` output under `_cross/paper/<group>/`
 - [x] ~~Optional `--check` against the `.tex`~~ dropped: the reader must not depend on the paper project
 
-## Phase 2: Section readers (one at a time, user reviews each report)
-- [x] §4 pilot (awaiting user review of the report)
-- [ ] §3, Intro
-- [ ] §5
-- [ ] §6, §7
-- [ ] Appendices
+## Phase 2: Section readers (data tables per figure / table; no ratios, no sentences)
+- [x] §4 (rebuilt as data tables)
+- [x] §3 (Intro is a recap: nothing of its own)
+- [x] §5
+- [x] §6, §7
+- [x] Appendices A, B
 - [ ] Missing artifact: R.42 (SPO-only peripheral / >2 px share)
 
 ## Phase 3: Verification
-- [ ] Tests: formatter rules, a few pinned claims per section
-- [ ] Run against the real tree for every section
+- [x] Tests: formatter rules, pinned rows per section
+- [x] Run against the real tree for every section
 - [ ] Document in the v5 README and the paper-commands note
