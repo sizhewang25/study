@@ -165,7 +165,7 @@ def test_the_figure_carries_no_title(run, monkeypatch):
     assert title == "" and sup is None
 
 
-def test_the_boxes_read_top_down_in_drawn_order(run, monkeypatch):
+def test_the_boxes_read_left_to_right_in_drawn_order(run, monkeypatch):
     import matplotlib.pyplot as plt
 
     captured = {}
@@ -177,13 +177,11 @@ def test_the_boxes_read_top_down_in_drawn_order(run, monkeypatch):
     table, _ = F.normalise(CT.contest_table(data))
     F.render(data, table, run.root / "order.png")
     ax = captured["fig"].axes[0]
-    labels = [t.get_text() for t in ax.get_yticklabels()]
-    inverted = ax.get_ylim()[0] > ax.get_ylim()[1]
+    labels = [t.get_text() for t in ax.get_xticklabels()]
     real_close(captured["fig"])
 
     names = F.category_names("alpha", "beta")
     assert labels == [names[c] for c in F.DRAWN]
-    assert inverted, "position 1 is the bottom in matplotlib; the axis is flipped"
 
 
 def test_build_writes_the_triple(run, monkeypatch):
@@ -212,9 +210,9 @@ def test_build_writes_the_triple(run, monkeypatch):
 
 
 def test_the_axis_label_fits_inside_the_figure(run, monkeypatch):
-    """The figure is saved at a fixed canvas and `tight_layout` fits the
-    x-label's height but not its width, so a long one runs off both sides and
-    is clipped without complaint. It happened: 4.6 in lost the final `s`."""
+    """`tight_layout` fits the rotated y-label's width but not its height, so a
+    long one runs past the top and bottom of the canvas. (The x-label of the
+    horizontal layout did it at 4.6 in: it lost the final `s`.)"""
     import matplotlib.pyplot as plt
 
     captured = {}
@@ -227,13 +225,13 @@ def test_the_axis_label_fits_inside_the_figure(run, monkeypatch):
     F.render(data, table, run.root / "fit.png")
     fig = captured["fig"]
     fig.canvas.draw()
-    label = fig.axes[0].xaxis.get_label().get_window_extent(
+    label = fig.axes[0].yaxis.get_label().get_window_extent(
         renderer=fig.canvas.get_renderer()
     )
     canvas = fig.get_window_extent()
     real_close(fig)
 
-    assert label.x0 >= canvas.x0 and label.x1 <= canvas.x1, (
-        f"the x-label spans {label.x0:.0f}..{label.x1:.0f} px on a canvas of "
-        f"{canvas.x0:.0f}..{canvas.x1:.0f}; widen _FIG_W or shorten _XLABEL"
+    assert label.y0 >= canvas.y0 and label.y1 <= canvas.y1, (
+        f"the y-label spans {label.y0:.0f}..{label.y1:.0f} px on a canvas of "
+        f"{canvas.y0:.0f}..{canvas.y1:.0f}; raise _FIG_H or shorten _YLABEL"
     )

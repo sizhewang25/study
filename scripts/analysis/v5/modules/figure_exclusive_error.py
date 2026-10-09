@@ -84,10 +84,11 @@ PNG_NAME = "exclusive_error_cdf.{pair}.png"
 CSV_NAME = "exclusive_error_cdf.{pair}.csv"
 MANIFEST_NAME = "exclusive_error_cdf.{pair}.manifest.json"
 
-#: Printed at its own size as one of three panels in a row (~1/3 of the text
-#: width) beside the peripherality and stability figures.
-_FIG_W = 1.9
-_FIG_H = 1.75
+#: Printed at its own size as one of three equal, short panels in a
+#: two-column row (~1/3 of the text width) beside the peripherality and
+#: stability figures.
+_FIG_W = 2.3
+_FIG_H = 1.4
 
 _SURFACE = "#ffffff"
 _INK = "#0b0b0b"
@@ -95,9 +96,9 @@ _GRID = "#e1e0d9"
 _AXIS = "#c3c2b7"
 
 _CDF_PT = 1.1
-_LABEL_PT = 6.0
-_TICK_PT = 5.5
-_LEGEND_PT = 5.0
+_LABEL_PT = 6.5
+_TICK_PT = 6.0
+_LEGEND_PT = 5.5
 
 #: `symlog`'s linear window. One grid, so the zeros are drawn at zero rather
 #: than pushed off a log axis or quietly dropped.
@@ -307,7 +308,7 @@ def render(
 
     fig.tight_layout()
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=dpi, facecolor=_SURFACE)
+    fig.savefig(out_png, dpi=dpi, facecolor=_SURFACE, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     return out_png
 

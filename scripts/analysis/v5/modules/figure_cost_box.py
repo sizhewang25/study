@@ -157,8 +157,10 @@ OVERLAY_LABELS: dict[str, str] = {
 RUNTIME_AXIS_LABEL = "Runtime (ms)"
 MEMORY_AXIS_LABEL = "Peak memory (MB)"
 
-#: Short and wide: one text-width row, like the has-X / no-X RTT boxes.
-FIGSIZE: tuple[float, float] = (5.45, 1.5)
+#: One paper column, drawn at its printed width so the text prints at its
+#: stated size; every piece of text is bold, and the key wraps to two rows.
+FIGSIZE: tuple[float, float] = (3.4, 1.7)
+LEGEND_NCOL = 2
 
 CSV_COLUMNS: tuple[str, ...] = (
     "run_id", "dataset", "rows", "method", "method_label", "overlay_on",
@@ -394,8 +396,9 @@ def plot_boxes(
     Slots run cheapest first (`cost_order`). A row whose `overlay_on` names a
     host is drawn on that host's slot as a dashed, unfilled frame. No title:
     the dataset and TG count are in the manifest, and the paper captions it.
-    The key sits on one row above the plot, clear of every box.
+    The key sits above the plot, clear of every box.
     """
+    import matplotlib.text as mpl_text
     from matplotlib.patches import Patch
 
     pipe = table[table["stage"] == C.PIPELINE]
@@ -472,12 +475,15 @@ def plot_boxes(
     ]
     # One row above the plot: on a short panel an inside key covers OCT-H's top.
     legend = ax_mem.legend(
-        handles=handles, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=len(handles),
+        handles=handles, loc="lower center", bbox_to_anchor=(0.5, 1.0),
+        ncol=min(len(handles), LEGEND_NCOL),
         fontsize=E._LEGEND_PT, frameon=False, handlelength=1.4, columnspacing=1.6,
         borderaxespad=0.2,
     )
     for text in legend.get_texts():
         text.set_color(E._INK_2)
+    for text in fig.findobj(mpl_text.Text):
+        text.set_fontweight("bold")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight", facecolor=E._SURFACE)
     plt.close(fig)

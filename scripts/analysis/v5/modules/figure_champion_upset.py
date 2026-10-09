@@ -367,6 +367,7 @@ def plot_upset(
     min_share: float | None = None,
     wspace: float = 0.20,
     pct_decimals: int = 1,
+    bold: bool = False,
 ) -> Path:
     """Intersection bars over a dot matrix, set-size bars to its left.
 
@@ -377,7 +378,8 @@ def plot_upset(
     figure). `min_share` lumps every exact combination below that share of
     the TGs into one last column with no dots, labelled with how many
     combinations it holds; the set-size bars still count every TG.
-    `pct_decimals` sets the precision of every bar label.
+    `pct_decimals` sets the precision of every bar label. `bold` sets every
+    piece of text bold, for a figure printed smaller than it is drawn.
     """
     import matplotlib as mpl
 
@@ -508,6 +510,10 @@ def plot_upset(
     if subtitle:
         fig.text(0.5, 0.925, subtitle, ha="center", va="bottom", fontsize=E._SUBTITLE_PT,
                  color=E._INK_2)
+
+    if bold:
+        for text in fig.findobj(mpl.text.Text):
+            text.set_fontweight("bold")
 
     with mpl.rc_context({"hatch.color": E._INK_2, "hatch.linewidth": 0.6}):
         out_path.parent.mkdir(parents=True, exist_ok=True)

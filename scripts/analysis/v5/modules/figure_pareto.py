@@ -122,9 +122,9 @@ NAMES = {
     "manifest": "pareto.manifest.json",
 }
 
-#: One panel per file, short and wide: two of them side by side fill the text
-#: width (2 x 2.7 in), so the four print as a 2x2 grid.
-PANEL_FIGSIZE = (2.7, 1.45)
+#: One panel per file, drawn at about its printed size: the four print in one
+#: row across the text width (~1.7 in each), so the text prints as stated.
+PANEL_FIGSIZE = (1.85, 1.5)
 _LABEL_PT = 6.5
 _TICK_PT = 6.0
 _TEXT_PT = 6.0

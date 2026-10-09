@@ -87,6 +87,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.ticker import MultipleLocator  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
@@ -136,10 +137,11 @@ MANIFEST_NAME = "paired_{figure}.{pair}.manifest.json"
 #: Sized for a paper column. `test_the_axis_labels_fit` measures the labels
 #: against this canvas: the figure is saved at a fixed size, so a label that
 #: overruns is silently clipped rather than shrinking the axes.
-#: Printed at its own size as one of three panels in a row (~1/3 of the text
-#: width) beside the exclusive-error and peripherality figures.
-_FIG_W = 1.6
-_FIG_H = 1.75
+#: Printed at its own size as one of three equal, short panels in a
+#: two-column row (~1/3 of the text width) beside the exclusive-error and
+#: peripherality figures.
+_FIG_W = 2.3
+_FIG_H = 1.4
 
 #: The ratio figure is not in the paper's row and keeps its standalone size:
 #: its x-label does not fit the row's narrow canvas.
@@ -169,8 +171,8 @@ _CDF_PT = 1.1
 _BOX_W = 0.45
 _EDGE_PT = 0.6
 _MEDIAN_PT = 1.1
-_LABEL_PT = 6.0
-_TICK_PT = 5.5
+_LABEL_PT = 6.5
+_TICK_PT = 6.0
 
 #: Axis labels, in the wording the paper uses. Title case, unlike the repo's
 #: other figures -- these are the strings the section was written against.
@@ -178,7 +180,7 @@ _TICK_PT = 5.5
 #: and the manifest states it outright.
 _RATIO_LABEL = "Fraction of Correct Predictions per Cell"
 _RATIO_Y_LABEL = "Fraction of Cells"
-_SPREAD_LABEL = "Std. dev. of pixel distance\nacross a site's replicas"
+_SPREAD_LABEL = "Replica std. dev.\n(pixel distance)"
 
 
 def output_dir(run_ids: list[str], *, analysis_root: Path | None = None) -> Path:
@@ -401,6 +403,9 @@ def draw_spread(ax, series: list, inks: list[str]) -> None:
         box.set_edgecolor(_INK_2)
         box.set_linewidth(_EDGE_PT)
     ax.set_ylim(bottom=0.0)
+    # A tick per pixel: the spread is in pixels, and the reader compares the
+    # boxes against whole steps.
+    ax.yaxis.set_major_locator(MultipleLocator(1.0))
     ax.set_ylabel(_SPREAD_LABEL, fontsize=_LABEL_PT, color=_INK)
 
 
@@ -448,7 +453,7 @@ def render(
 
     fig.tight_layout()
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=dpi, facecolor=_SURFACE)
+    fig.savefig(out_png, dpi=dpi, facecolor=_SURFACE, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     return out_png
 

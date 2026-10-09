@@ -113,17 +113,16 @@ PNG_NAME = "peripherality.{pair}.png"
 CSV_NAME = "peripherality.{pair}.csv"
 MANIFEST_NAME = "peripherality.{pair}.manifest.json"
 
-#: Sized for a paper column, following `figure_outcome_bars`: two boxes need
-#: no more height than this, and a taller figure is white space above and
-#: below them.
+#: Printed at its own size as one of three equal, short panels in a
+#: two-column row, beside the exclusive-error and stability figures. The boxes
+#: stand vertically, so the category names sit under them as x ticks and the
+#: distance runs up the short side.
 #:
-#: The width is set by the x-label, not by the boxes. `tight_layout` fits the
-#: label's *height* and lets a long one run off both sides, and the figure is
-#: saved at a fixed canvas, so it is silently clipped -- 4.6 in lost the last
-#: character. `test_the_axis_label_fits` measures it rather than trusting this
-#: number, so shortening or lengthening the label fails loudly.
-_FIG_W = 1.9
-_FIG_H = 1.75
+#: The height is set by the y-label, not by the boxes: rotated, a long one
+#: runs past the canvas and is clipped. `test_the_axis_label_fits` measures
+#: it rather than trusting this number, so lengthening the label fails loudly.
+_FIG_W = 2.3
+_FIG_H = 1.4
 
 _SURFACE = "#ffffff"
 _INK = "#0b0b0b"
@@ -131,20 +130,20 @@ _INK_2 = "#52514e"
 _GRID = "#e1e0d9"
 _AXIS = "#c3c2b7"
 
-_BOX_H = 0.55
+_BOX_W = 0.45
 _BOX_EDGE_PT = 0.6
 _MEDIAN_PT = 1.1
 _WHISKER_PT = 0.6
-_LABEL_PT = 6.0
-_TICK_PT = 5.5
+_LABEL_PT = 6.5
+_TICK_PT = 6.0
 
 #: Outliers as small open circles in the method's own hue: they are sites, not
 #: errors, and on a sample of twenty they are worth seeing individually.
 _FLIER_SIZE = 2.0
 
-#: The figure's only text. The repo's axis labels are sentence case.
-#: Two lines: the panel is printed at a third of the text width.
-_XLABEL = "Distance from the TG's seed to\nthe seeds' centroid (normalized)"
+#: The figure's only text. The repo's axis labels are sentence case. Short
+#: enough to run up a 1.4 in axis; the caption says what the distance is.
+_YLABEL = "Dist. to centroid\n(normalized)"
 
 
 def output_dir(run_ids: list[str], *, analysis_root: Path | None = None) -> Path:
@@ -253,7 +252,7 @@ def render(
     fig_size: tuple[float, float] = (_FIG_W, _FIG_H),
     dpi: int = 300,
 ) -> Path:
-    """Two horizontal boxes on one normalised axis. No title -- the paper's
+    """Two vertical boxes on one normalised axis. No title -- the paper's
     caption names the figure, as `figure_outcome_bars` settled."""
     ink = category_ink(data.method_a, data.method_b)
     names = category_names(data.method_a, data.method_b)
@@ -263,10 +262,9 @@ def render(
     fig.patch.set_facecolor(_SURFACE)
     ax.set_facecolor(_SURFACE)
 
-    # Position 1 is the bottom in matplotlib, and `DRAWN` reads top-down, so
-    # the axis is inverted rather than the data reordered.
+    # `DRAWN` reads left to right.
     bp = ax.boxplot(
-        series, vert=False, widths=_BOX_H, patch_artist=True, showfliers=True,
+        series, widths=_BOX_W, patch_artist=True, showfliers=True,
         medianprops={"color": _SURFACE, "linewidth": _MEDIAN_PT},
         whiskerprops={"color": _INK_2, "linewidth": _WHISKER_PT},
         capprops={"color": _INK_2, "linewidth": _WHISKER_PT},
@@ -280,13 +278,12 @@ def render(
             markeredgecolor=ink[category], markeredgewidth=0.6, linestyle="none",
         )
 
-    ax.set_yticks(range(1, len(DRAWN) + 1), [names[c] for c in DRAWN])
-    ax.invert_yaxis()
-    ax.set_xlim(-0.03, 1.03)
-    ax.set_xticks(np.linspace(0.0, 1.0, 5))
-    ax.set_xlabel(_XLABEL, fontsize=_LABEL_PT, color=_INK)
+    ax.set_xticks(range(1, len(DRAWN) + 1), [names[c] for c in DRAWN])
+    ax.set_ylim(-0.03, 1.03)
+    ax.set_yticks(np.linspace(0.0, 1.0, 5))
+    ax.set_ylabel(_YLABEL, fontsize=_LABEL_PT, color=_INK)
     ax.tick_params(labelsize=_TICK_PT, colors=_INK, length=2, width=0.6)
-    ax.xaxis.grid(True, color=_GRID, linewidth=0.5)
+    ax.yaxis.grid(True, color=_GRID, linewidth=0.5)
     ax.set_axisbelow(True)
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
@@ -296,7 +293,7 @@ def render(
 
     fig.tight_layout()
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=dpi, facecolor=_SURFACE)
+    fig.savefig(out_png, dpi=dpi, facecolor=_SURFACE, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     return out_png
 

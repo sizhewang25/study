@@ -174,6 +174,11 @@ _AXIS = "#c3c2b7"
 #: Bar thickness as a share of the slot. Narrower than v4's 0.62 to leave room
 #: on the right of each bar for its rail and the group totals beside it.
 _BAR_FRAC = 0.50
+#: At column width a slot is under half an inch, so the bars take more of it
+#: -- a segment label ("42%") is as wide as its bar -- and the rail sits closer
+#: to its bar, so the rail's rotated totals still clear the next bar.
+COLUMN_BAR_FRAC = 0.58
+COLUMN_RAIL_GAP = 0.05
 _PANEL_W = 4.0
 
 #: Figure height, in inches. Sized for a paper's full-width band rather than a
@@ -181,22 +186,16 @@ _PANEL_W = 4.0
 #: extra height was white space above and below the panels.
 _FIG_H = 4.0
 
-#: The pooled layout's size, in inches: one panel the full canvas wide and
-#: short, so it prints as a single fat band across the page (the paper's
-#: classification figure). The per-dataset layout keeps `_PANEL_W` x `_FIG_H`.
-POOLED_PANEL_W = 8.0
-POOLED_FIG_H = 2.4
-
-#: The pooled `bounded` panel is taller: its segments are thinner (four tiers
-#: per bar, not one) and their labels stacked on each other at `POOLED_FIG_H`.
-POOLED_FIG_H_BOUNDED = 3.4
-
-#: The pooled `unbounded` panel prints in one column of a two-column paper, so
-#: it is drawn at that width (no `_MIN_FIG_W` floor: its legend is one row of
-#: three) and at 300 dpi, with the text in `COLUMN_FONTS`. Taller than a
-#: band, since a column has the height to spare.
-POOLED_UNBOUNDED_PANEL_W = 3.4
-POOLED_UNBOUNDED_FIG_H = 1.9
+#: The pooled layout prints in one column of a two-column paper, so it is
+#: drawn at that width (no `_MIN_FIG_W` floor) and at 300 dpi, with the text in
+#: `COLUMN_FONTS`; the per-dataset layout keeps `_PANEL_W` x `_FIG_H`. Taller
+#: than a band, since a column has the height to spare. `bounded` is taller
+#: again (four tiers per bar, three key rows) and wraps its five-entry tier key
+#: at `COLUMN_LEGEND_NCOL`.
+POOLED_PANEL_W = 3.4
+POOLED_FIG_H = 1.9
+POOLED_FIG_H_BOUNDED = 2.7
+COLUMN_LEGEND_NCOL = 3
 
 #: Text sizes (pt): segment and rail labels, panel title, tick labels, y-axis
 #: name, legend. `FONTS` is for the 8 in canvases; `COLUMN_FONTS` for a panel
@@ -604,6 +603,8 @@ def _contrast_ink(face: str) -> str:
 
 def _draw_bar(
     ax, x: float, row: pd.Series, nd: int, mode: str = BOUNDED, label_pt: float = FONTS["label"],
+    bar_frac: float = _BAR_FRAC,
+    rail_gap: float = _RAIL_GAP,
 ) -> None:
     """One method's stack: per cell-label group, its ring-tier sub-segments,
     white separators between them, the group border; every sub-segment
@@ -612,7 +613,7 @@ def _draw_bar(
     In `unbounded` each group is a single segment and there is no rail: the
     bar already *is* the cell-label breakdown, so a rail would repeat it."""
     validate_mode(mode)
-    half = _BAR_FRAC / 2
+    half = bar_frac / 2
     groups: list[tuple[str, float, float]] = []
     bottom = 0.0
     by_group: dict[str, list[tuple[str | None, str | None]]] = {}
@@ -627,7 +628,7 @@ def _draw_bar(
             face = segment_ink(tier, lab, mode)
             if v > 0:
                 ax.bar(
-                    x, v, bottom=bottom, width=_BAR_FRAC,
+                    x, v, bottom=bottom, width=bar_frac,
                     facecolor=face,
                     hatch=CELL_HATCH[lab] if lab else "",
                     # The hatch takes the edge colour; linewidth 0 keeps the
@@ -647,7 +648,7 @@ def _draw_bar(
         height = bottom - group_bottom
         if height > 0:
             ax.bar(
-                x, height, bottom=group_bottom, width=_BAR_FRAC,
+                x, height, bottom=group_bottom, width=bar_frac,
                 facecolor="none", edgecolor=GROUP_EDGE, linewidth=GROUP_EDGE_PT, zorder=4,
             )
         for seg_bottom, v, face in drawn:
@@ -660,7 +661,7 @@ def _draw_bar(
         if group != UNANSWERED:
             groups.append((group, group_bottom, height))
     if mode == BOUNDED:
-        _draw_rail(ax, x, groups, nd, label_pt)
+        _draw_rail(ax, x, groups, nd, label_pt, bar_frac, rail_gap)
 
 
 def _spread(ys: list[float], gap: float) -> list[float]:
@@ -685,6 +686,8 @@ def _spread(ys: list[float], gap: float) -> list[float]:
 
 def _draw_rail(
     ax, x: float, groups: list[tuple[str, float, float]], nd: int, label_pt: float = FONTS["label"],
+    bar_frac: float = _BAR_FRAC,
+    rail_gap: float = _RAIL_GAP,
 ) -> None:
     """One rail segment per cell-label group: white, the group's stripe, a
     border; the group's total beside it.
@@ -692,7 +695,7 @@ def _draw_rail(
     "No answer" has no rail: it has no ring breakdown, so its in-bar label
     already is its total.
     """
-    rail_x = x + _BAR_FRAC / 2 + _RAIL_GAP + _RAIL_W / 2
+    rail_x = x + bar_frac / 2 + rail_gap + _RAIL_W / 2
     shown = [(g, b, h) for g, b, h in groups if h > 0]
     for group, bottom, height in shown:
         trim = min(_RAIL_SEG_GAP / 2, height / 4)
@@ -767,13 +770,18 @@ def render(
     min_fig_w: float = _MIN_FIG_W,
     fonts: dict[str, float] | None = None,
     trim: bool = False,
+    legend_ncol: int | None = None,
+    bar_frac: float = _BAR_FRAC,
+    rail_gap: float = _RAIL_GAP,
 ) -> Path:
     """One panel per dataset, one bar per method, each panel ranked by itself.
 
     `panel_w` and `fig_h` (inches) size the panels and the canvas, and
     `min_fig_w` floors the canvas width; `fonts` overrides `FONTS` key by key.
     `trim` crops the saved PNG to its ink, for a panel placed at column width
-    where every margin is page space. The pooled layout passes its sizes
+    where every margin is page space. `legend_ncol` wraps each key at that many
+    entries and stacks the keys by their drawn heights. `bar_frac` is the
+    bar's share of its slot and `rail_gap` the rail's offset from its bar. The pooled layout passes its sizes
     (`build_for_runs`)."""
     import matplotlib
 
@@ -799,7 +807,7 @@ def render(
             ax.set_facecolor(_SURFACE)
             xs = np.arange(len(ranked))
             for x, m in zip(xs, ranked):
-                _draw_bar(ax, x, sub.loc[m], nd, mode, pt["label"])
+                _draw_bar(ax, x, sub.loc[m], nd, mode, pt["label"], bar_frac, rail_gap)
 
             n = int(sub["n_tgs"].iloc[0]) if len(sub) else 0
             name = panel_name(ds)
@@ -834,14 +842,32 @@ def render(
         # in inches: one row per legend row, each anchored by its top, so the
         # rows keep their spacing whatever the panels below them do.
         tiers, cells = _legend_handles(mode)
-        legends = [
-            fig.legend(
-                handles=h, loc="upper center", ncol=len(h), frameon=False, fontsize=pt["legend"],
-                bbox_to_anchor=(0.5, 1 - (_LEGEND_TOP_IN + k * _LEGEND_ROW_IN) / fig_h),
-                labelcolor=_INK_2, **({"handleheight": 1.2} if h is cells else {}),
+        rows = [h for h in (tiers, cells) if h]
+
+        def _key(h, top_frac: float, ncol: int, **kw):
+            return fig.legend(
+                handles=h, loc="upper center", ncol=ncol, frameon=False, fontsize=pt["legend"],
+                bbox_to_anchor=(0.5, top_frac),
+                labelcolor=_INK_2, **({"handleheight": 1.2} if h is cells else {}), **kw,
             )
-            for k, h in enumerate(h for h in (tiers, cells) if h)
-        ]
+
+        if legend_ncol is None:
+            legends = [
+                _key(h, 1 - (_LEGEND_TOP_IN + k * _LEGEND_ROW_IN) / fig_h, len(h))
+                for k, h in enumerate(rows)
+            ]
+        else:
+            # A wrapped key is more than one row tall, so each key is seated
+            # under the drawn bottom of the one above, not at a fixed pitch.
+            # No pads: stacked, each key's inner and outer pad add to the gap
+            # between them, which is `_LEGEND_GAP_IN` alone.
+            legends, top_frac = [], 1 - _LEGEND_TOP_IN / fig_h
+            for h in rows:
+                legends.append(_key(h, top_frac, min(len(h), legend_ncol),
+                                    borderaxespad=0.0, borderpad=0.0))
+                fig.canvas.draw()
+                bottom_px = legends[-1].get_window_extent(renderer=fig.canvas.get_renderer()).y0
+                top_frac = bottom_px / (fig.get_figheight() * fig.dpi) - _LEGEND_GAP_IN / fig_h
         def _measure() -> tuple[float, float]:
             """`(lowest legend bottom, highest panel-title top)` as figure
             fractions -- drawn extents, not the nominal row pitch. A legend row
@@ -1040,12 +1066,13 @@ def build_for_runs(
                 gap_table(table).to_csv(out_dir / gaps_name(names["csv"]), index=False)
                 if layout != POOLED:
                     size = {}
-                elif mode == BOUNDED:
-                    size = {"panel_w": POOLED_PANEL_W, "fig_h": POOLED_FIG_H_BOUNDED}
                 else:
                     size = {
-                        "panel_w": POOLED_UNBOUNDED_PANEL_W, "fig_h": POOLED_UNBOUNDED_FIG_H,
+                        "panel_w": POOLED_PANEL_W,
+                        "fig_h": POOLED_FIG_H_BOUNDED if mode == BOUNDED else POOLED_FIG_H,
                         "min_fig_w": 0.0, "fonts": COLUMN_FONTS, "dpi": 300, "trim": True,
+                        "legend_ncol": COLUMN_LEGEND_NCOL, "bar_frac": COLUMN_BAR_FRAC,
+                        "rail_gap": COLUMN_RAIL_GAP,
                     }
                 png = render(table, nside, out_dir, png_name=names["png"], mode=mode, **size)
                 per_run = (

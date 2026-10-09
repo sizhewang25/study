@@ -378,7 +378,7 @@ def _write(mask, sites, origin, out_dir: Path, layout: str, *, run_ids, metric, 
     U.plot_upset(
         mask, written["png"], title=None, subtitle=None, figsize=FIGSIZE,
         set_label=METRICS[metric][1], min_share=MIN_SHARE, wspace=WSPACE,
-        pct_decimals=PCT_DECIMALS,
+        pct_decimals=PCT_DECIMALS, bold=True,
     )
     written["manifest"].write_text(_manifest(
         layout, names=names, mask=mask, sets=sets, run_ids=run_ids, origin=origin,
