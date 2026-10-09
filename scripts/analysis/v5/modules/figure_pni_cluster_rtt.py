@@ -98,11 +98,11 @@ QUANTITY = "min RTT (ms)"
 #: The y-axis label when the RTTs are normalized by the declared `rtt_norm_ms`.
 QUANTITY_NORM = "normalized min RTT"
 
-#: A small figure, printed at its own size as one of three panels in a row
-#: beside the VP-distance CDF and the interconnect scatter (~1/3 of the text
-#: width). Width is fixed rather than grown with k; the tick labels are the
-#: cluster names alone.
-FIGSIZE = (1.4, 1.75)
+#: A small figure, printed at its own size as one of three equal, short panels
+#: in a two-column row beside the VP-distance CDF and the interconnect scatter
+#: (~1/3 of the text width). Width is fixed rather than grown with k; the tick
+#: labels are the cluster names alone.
+FIGSIZE = (2.3, 1.4)
 
 #: y tick spacing, in ms.
 Y_STEP_MS = 10.0
@@ -313,11 +313,11 @@ def plot(
         flier.set(marker="o", markersize=OUTLIER_MS_PT, markerfacecolor="none",
                   markeredgecolor=hue, markeredgewidth=0.5, linestyle="none")
     # Cluster names only: the counts are on the scatter, which shares the clusters.
-    ax.set_xticks(range(1, len(clusters) + 1), [cluster_label(c) for c in clusters], fontsize=5.5)
-    ax.set_ylabel(QUANTITY if rtt_norm_ms is None else QUANTITY_NORM, fontsize=6)
+    ax.set_xticks(range(1, len(clusters) + 1), [cluster_label(c) for c in clusters], fontsize=6.0)
+    ax.set_ylabel(QUANTITY if rtt_norm_ms is None else QUANTITY_NORM, fontsize=6.5)
     ax.set_ylim(bottom=0)
     ax.yaxis.set_major_locator(MultipleLocator(Y_STEP_MS if rtt_norm_ms is None else Y_STEP_NORM))
-    ax.tick_params(axis="both", labelsize=5.5, length=2, pad=1.5)
+    ax.tick_params(axis="both", labelsize=6.0, length=2, pad=1.5)
     ax.grid(axis="y", alpha=0.25, lw=0.3)
     for spine in ("top", "right"):
         ax.spines[spine].set_visible(False)
@@ -330,7 +330,7 @@ def plot(
     for i, (_, r) in enumerate(stats.iterrows(), start=1):
         median = scale(r["p50_ms"])
         ax.text(i + 0.3, max(median, floor), f"{median:.1f}" if rtt_norm_ms is None else f"{median:.2f}",
-                fontsize=5.5, va="center", color=INK_2)
+                fontsize=6.0, va="center", color=INK_2)
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=300, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)

@@ -76,9 +76,10 @@ PNG_NAME_NORM = "pni_gap_scatter.norm.png"
 NORM_LINTHRESH = 10.0
 
 #: Panel styles. `PANEL_PAPER` is the normalized panel, printed at its own
-#: size as one of three in a row; marker areas scale by `marker`.
+#: size as one of three equal, short panels in a two-column row; marker areas
+#: scale by `marker`.
 PANEL_KM = {"figsize": (5.3, 3.8), "label": 8.0, "tick": 7.5, "legend": 6.5, "marker": 1.0}
-PANEL_PAPER = {"figsize": (2.4, 1.8), "label": 6.0, "tick": 5.5, "legend": 5.0, "marker": 0.35}
+PANEL_PAPER = {"figsize": (2.3, 1.4), "label": 6.5, "tick": 6.0, "legend": 5.5, "marker": 0.35}
 
 #: Axis-name suffix on a normalized axis.
 NORM_AXIS_UNIT = r"Normalized Dist. $\times 10^{-3}$"
@@ -208,12 +209,17 @@ def plot(
     # "Interconnect", not "PNI": the lists hold private interconnects *and*
     # settlement-free peering locations. Code keeps the `pni_*` names.
     # X is the paper's symbol for the interconnect.
-    # The unit on a second line on the paper panel, which is too narrow for one.
-    sep = " " if bounds is None else "\n"
-    ax.set_xlabel(r"$d(\mathrm{TG},\ \mathrm{nearest}\ X)$" + sep + "(" + unit + ")",
-                  fontsize=st["label"])
-    ax.set_ylabel(r"$\Delta_\mathrm{VP} = d_\mathrm{sp}-d_\mathrm{geo}$" + sep + "(" + unit + ")",
-                  fontsize=st["label"])
+    # The paper panel is short, so each axis name is one line: the bare scale
+    # for a unit (the caption says the distances are normalized) and the
+    # symbol alone on y (the text defines it).
+    if bounds is None:
+        x_name = r"$d(\mathrm{TG},\ \mathrm{nearest}\ X)$ (" + unit + ")"
+        y_name = r"$\Delta_\mathrm{VP} = d_\mathrm{sp}-d_\mathrm{geo}$ (" + unit + ")"
+    else:
+        x_name = r"$d(\mathrm{TG},\ \mathrm{nearest}\ X)$ ($\times 10^{-3}$)"
+        y_name = r"$\Delta_\mathrm{VP}$ ($\times 10^{-3}$)"
+    ax.set_xlabel(x_name, fontsize=st["label"])
+    ax.set_ylabel(y_name, fontsize=st["label"])
     ax.tick_params(labelsize=st["tick"], length=3 * st["tick"] / 7.5)
     ax.tick_params(which="minor", length=1.8 * st["tick"] / 7.5)
     ax.grid(alpha=0.25, lw=0.4)
@@ -236,7 +242,7 @@ def plot(
 
     fig.tight_layout(pad=0.4)
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=300, bbox_inches="tight")
+    fig.savefig(out_png, dpi=300, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     return out_png
 

@@ -113,12 +113,13 @@ def artifact_names(normalized: bool = False) -> tuple[str, str, str]:
 
 
 #: Panel styles. `km` is the standalone panel; `paper` is the normalized one,
-#: sized to print at its own size as one of three panels in a row (~1/3 of
-#: the text width), with the legend upper left, where no curve runs.
+#: sized to print at its own size as one of three equal panels in a two-column
+#: row (~1/3 of the text width, kept short), with the legend upper left, where
+#: no curve runs.
 STYLES: dict[str, dict] = {
     "km": {"figsize": (4.6, 2.5), "label": 8.0, "tick": 7.5, "legend": 7.0, "note": 7.0,
            "lw": 1.4, "ms": 3.5, "legend_loc": "lower right", "handle": 1.8},
-    "paper": {"figsize": (2.1, 1.75), "label": 6.0, "tick": 5.5, "legend": 5.0, "note": 5.0,
+    "paper": {"figsize": (2.3, 1.4), "label": 6.5, "tick": 6.0, "legend": 5.5, "note": 5.5,
               "lw": 1.0, "ms": 2.5, "legend_loc": "upper left", "handle": 1.4},
 }
 
@@ -337,7 +338,7 @@ def plot(pop: pd.DataFrame, *, meta: dict, out_png: Path, normalized: bool = Fal
 
     fig.tight_layout(pad=0.4)
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=300, bbox_inches="tight")
+    fig.savefig(out_png, dpi=300, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     return out_png
 
