@@ -191,6 +191,19 @@ POOLED_FIG_H = 2.4
 #: per bar, not one) and their labels stacked on each other at `POOLED_FIG_H`.
 POOLED_FIG_H_BOUNDED = 3.4
 
+#: The pooled `unbounded` panel prints in one column of a two-column paper, so
+#: it is drawn at that width (no `_MIN_FIG_W` floor: its legend is one row of
+#: three) and at 300 dpi, with the text in `COLUMN_FONTS`. Taller than a
+#: band, since a column has the height to spare.
+POOLED_UNBOUNDED_PANEL_W = 3.4
+POOLED_UNBOUNDED_FIG_H = 1.9
+
+#: Text sizes (pt): segment and rail labels, panel title, tick labels, y-axis
+#: name, legend. `FONTS` is for the 8 in canvases; `COLUMN_FONTS` for a panel
+#: printed at column width, where the canvas sizes would crowd the bars.
+FONTS = {"label": 7.5, "title": 11.0, "tick": 9.0, "ylabel": 11.0, "legend": 9.0}
+COLUMN_FONTS = {"label": 6.5, "title": 8.0, "tick": 7.0, "ylabel": 7.5, "legend": 7.0}
+
 #: Panel tags for the per-dataset layout, so the prose can cite "(a)". Drawn
 #: only when there is more than one panel -- a lone panel has nothing to cite
 #: against.
@@ -589,7 +602,9 @@ def _contrast_ink(face: str) -> str:
     return "#ffffff" if 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.55 else _INK
 
 
-def _draw_bar(ax, x: float, row: pd.Series, nd: int, mode: str = BOUNDED) -> None:
+def _draw_bar(
+    ax, x: float, row: pd.Series, nd: int, mode: str = BOUNDED, label_pt: float = FONTS["label"],
+) -> None:
     """One method's stack: per cell-label group, its ring-tier sub-segments,
     white separators between them, the group border; every sub-segment
     labelled. Then the rail to its right.
@@ -639,13 +654,13 @@ def _draw_bar(ax, x: float, row: pd.Series, nd: int, mode: str = BOUNDED) -> Non
             if v >= _LABEL_FLOOR:
                 ax.text(
                     x, seg_bottom + v / 2, f"{round(v, nd) * 100:.0f}%",
-                    ha="center", va="center", fontsize=7.5, color=_contrast_ink(face), zorder=5,
+                    ha="center", va="center", fontsize=label_pt, color=_contrast_ink(face), zorder=5,
                     bbox=dict(boxstyle="square,pad=0.12", facecolor=face, edgecolor="none"),
                 )
         if group != UNANSWERED:
             groups.append((group, group_bottom, height))
     if mode == BOUNDED:
-        _draw_rail(ax, x, groups, nd)
+        _draw_rail(ax, x, groups, nd, label_pt)
 
 
 def _spread(ys: list[float], gap: float) -> list[float]:
@@ -668,7 +683,9 @@ def _spread(ys: list[float], gap: float) -> list[float]:
     return out
 
 
-def _draw_rail(ax, x: float, groups: list[tuple[str, float, float]], nd: int) -> None:
+def _draw_rail(
+    ax, x: float, groups: list[tuple[str, float, float]], nd: int, label_pt: float = FONTS["label"],
+) -> None:
     """One rail segment per cell-label group: white, the group's stripe, a
     border; the group's total beside it.
 
@@ -684,10 +701,12 @@ def _draw_rail(ax, x: float, groups: list[tuple[str, float, float]], nd: int) ->
             facecolor=_SURFACE, hatch=CELL_HATCH[group],
             edgecolor=_RAIL_HATCH_INK, linewidth=0.8, zorder=3,
         )
-    rail_labels(ax, rail_x, [(b, h) for _, b, h in shown], nd)
+    rail_labels(ax, rail_x, [(b, h) for _, b, h in shown], nd, label_pt)
 
 
-def rail_labels(ax, rail_x: float, spans: list[tuple[float, float]], nd: int) -> None:
+def rail_labels(
+    ax, rail_x: float, spans: list[tuple[float, float]], nd: int, label_pt: float = FONTS["label"],
+) -> None:
     """Each span's total beside the rail, set **vertically** to save width.
 
     `spans` are `(bottom, height)` in stack order. Rotated 90 degrees, a label
@@ -700,7 +719,7 @@ def rail_labels(ax, rail_x: float, spans: list[tuple[float, float]], nd: int) ->
         ax.text(
             rail_x + _RAIL_W / 2 + _RAIL_TEXT_PAD, y, f"{round(height, nd) * 100:.0f}%",
             ha="center", va="top", rotation=90, rotation_mode="anchor",
-            fontsize=7.5, fontweight="bold", color=_INK, zorder=5,
+            fontsize=label_pt, fontweight="bold", color=_INK, zorder=5,
         )
 
 
@@ -745,11 +764,17 @@ def render(
     dpi: int = 150,
     panel_w: float = _PANEL_W,
     fig_h: float = _FIG_H,
+    min_fig_w: float = _MIN_FIG_W,
+    fonts: dict[str, float] | None = None,
+    trim: bool = False,
 ) -> Path:
     """One panel per dataset, one bar per method, each panel ranked by itself.
 
-    `panel_w` and `fig_h` (inches) size the panels and the canvas; the pooled
-    layout passes `POOLED_PANEL_W` x `POOLED_FIG_H`."""
+    `panel_w` and `fig_h` (inches) size the panels and the canvas, and
+    `min_fig_w` floors the canvas width; `fonts` overrides `FONTS` key by key.
+    `trim` crops the saved PNG to its ink, for a panel placed at column width
+    where every margin is page space. The pooled layout passes its sizes
+    (`build_for_runs`)."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -758,7 +783,8 @@ def render(
     datasets = sorted(table["dataset"].unique())
     nd = ACCURACY_DECIMALS if decimals is None else decimals
     panels_w = panel_w * len(datasets)
-    fig_w = max(panels_w, _MIN_FIG_W)
+    fig_w = max(panels_w, min_fig_w)
+    pt = {**FONTS, **(fonts or {})}
 
     with plt.rc_context({"hatch.linewidth": _HATCH_PT}):
         fig, axes = plt.subplots(
@@ -773,17 +799,16 @@ def render(
             ax.set_facecolor(_SURFACE)
             xs = np.arange(len(ranked))
             for x, m in zip(xs, ranked):
-                _draw_bar(ax, x, sub.loc[m], nd, mode)
+                _draw_bar(ax, x, sub.loc[m], nd, mode, pt["label"])
 
             n = int(sub["n_tgs"].iloc[0]) if len(sub) else 0
             name = panel_name(ds)
             tag = f"({_PANEL_TAGS[i]}) " if len(datasets) > 1 else ""
-            ax.set_title(
-                f"{tag}{name}  ·  n={n}" if name else "", fontsize=11, color=_INK, pad=6
-            )
+            if name:
+                ax.set_title(f"{tag}{name}  ·  n={n}", fontsize=pt["title"], color=_INK, pad=6)
             ax.set_xticks(xs)
             # Short terms (see `methods.METHOD_TERMS`), so no rotation.
-            ax.set_xticklabels([method_label(m) for m in ranked], fontsize=9, color=_INK_2)
+            ax.set_xticklabels([method_label(m) for m in ranked], fontsize=pt["tick"], color=_INK_2)
             # Room on the right of the last bar for its rail and labels;
             # `unbounded` draws no rail, so it needs none.
             pad = 0.25 if mode == BOUNDED else 0.0
@@ -800,10 +825,10 @@ def render(
             for side in ("left", "bottom"):
                 ax.spines[side].set_color(_AXIS)
                 ax.spines[side].set_linewidth(0.8)
-            ax.tick_params(colors=_MUTED, labelsize=9)
+            ax.tick_params(colors=_MUTED, labelsize=pt["tick"])
             if ax is not axes[0]:
                 ax.tick_params(axis="y", length=0)
-        axes[0].set_ylabel("Share of TGs", fontsize=11, color=_INK_2)
+        axes[0].set_ylabel("Share of TGs", fontsize=pt["ylabel"], color=_INK_2)
 
         # The only furniture above the panels, measured down from the top edge
         # in inches: one row per legend row, each anchored by its top, so the
@@ -811,7 +836,7 @@ def render(
         tiers, cells = _legend_handles(mode)
         legends = [
             fig.legend(
-                handles=h, loc="upper center", ncol=len(h), frameon=False, fontsize=9,
+                handles=h, loc="upper center", ncol=len(h), frameon=False, fontsize=pt["legend"],
                 bbox_to_anchor=(0.5, 1 - (_LEGEND_TOP_IN + k * _LEGEND_ROW_IN) / fig_h),
                 labelcolor=_INK_2, **({"handleheight": 1.2} if h is cells else {}),
             )
@@ -821,13 +846,15 @@ def render(
             """`(lowest legend bottom, highest panel-title top)` as figure
             fractions -- drawn extents, not the nominal row pitch. A legend row
             sets taller than `_LEGEND_ROW_IN`, so a `top` computed from the
-            pitch seats the titles inside the legend's box."""
+            pitch seats the titles inside the legend's box. A panel without a
+            title counts its axes top, or the gap keeps the title's pad."""
             fig.canvas.draw()
             r = fig.canvas.get_renderer()
             span = fig.get_figheight() * fig.dpi
             return (
                 min(lg.get_window_extent(renderer=r).y0 for lg in legends) / span,
-                max(ax.title.get_window_extent(renderer=r).y1 for ax in axes) / span,
+                max((ax.title if ax.get_title() else ax).get_window_extent(renderer=r).y1
+                    for ax in axes) / span,
             )
 
         inset = min((fig_w - panels_w) / 2 / fig_w, _MAX_INSET)
@@ -850,7 +877,10 @@ def render(
             png_name
             or NAMES[COMPARE][0].format(slug=grid_slug(nside), mode=mode_token(mode))
         )
-        fig.savefig(png, dpi=dpi, facecolor=_SURFACE)
+        fig.savefig(
+            png, dpi=dpi, facecolor=_SURFACE,
+            **({"bbox_inches": "tight", "pad_inches": 0.02} if trim else {}),
+        )
         plt.close(fig)
     return png
 
@@ -1008,13 +1038,15 @@ def build_for_runs(
                     out_dir / names["csv"], index=False
                 )
                 gap_table(table).to_csv(out_dir / gaps_name(names["csv"]), index=False)
-                size = (
-                    {
-                        "panel_w": POOLED_PANEL_W,
-                        "fig_h": POOLED_FIG_H_BOUNDED if mode == BOUNDED else POOLED_FIG_H,
+                if layout != POOLED:
+                    size = {}
+                elif mode == BOUNDED:
+                    size = {"panel_w": POOLED_PANEL_W, "fig_h": POOLED_FIG_H_BOUNDED}
+                else:
+                    size = {
+                        "panel_w": POOLED_UNBOUNDED_PANEL_W, "fig_h": POOLED_UNBOUNDED_FIG_H,
+                        "min_fig_w": 0.0, "fonts": COLUMN_FONTS, "dpi": 300, "trim": True,
                     }
-                    if layout == POOLED else {}
-                )
                 png = render(table, nside, out_dir, png_name=names["png"], mode=mode, **size)
                 per_run = (
                     _tgs_per_run(runs, nside, analysis_root=analysis_root)
