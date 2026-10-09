@@ -166,8 +166,10 @@ _LEGEND_PT = 6.5
 _GUIDE_PT = 5.5
 
 #: Panel size (inches): a single paper column. Everything else on the figure is
-#: sized for it.
-PAPER_FIGSIZE: tuple[float, float] = (4.0, 3.0)
+#: sized for it. 3.4 in is the printed width (half of a two-column sigconf row,
+#: beside the percentile table), so the point sizes above print as stated; the
+#: short height keeps the row from eating the page.
+PAPER_FIGSIZE: tuple[float, float] = (3.4, 2.1)
 
 #: y at a quarter each, so the gridlines are the quartiles and the reader takes
 #: p25/p50/p75 off the panel without a table.
@@ -860,7 +862,7 @@ def plot_cdf(
         )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=dpi, bbox_inches="tight", facecolor=_SURFACE)
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0.02, facecolor=_SURFACE)
     plt.close(fig)
     return out_path
 
