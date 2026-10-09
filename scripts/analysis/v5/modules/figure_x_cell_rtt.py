@@ -114,15 +114,17 @@ SPLIT_MS = 3.0
 
 #: Log-axis ticks, in ms; only those inside the data's range are drawn.
 Y_TICKS_MS = (0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0)
-#: The normalized axis labels decades only, as 10^k: every median carries its
-#: own number, so the axis only has to say the order of magnitude.
+#: The normalized axis labels decades only, as 10^k: the text quotes the
+#: medians, so the axis only has to say the order of magnitude.
 Y_TICKS_NORM = (0.0001, 0.001, 0.01, 0.1, 1.0)
 #: Headroom either side of the data on the log axis, as a factor.
 Y_PAD = 1.5
 
-#: Width per run group and the fixed height, in inches.
-GROUP_WIDTH_IN = 1.65
-HEIGHT_IN = 1.35
+#: Width per run group and the fixed height, in inches: printed at its own
+#: size beside the has-X / no-X table, in the part of a two-column row the
+#: table leaves free.
+GROUP_WIDTH_IN = 0.8
+HEIGHT_IN = 1.6
 #: Box centres within a group, and the gap between groups, in x units.
 SLOT = 1.0
 GROUP_GAP = 0.6
@@ -320,7 +322,9 @@ def plot(
         x = pos[(r.run_id, flag)]
         tick = next(t for f, t, _ in GROUPS if f == flag)
         ticks.append(x)
-        labels.append(f"{tick}\n{r.sites_pct:.0f}% sites")
+        # The share of the network's sites; the caption names the unit, which
+        # would not fit under a box at this width.
+        labels.append(f"{tick}\n{r.sites_pct:.0f}%")
         if not r.n_tgs:
             continue
         box = {**bxp_stats({k: float(y(r[f"{k}_ms"])) for k in STAT_KEYS}),
@@ -331,15 +335,12 @@ def plot(
         art["boxes"][0].set(facecolor=HUES[flag], alpha=0.45, edgecolor=HUES[flag], linewidth=0.6)
         art["fliers"][0].set(marker="o", markersize=OUTLIER_MS_PT, markerfacecolor="none",
                              markeredgecolor=HUES[flag], markeredgewidth=0.5, linestyle="none")
-        median = float(y(r.p50_ms))
-        ax.text(x + BOX_WIDTH / 2 + 0.05, median,
-                f"{median:.1f}" if rtt_norm_ms is None else f"{median:.3f}", fontsize=5.5,
-                va="center", color=INK_2)
+    # No median labels: the text quotes the medians, and the CSV carries them.
     # The network name above its pair, in axes coordinates so it clears every box.
     for rid in run_ids:
         mid = np.mean([pos[(rid, f)] for f, _, _ in GROUPS])
         ax.text(mid, 1.0, names[rid], transform=ax.get_xaxis_transform(),
-                ha="center", va="bottom", fontsize=6, color=INK)
+                ha="center", va="bottom", fontsize=6.5, color=INK)
     split = float(y(SPLIT_MS))
     ax.axhline(split, color=INK_2, lw=0.4, ls=":", zorder=0)
     ax.set_yscale("log")
@@ -351,10 +352,10 @@ def plot(
         ax.set_yticks(shown, [f"{t:g}" if rtt_norm_ms is None
                               else rf"$10^{{{int(round(np.log10(t)))}}}$" for t in shown])
     ax.yaxis.set_minor_formatter(plt.NullFormatter())
-    ax.set_xticks(ticks, labels, fontsize=5.5)
-    ax.set_xlim(min(pos.values()) - SLOT * 0.6, max(pos.values()) + SLOT * 0.8)
-    ax.set_ylabel(QUANTITY if rtt_norm_ms is None else QUANTITY_NORM, fontsize=6)
-    ax.tick_params(axis="both", labelsize=5.5, length=2, pad=1.5)
+    ax.set_xticks(ticks, labels, fontsize=6)
+    ax.set_xlim(min(pos.values()) - SLOT * 0.6, max(pos.values()) + SLOT * 0.6)
+    ax.set_ylabel(QUANTITY if rtt_norm_ms is None else QUANTITY_NORM, fontsize=6.5)
+    ax.tick_params(axis="both", labelsize=6, length=2, pad=1.5)
     ax.grid(axis="y", alpha=0.25, lw=0.3)
     for spine in ("top", "right"):
         ax.spines[spine].set_visible(False)
