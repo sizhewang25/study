@@ -347,11 +347,14 @@ def plot_rtt_scatter(tgs: pd.DataFrame, out_png: Path) -> Path:
     ax.set_xlabel("Normalized min RTT", fontsize=LABEL_PT, color=INK)
     ax.set_ylabel("S-P error distance\n" + r"($\times10^{-3}$)", fontsize=LABEL_PT, color=INK)
     # One fixed marker per outcome: the drawn markers' areas vary with their TGs.
-    handles = [plt.Line2D([], [], ls="", marker="o", ms=3.5, color=MODE_INK[o], alpha=0.6, mew=0,
+    handles = [plt.Line2D([], [], ls="", marker="o", ms=3.0, color=MODE_INK[o], alpha=0.6, mew=0,
                           label=f"{o} cell") for o in OUTCOMES]
-    # Lower right: no has-X TG has both a high min RTT and a small error.
-    ax.legend(handles=handles, loc="lower right", fontsize=LEGEND_PT, frameon=False, handletextpad=0.2,
-              borderaxespad=0.3)
+    # Lower right: no has-X TG has both a high min RTT and a small error. Framed,
+    # so it reads apart from the nearby markers, and packed tight to stay small.
+    leg = ax.legend(handles=handles, loc="lower right", fontsize=LEGEND_PT - 0.5, frameon=True,
+                    fancybox=False, framealpha=1.0, edgecolor=INK_2, handlelength=0.8,
+                    handletextpad=0.1, labelspacing=0.15, borderpad=0.2, borderaxespad=0.2)
+    leg.get_frame().set_linewidth(0.5)
     _axes_style(ax)
     return _save(fig, out_png)
 
