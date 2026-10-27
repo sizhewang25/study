@@ -131,6 +131,11 @@ grun plot-vp-distance-cdf
 # Fig. Delta_VP vs D_X-TG scatter (rho, clusters: pni_gap.manifest.json) --
 # built above -- and Fig. RTT boxes per cluster.
 grun plot-pni-cluster-rtt
+# v3: the baseline row without the nearest-interconnect proxy -- nearest-VP and
+# nearest-X distance vs. S-P error (two panels), S-P accuracy by has-X / no-X, and the has-X TGs'
+# min RTT vs. S-P error (shares, medians, the misses and the conjecture test in sp_baseline.manifest.json).
+# Replaces the three figures above in the paper; they still back numbers.
+grun plot-sp-baseline
 
 # ---- §5 Evaluation on region classification -------------------------------------------
 section "§5.1 unbounded accuracy and the interconnect"
@@ -214,9 +219,10 @@ X3=$(pool_name "${MESH[@]}")
 X6=$(pool_name "${MESH[@]}" "${LOSO[@]}")
 FIGS=(
   "error_cdf.pooled.norm.cut|_cross/classify/$X3/error_cdf.pooled.norm.cut.png"
-  "vp_distance_cdf|_cross/vp-distance-cdf/$X3/vp_distance_cdf.norm.png"
-  "vp_pni_proximity_scatter|_cross/pni-gap/$X3/pni_gap_scatter.norm.png"
-  "vp_pni_proximity_rtt|_cross/pni-gap/$X3/pni_cluster_rtt.png"
+  "sp_vp_scatter|_cross/pni-gap/$X3/sp_vp_scatter.png"
+  "sp_x_scatter|_cross/pni-gap/$X3/sp_x_scatter.png"
+  "sp_accuracy_by_x|_cross/pni-gap/$X3/sp_accuracy_by_x.png"
+  "sp_rtt_error_has_x|_cross/pni-gap/$X3/sp_rtt_error_has_x.png"
   "outcome_bars.unbounded.pooled|_cross/classify/$X3/outcome_bars.unbounded.pooled.healpix-128.png"
   "x_cell_rtt|_cross/pni-gap/$X3/x_cell_rtt.png"
   "correct_upset.pooled.cell|_cross/classify/$X3/correct_upset.pooled.cell.png"

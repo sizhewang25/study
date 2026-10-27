@@ -70,6 +70,7 @@ from scripts.analysis.v5.modules import (
     figure_peripherality,
     figure_pni_cluster_rtt,
     figure_pni_gap,
+    figure_sp_baseline,
     figure_sp_interconnect,
     figure_rtt_cdf,
     figure_stability,
@@ -2175,6 +2176,53 @@ def plot_x_cell_rtt_cmd(
             analysis_root=analysis_root, source_csvs=source_csvs,
             rtt_norm_ms={r.run_id: declared_rtt_norm_ms(r.run_id, outputs_root) for r in runs},
         )
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for png in pngs:
+        typer.echo(f"wrote {png}")
+
+
+@app.command("plot-sp-baseline")
+def plot_sp_baseline_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Run (repeatable): the set `plot-pni-gap` clustered, pooled."),
+    layout: list[str] = typer.Option(None, "--layout", help="pooled only: the three panels pool every --run-id."),
+    pni_csv: Path = typer.Option(None, "--pni-csv", help=_PNI_CSV_HELP + " One --run-id only."),
+    source_csv: Path = typer.Option(None, "--source-csv", help="Override the run's edge CSV. One --run-id only."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """The baseline without the nearest-interconnect proxy: four panels.
+
+    (1) each TG's nearest-VP and, in a second panel, nearest-interconnect
+    distance against S-P's error, (2) S-P's region classification, has-X
+    against no-X, pooled, correct or wrong cell, (3) the has-X TGs' min RTT
+    against S-P's error, the misses outlined as inflated RTT or near-tie.
+    has-X is `tg_cell_holds_interconnect`: the TG's own cell holds an
+    interconnect. Distances and RTTs are normalized by
+    `analysis.common.dist_norm_km` and `rtt_norm_ms`, which the runs must declare.
+
+    Writes `sp_vp_scatter.png`, `sp_x_scatter.png`, `sp_accuracy_by_x.png`, `sp_rtt_error_has_x.png`,
+    `sp_baseline.tgs.csv` and `sp_baseline.manifest.json` beside the pooled
+    clusters. Needs `classify` and `plot-pni-gap --layout pooled`.
+    """
+    _refuse_combo_ids("plot-sp-baseline", run_id or [], outputs_root)
+    try:
+        runs, pni_csvs, layouts, source_csvs = _pni_inputs(run_id, layout or [pni_gap.POOLED], pni_csv,
+                                                           source_csv, outputs_root)
+        if layouts != (pni_gap.POOLED,):
+            raise typer.BadParameter("plot-sp-baseline draws the pooled layout only")
+        from scripts.analysis.v5.modules import dist_norm as DN
+        from scripts.analysis.v5.modules import figure_pni_cluster_rtt as R
+        from scripts.analysis.v5.modules.labels import declared_dist_norm_km, declared_rtt_norm_ms
+
+        ids = [r.run_id for r in runs]
+        bounds = DN.common_bounds(ids, {r: declared_dist_norm_km(r, outputs_root) for r in ids})
+        rtt_bounds = R.common_norm(ids, {r: declared_rtt_norm_ms(r, outputs_root) for r in ids})
+        if bounds is None or rtt_bounds is None:
+            raise typer.BadParameter("plot-sp-baseline needs analysis.common.dist_norm_km and rtt_norm_ms "
+                                     "in every run's config")
+        pngs = figure_sp_baseline.build_for_runs(runs, pni_csvs, bounds=bounds, rtt_bounds=rtt_bounds,
+                                                 analysis_root=analysis_root, source_csvs=source_csvs)
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     for png in pngs:

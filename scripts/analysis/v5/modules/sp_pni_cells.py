@@ -245,7 +245,8 @@ def check_against_clusters(tgs: pd.DataFrame, clusters: pd.DataFrame) -> pd.Data
             f"or `plot-pni-gap` on the same edge CSV."
         )
     out["sp_tie_broken_differently"] = differs
-    return out.drop(columns=["_merge", "d_sp_km_classify", "sp_rtt_ms", "min_rtt_ms"])
+    # `min_rtt_ms` stays: `figure_sp_baseline` draws it against the error.
+    return out.drop(columns=["_merge", "d_sp_km_classify", "sp_rtt_ms"])
 
 
 # -- the report ---------------------------------------------------------------

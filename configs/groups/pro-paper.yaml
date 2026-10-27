@@ -82,6 +82,10 @@ analysis:
     layout: pooled
     run-id: "@seen"
 
+  plot-sp-baseline:               # the proxy-free baseline row (v3 §4)
+    layout: pooled
+    run-id: "@seen"
+
   report-sp-pni-cells:
     layout: pooled
     run-id: "@seen"
