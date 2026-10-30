@@ -56,6 +56,7 @@ from scripts.analysis.v5.modules import (
     bipartite,
     classify,
     cohort_overlap,
+    failures,
     figure_champion_upset,
     figure_correct_upset,
     figure_contest_map,
@@ -1907,6 +1908,44 @@ def report_sp_pni_cells_cmd(
         raise typer.BadParameter(str(exc)) from exc
     for path in reports:
         typer.echo(f"wrote {path}")
+
+
+@app.command("report-failures")
+def report_failures_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Run (repeatable); each is reported on its own."),
+    nside: int = typer.Option(
+        failures.SOURCE_NSIDE, "--nside", "-n", help="Which rung's answer space places the TGs.",
+    ),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """Every TG a method did not answer itself (FALLBACK / ERROR), binned.
+
+    Per method, the error bins -- `<phase>:<code>`, with a too-few-constraints
+    MTL error split into "few VPs" and "LTD dropped <code>" -- then the seeds
+    each bin's TGs belong to, nearest interconnect named, and the TG ids.
+    Printed, and written under `<run>/failures/` as `failures.tgs.csv` (one
+    row per failed TG), `failures.json` (method -> bin -> seed, with the TG
+    ids) and `failures.png` (a US map per method: red seeds labelled with
+    their failed TGs, interconnects as orange triangles, no-data cells grey).
+    The interconnects are the run's declared `analysis.common.pni_csv`.
+    Needs the benchmark and `build-answer-space`.
+    """
+    from scripts.analysis.v5.modules.labels import declared_pni_csv
+
+    if not run_id:
+        raise typer.BadParameter("pass at least one --run-id")
+    for r in run_id:
+        try:
+            paths, text = failures.build_for_run(
+                resolve_run(r, outputs_root), nside=nside, analysis_root=analysis_root,
+                pni_csv=declared_pni_csv(r, outputs_root),
+            )
+        except (ValueError, MissingArtifactError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(text)
+        for path in paths:
+            typer.echo(f"wrote {path}")
 
 
 @app.command("report-loso-delta")
