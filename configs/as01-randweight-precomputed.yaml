@@ -49,6 +49,23 @@ benchmark:
         speed_ratio: 0.6667
         enable_circle_filter: true
 
+    # SPO, verbatim from configs/pro-as0X-{mesh,weighted}.yaml: a dry run of
+    # the TF method-anomaly checks (SPO's no-answers on TF, tf-todos.md D1).
+    - combo_id: spotter_cbg
+      ltd: normal_dist
+      mtl: gaussian_density
+      ctr: density_argmax
+      ltd_kwargs:
+        deg_mu: 3
+        deg_sigma: 2
+        cutoff_min_points: 5
+      mtl_kwargs:
+        grid: healpix
+        resolution: 128
+        coarse_resolution: 16
+        top_k: 8
+        neighbor_ring: 1
+
 analysis:
   common:
     grid: h3
