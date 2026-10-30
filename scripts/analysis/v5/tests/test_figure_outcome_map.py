@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -216,6 +216,74 @@ def test_the_drawn_labels_are_the_seed_rows(space):
     assert labels == sorted(table["n_tgs"].astype(int))
 
 
+def _draw_labels(rows, seeds, failed=None):
+    import cartopy.crs as ccrs
+    import matplotlib.pyplot as plt
+
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
+    ax.set_extent(F.DEFAULT_EXTENT, crs=ccrs.PlateCarree())
+    F.draw_counts(ax, rows, seeds, extent=F.DEFAULT_EXTENT, failed=failed)
+    labels = sorted(t.get_text() for t in ax.texts)
+    plt.close(fig)
+    return labels
+
+
+def test_the_wrong_labels_carry_the_failed_tgs(space):
+    """`4 (3F)`: wrong and failed per tg_seed_id, a failures-only cell reads
+    `0 (nF)`, and the drawn text is the CSV twin's two columns."""
+    frame = _scored(
+        space,
+        [_offset(MIAMI, north_km=3)] * 2  # SEATTLE's TG answered in Miami: wrong
+        + [_offset(SEATTLE, north_km=3)]  # ... and a FALLBACK at SEATTLE
+        + [None, _offset(OMAHA, north_km=3)],  # OMAHA: ERROR, FALLBACK
+        ["SUCCESS", "SUCCESS", "FALLBACK", "ERROR", "FALLBACK"],
+        tgs=[0, 0, 0, 1, 1],
+    )
+    rows = F.cohort_rows(frame, "wrong")
+    failed = F.cohort_failed(frame, "wrong")
+    seattle, omaha = (int(space.tgs["tg_seed_id"].iloc[i]) for i in (0, 1))
+    assert failed.to_dict() == {seattle: 1, omaha: 2}
+
+    assert _draw_labels(rows, space.seeds, failed) == ["0 (2F)", "2 (1F)"]
+    counts = F.panel_counts(
+        frame, rows, run_id="r", method="m", cohort="wrong", extent=F.DEFAULT_EXTENT
+    )
+    assert counts["n_failed"] == 3
+    assert "3 failed (F)" in F.panel_title(counts)
+    assert "FB excl." not in F.panel_title(counts)
+    table = F.seed_rows(rows, space.seeds, counts, failed).set_index("seed_id")
+    assert table.loc[seattle, ["n_tgs", "n_tgs_failed"]].tolist() == [2, 1]
+    assert table.loc[omaha, ["n_tgs", "n_tgs_failed"]].tolist() == [0, 2]
+
+
+def test_the_correct_map_keeps_bare_counts(space):
+    frame = _scored(
+        space, [_offset(SEATTLE, north_km=3)] * 2 + [_offset(SEATTLE, north_km=3)],
+        ["SUCCESS", "SUCCESS", "FALLBACK"],
+    )
+    assert F.cohort_failed(frame, "correct") is None
+    rows = F.cohort_rows(frame, "correct")
+    assert _draw_labels(rows, space.seeds, F.cohort_failed(frame, "correct")) == ["2"]
+    counts = F.panel_counts(
+        frame, rows, run_id="r", method="m", cohort="correct", extent=F.DEFAULT_EXTENT
+    )
+    assert "1 FB excl." in F.panel_title(counts)
+
+
+def test_no_data_seeds_come_off_the_answer_space(space, data):
+    """A weighted run's mesh site with no scored TG greys its seed's cell; a
+    mesh space has none."""
+    assert F.no_data_seeds(space) == frozenset()
+    assert all(not s for s in data.no_data.values())
+
+    sites = space.sites.copy()
+    sites[A.SCORED_COL] = sites["n_tgs"]
+    sites.loc[sites.index[1], A.SCORED_COL] = 0
+    weighted = replace(space, sites=sites)
+    assert F.no_data_seeds(weighted) == {int(sites["seed_id"].iloc[1])}
+
+
 # -- the relaxation -------------------------------------------------------
 
 
@@ -282,7 +350,12 @@ def test_the_twin_reproduces_every_panel_title(data):
             assert int(g["n_tgs"].sum()) == c["n_cohort_tgs"]
             # A site belongs to exactly one seed, so the per-seed counts sum.
             assert int(g["n_sites"].sum()) == c["n_cohort_sites"]
-            assert g["seed_id"].nunique() == c["n_cohort_cells"]
+            # A wrong-map seed that only failed has a row with n_tgs 0.
+            assert g.loc[g["n_tgs"] > 0, "seed_id"].nunique() == c["n_cohort_cells"]
+            if cohort == "wrong":
+                assert int(g["n_tgs_failed"].sum()) == c["n_failed"]
+            else:
+                assert int(g["n_tgs_failed"].sum()) == 0
 
 
 def test_an_empty_cohort_still_carries_its_panel_row(data):

@@ -59,6 +59,21 @@ on their vocabulary. Caveat: an offset above 40 takes turbo's over-colour and
 is indistinguishable from the 20-40 bin; the true maximum is in every panel
 title and in the CSV twin (the observed maximum on as01-03 is 35, as01/SPO).
 
+## No data and failed, for traffic-weighted runs
+
+A traffic-weighted run is scored over its pre-filter mesh's answer space, so a
+mesh site whose TGs the flow filter removed still holds a seed and a cell.
+That cell is filled opaque grey (`NO_DATA_FILL`) on both maps: "no data", not
+"nothing went wrong". Emptiness is read off the answer space
+(`answer_space.site_n_scored`): the TGs the weighted run scored, which are
+the traffic subset. A mesh run has no empty cell and its maps are unchanged.
+
+The `wrong` map also carries the TGs the method did not answer itself
+(`~solved_mask`: FALLBACK and ERROR, classify's `n_failed`), per `tg_seed_id`,
+in parentheses: `4 (3F)` is four wrong and three failed; a cell where the
+method only gave up reads `0 (3F)`. The panel title's `N failed (F)` is their
+sum. The `correct` map keeps plain counts and its `FB excl.` title.
+
 ## Known limitation: labels are repelled from labels, not from markers
 
 `place_labels` is a spring-repulsion relaxation between the count labels. It
@@ -93,7 +108,7 @@ every run. Writes `_cross/outcome-map/<datasets>[@<arm>]/`.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import matplotlib
@@ -106,6 +121,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from matplotlib.colors import BoundaryNorm  # noqa: E402
 
+from scripts.analysis.v5.modules import answer_space as A  # noqa: E402
 from scripts.analysis.v5.modules import cells as CL  # noqa: E402
 from scripts.analysis.v5.modules import classify as C  # noqa: E402
 from scripts.analysis.v5.modules import cross  # noqa: E402
@@ -155,6 +171,12 @@ COHORT_MARKER: dict[str, tuple[str, float]] = {"correct": ("o", 15.0), "wrong": 
 #: it must not be mistaken for a prediction that landed there.
 OFF_MAP_INK = "#8b0000"
 
+#: The cell of a seed whose sites hold no scored TG. Opaque and a shade below
+#: `M.LAND`: it is an absence of data, and must not read as an empty-but-fine
+#: region where the method made no mistake -- but light enough that the
+#: predictions drawn over it stay the darkest thing in the cell.
+NO_DATA_FILL = "#e2e1dc"
+
 #: Seed dots. Half `M.MARKER_AREA`: eighteen panels across 17.5 inches leaves
 #: each map ~3 in wide, and the answer-space map's marker fills a cell here.
 SEED_AREA = 7.0
@@ -174,6 +196,9 @@ LEADER_MIN_DEG = 1.3
 #: pulled back, strong enough that an isolated label stays on its seed.
 LABEL_OFFSET_DEG = (0.7, 0.55)
 MIN_SEP_DEG = 2.6
+#: The same, for a `wrong` panel where some label carries `(nF)`: about three
+#: times as wide as a bare count.
+MIN_SEP_WRONG_DEG = 4.0
 FRAME_PAD_DEG = 1.0
 RELAX_ITERS = 400
 SPRING = 0.03
@@ -208,6 +233,7 @@ _PANEL_H = 3.15
 #: Drawn bottom-up. Cells and seeds sit above the basemap, the joins above
 #: them, the markers above those, the carets above the markers, and the labels
 #: on top of everything -- a count that a marker could hide would be unreadable.
+_Z_NO_DATA = 3.5
 _Z_CELLS = 4.0
 _Z_SEEDS = 4.5
 _Z_JOIN = 5.0
@@ -337,7 +363,8 @@ class MapData:
 
     `frames` is keyed `(run_id, method)` and holds the *whole* scored frame,
     unmasked: the panel title needs the FALLBACK count, which `cohort_rows`
-    has by then removed.
+    has by then removed. `no_data` is per run: the seeds whose sites hold no
+    scored TG (`no_data_seeds`).
     """
 
     run_ids: list[str]
@@ -345,6 +372,13 @@ class MapData:
     frames: dict[tuple[str, str], pd.DataFrame]
     seeds: dict[str, pd.DataFrame]
     nside: int
+    no_data: dict[str, frozenset[int]] = field(default_factory=dict)
+
+
+def no_data_seeds(space: A.AnswerSpace) -> frozenset[int]:
+    """Seeds none of whose sites the run scores a TG at. Empty on a mesh run."""
+    scored = A.site_n_scored(space).groupby(space.sites["seed_id"].to_numpy()).sum()
+    return frozenset(int(s) for s in scored.index[scored.to_numpy() == 0])
 
 
 def scored_methods(
@@ -393,8 +427,11 @@ def load(
 
     frames: dict[tuple[str, str], pd.DataFrame] = {}
     seeds: dict[str, pd.DataFrame] = {}
+    no_data: dict[str, frozenset[int]] = {}
     for run in runs:
-        seeds[run.run_id] = load_rung(run, nside, analysis_root=analysis_root).seeds
+        space = load_rung(run, nside, analysis_root=analysis_root)
+        seeds[run.run_id] = space.seeds
+        no_data[run.run_id] = no_data_seeds(space)
         for m in chosen:
             path = run.classify_dir(nside, root=analysis_root) / C.TGS_PARQUET.format(method=m)
             if not path.exists():
@@ -408,6 +445,7 @@ def load(
         frames=frames,
         seeds=seeds,
         nside=int(nside),
+        no_data=no_data,
     )
 
 
@@ -429,6 +467,18 @@ def cohort_rows(frame: pd.DataFrame, cohort: str) -> pd.DataFrame:
     ]
 
 
+def cohort_failed(frame: pd.DataFrame, cohort: str) -> pd.Series | None:
+    """Failed TGs per `tg_seed_id` for the `wrong` map; `None` for `correct`.
+
+    Failed is `~solved_mask` over the whole frame -- FALLBACK and ERROR, the
+    rows classify labels `unanswered` -- not over the cohort, which has none.
+    """
+    if validate_cohort(cohort) != "wrong":
+        return None
+    failed = frame.loc[~solved_mask(frame).to_numpy(), "tg_seed_id"]
+    return failed.value_counts().sort_index().astype("int64")
+
+
 def off_frame(rows: pd.DataFrame, extent: tuple[float, float, float, float]) -> np.ndarray:
     """Boolean mask of predictions outside the drawn frame."""
     lon_min, lon_max, lat_min, lat_max = extent
@@ -448,12 +498,14 @@ def panel_counts(
     method: str,
     cohort: str,
     extent: tuple[float, float, float, float],
+    no_data: frozenset[int] = frozenset(),
 ) -> dict:
     """The numbers a panel title carries, and the manifest and CSV repeat.
 
     `n_fallback_excluded` is counted over the **whole** frame, not the cohort:
     a FALLBACK row has no cell label of the method's own, so it belongs to
-    neither cohort and the figure has to say so once per panel.
+    neither cohort and the figure has to say so once per panel. `n_failed`
+    (FALLBACK and ERROR) is too; the `wrong` map draws it per cell.
     """
     offsets = rows["pred_dist_to_tg_grid"]
     return {
@@ -467,27 +519,37 @@ def panel_counts(
         "n_cohort_cells": int(rows["tg_seed_id"].nunique()),
         "n_off_map": int(off_frame(rows, extent).sum()),
         "n_fallback_excluded": int((frame["status"] == "FALLBACK").sum()),
+        "n_failed": int((~solved_mask(frame)).sum()),
+        "n_no_data_cells": len(no_data),
         "cohort_offset_p50": float(offsets.median()) if len(rows) else float("nan"),
         "cohort_offset_max": float(offsets.max()) if len(rows) else float("nan"),
     }
 
 
-def seed_rows(rows: pd.DataFrame, seeds: pd.DataFrame, counts: dict) -> pd.DataFrame:
+def seed_rows(
+    rows: pd.DataFrame, seeds: pd.DataFrame, counts: dict, failed: pd.Series | None = None
+) -> pd.DataFrame:
     """One row per `(run, method, cohort, seed)`: the drawn count and its spread.
 
     Keyed on `tg_seed_id`, which is the number the panel prints. A site belongs
     to exactly one seed, so `n_sites` sums over the rows to the panel's own
     site count and the title is reconstructible from the CSV alone.
 
-    A panel whose cohort is empty still emits one row, with a null `seed_id`
+    `failed` (`cohort_failed`) adds `n_tgs_failed`, and a row with `n_tgs` 0
+    for a seed that only failed -- the `0 (3F)` label. Without it the column
+    is 0.
+
+    A panel with nothing to label still emits one row, with a null `seed_id`
     and `n_tgs` 0, so its title -- in particular `n_fallback_excluded` -- does
     not vanish from the twin.
     """
     panel = {k: v for k, v in counts.items()}
     pos = seeds.set_index("seed_id")[["seed_lat", "seed_lon"]]
-    if not len(rows):
+    failed = failed if failed is not None else pd.Series(dtype="int64")
+    if not len(rows) and not len(failed):
         return pd.DataFrame([{**panel, "seed_id": pd.NA, "seed_lat": np.nan,
                               "seed_lon": np.nan, "n_tgs": 0, "n_sites": 0,
+                              "n_tgs_failed": 0,
                               **{f"offset_p{int(q * 100)}": np.nan for q in SEED_QUANTILES},
                               "offset_max": np.nan}])
     by_seed = rows.groupby("tg_seed_id", sort=True)
@@ -500,6 +562,9 @@ def seed_rows(rows: pd.DataFrame, seeds: pd.DataFrame, counts: dict) -> pd.DataF
     )
     for q in SEED_QUANTILES:
         out[f"offset_p{int(q * 100)}"] = by_seed["pred_dist_to_tg_grid"].quantile(q)
+    out = out.reindex(out.index.union(failed.index).sort_values())
+    out[["n_tgs", "n_sites"]] = out[["n_tgs", "n_sites"]].fillna(0).astype("int64")
+    out["n_tgs_failed"] = failed.reindex(out.index, fill_value=0).astype("int64")
     out = out.rename_axis("seed_id").reset_index()
     out = out.join(pos, on="seed_id")
     for k, v in reversed(panel.items()):
@@ -513,8 +578,9 @@ def csv_columns() -> list[str]:
     return [
         "run_id", "dataset", "method", "method_label", "cohort",
         "n_cohort_tgs", "n_cohort_sites", "n_cohort_cells", "n_off_map",
-        "n_fallback_excluded", "cohort_offset_p50", "cohort_offset_max",
-        "seed_id", "seed_lat", "seed_lon", "n_tgs", "n_sites",
+        "n_fallback_excluded", "n_failed", "n_no_data_cells",
+        "cohort_offset_p50", "cohort_offset_max",
+        "seed_id", "seed_lat", "seed_lon", "n_tgs", "n_sites", "n_tgs_failed",
         *[f"offset_p{int(q * 100)}" for q in SEED_QUANTILES],
         "offset_max",
     ]
@@ -530,10 +596,13 @@ def build_csv(
             frame = data.frames[(run_id, method)]
             rows = cohort_rows(frame, cohort)
             c = panel_counts(
-                frame, rows, run_id=run_id, method=method, cohort=cohort, extent=extent
+                frame, rows, run_id=run_id, method=method, cohort=cohort, extent=extent,
+                no_data=data.no_data.get(run_id, frozenset()),
             )
             counts.append(c)
-            frames.append(seed_rows(rows, data.seeds[run_id], c))
+            frames.append(
+                seed_rows(rows, data.seeds[run_id], c, cohort_failed(frame, cohort))
+            )
     table = pd.concat(frames, ignore_index=True)
     return table.reindex(columns=csv_columns()), counts
 
@@ -556,7 +625,11 @@ def panel_title(counts: dict) -> str:
     )
     if counts["n_off_map"]:
         t += f" · {counts['n_off_map']} off-map"
-    if counts["n_fallback_excluded"]:
+    if counts["cohort"] == "wrong":
+        # Failed is a superset of FALLBACK, and the labels carry it per cell.
+        if counts["n_failed"]:
+            t += f" · {counts['n_failed']} failed (F)"
+    elif counts["n_fallback_excluded"]:
         t += f" · {counts['n_fallback_excluded']} FB excl."
     return t
 
@@ -570,12 +643,15 @@ def draw_panel(
     *,
     cohort: str,
     extent: tuple[float, float, float, float],
+    failed: pd.Series | None = None,
+    no_data: frozenset[int] = frozenset(),
 ) -> dict:
     """One `(method, dataset)` map. Returns the counts it drew.
 
-    Basemap, cells, seeds, then per prediction a join line to its target and a
-    marker coloured by its grid offset; predictions outside `extent` become
-    carets at the edge. Finally the per-cell counts, relaxed apart.
+    Basemap, the no-data cells filled grey, cells, seeds, then per prediction a
+    join line to its target and a marker coloured by its grid offset;
+    predictions outside `extent` become carets at the edge. Finally the
+    per-cell counts (with `failed`, the `wrong` map's `(nF)`), relaxed apart.
     """
     import cartopy.crs as ccrs
 
@@ -584,6 +660,12 @@ def draw_panel(
 
     ax.set_extent(extent, crs=ccrs.PlateCarree())
     M.draw_basemap(ax)
+    empty = [polygons[s] for s in sorted(no_data) if s in polygons]
+    if empty:
+        ax.add_geometries(
+            empty, crs=ccrs.PlateCarree(), facecolor=NO_DATA_FILL, edgecolor="none",
+            zorder=_Z_NO_DATA,
+        )
     M.draw_cells(ax, polygons, zorder=_Z_CELLS)
     ax.scatter(
         seeds["seed_lon"], seeds["seed_lat"], s=SEED_AREA, c=M.INK, marker="o",
@@ -612,15 +694,28 @@ def draw_panel(
             transform=ccrs.PlateCarree(), zorder=_Z_OFF_MAP,
         )
 
-    draw_counts(ax, rows, seeds, extent=extent)
+    draw_counts(ax, rows, seeds, extent=extent, failed=failed)
     ax.set_title(panel_title(counts), fontsize=8.0, linespacing=1.3)
     return counts
 
 
+def count_label(n: int, n_failed: int = 0) -> str:
+    """`4`, or `4 (3F)` when the cell also has failed TGs."""
+    return f"{n} ({n_failed}F)" if n_failed else str(n)
+
+
 def draw_counts(
-    ax, rows: pd.DataFrame, seeds: pd.DataFrame, *, extent: tuple[float, float, float, float]
+    ax,
+    rows: pd.DataFrame,
+    seeds: pd.DataFrame,
+    *,
+    extent: tuple[float, float, float, float],
+    failed: pd.Series | None = None,
 ) -> int:
     """The per-cell counts, keyed on `tg_seed_id`. Returns how many were drawn.
+
+    `failed` (`cohort_failed`) appends `(nF)` and labels a seed that only
+    failed as `0 (nF)`; the wider labels are relaxed at `MIN_SEP_WRONG_DEG`.
 
     A seed the answer space does not carry is skipped rather than drawn at an
     invented position; `classify` assigns every TG a seed from this same
@@ -628,9 +723,11 @@ def draw_counts(
     """
     import cartopy.crs as ccrs
 
-    if not len(rows):
-        return 0
+    failed = failed if failed is not None else pd.Series(dtype="int64")
     n_by_seed = rows.groupby("tg_seed_id").size()
+    n_by_seed = n_by_seed.reindex(n_by_seed.index.union(failed.index), fill_value=0)
+    if not len(n_by_seed):
+        return 0
     pos = seeds.set_index("seed_id")
     ids = [k for k in n_by_seed.index if k in pos.index]
     if not ids:
@@ -638,7 +735,8 @@ def draw_counts(
     anchors = np.c_[
         pos.loc[ids, "seed_lon"].to_numpy(), pos.loc[ids, "seed_lat"].to_numpy()
     ]
-    placed = place_labels(anchors, extent)
+    min_sep = MIN_SEP_WRONG_DEG if (failed > 0).any() else MIN_SEP_DEG
+    placed = place_labels(anchors, extent, min_sep=min_sep)
     for (ax0, ay0), (lx, ly), seed_id in zip(anchors, placed, ids):
         if np.hypot(lx - ax0, ly - ay0) > LEADER_MIN_DEG:
             ax.plot(
@@ -647,7 +745,8 @@ def draw_counts(
                 path_effects=_LEADER_HALO,
             )
         ax.text(
-            lx, ly, str(int(n_by_seed[seed_id])), fontsize=7.4, fontweight="bold",
+            lx, ly, count_label(int(n_by_seed[seed_id]), int(failed.get(seed_id, 0))),
+            fontsize=7.4, fontweight="bold",
             color=M.INK, ha="center", va="center", transform=ccrs.PlateCarree(),
             zorder=_Z_LABEL, path_effects=_HALO,
         )
@@ -663,9 +762,11 @@ _SUBJECT = {
     "wrong": (
         "Predictions scored WRONG on the cell axis (solved rows only) · "
         "✕ = prediction, grey line to its target · small dot = seed, thin line "
-        "to the count that SHOULD have landed there · ▼ = off-map"
+        "to the count that SHOULD have landed there, (nF) = failed · ▼ = off-map"
     ),
 }
+
+_NO_DATA_NOTE = "grey cell = no data (site has no TG after the traffic filter)"
 
 _CBAR_LABEL = (
     "grid offset (pred_dist_to_tg_grid) — 0 = prediction in the target's own grid"
@@ -700,13 +801,16 @@ def render(
         for j, run_id in enumerate(data.run_ids):
             frame = data.frames[(run_id, method)]
             rows = cohort_rows(frame, cohort)
+            no_data = data.no_data.get(run_id, frozenset())
             c = panel_counts(
-                frame, rows, run_id=run_id, method=method, cohort=cohort, extent=extent
+                frame, rows, run_id=run_id, method=method, cohort=cohort, extent=extent,
+                no_data=no_data,
             )
             counts.append(
                 draw_panel(
                     axes[i, j], rows, data.seeds[run_id], polygons[run_id], c,
                     cohort=cohort, extent=extent,
+                    failed=cohort_failed(frame, cohort), no_data=no_data,
                 )
             )
 
@@ -716,7 +820,10 @@ def render(
         fraction=0.018, pad=0.02, ticks=list(OFFSET_BOUNDS), aspect=70,
     )
     cb.set_label(_CBAR_LABEL, fontsize=9)
-    fig.suptitle(_SUBJECT[cohort], fontsize=12, y=0.995)
+    subject = _SUBJECT[cohort]
+    if any(data.no_data.values()):
+        subject += f"\n{_NO_DATA_NOTE}"
+    fig.suptitle(subject, fontsize=12, y=0.995)
 
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=dpi, bbox_inches="tight")
@@ -748,6 +855,7 @@ def _manifest(
         "column_order": [cross.short_dataset(r) for r in data.run_ids],
         "method_terms": method_term_table(data.methods),
         "panels": counts,
+        "no_data_seeds": {r: sorted(data.no_data.get(r, ())) for r in data.run_ids},
         "encoding": {
             "prediction": (
                 f"marker {COHORT_MARKER[cohort][0]!r}, filled by "
@@ -758,7 +866,14 @@ def _manifest(
             "cell": f"{M.CELL_EDGE} boundary: Voronoi cell of a seed, unbounded",
             "count": (
                 "per-cell count of this cohort's TGs, keyed on tg_seed_id, "
-                f"repelled apart and joined back to its seed past {LEADER_MIN_DEG} deg"
+                f"repelled apart and joined back to its seed past {LEADER_MIN_DEG} deg; "
+                "on the wrong map '(nF)' adds the cell's failed TGs (~solved_mask: "
+                "FALLBACK and ERROR), and a cell that only failed reads '0 (nF)'"
+            ),
+            "no_data": (
+                f"{NO_DATA_FILL} opaque fill: the cell of a seed whose sites hold no "
+                "scored TG (answer_space.site_n_scored == 0) -- a traffic-weighted "
+                "run's filtered-out mesh sites; none on a mesh run"
             ),
             "off_map": f"{OFF_MAP_INK} caret pinned at the frame edge",
         },
