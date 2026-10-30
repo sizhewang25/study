@@ -1,0 +1,89 @@
+# SPO-only rerun of pro-as03-weighted: re-score spotter_cbg into the SAME run
+# tree when its existing TF results may come from a stale implementation.
+#
+# Same run_id on purpose. The benchmark's summarize step collects every
+# run.json under outputs/benchmark/v2/pro-as03-weighted/, so the other combos
+# already on disk stay in summary.parquet and every v5 figure, and only the
+# spotter_cbg folds are replaced. This file lives in configs/reruns/ because
+# v5 finds a run's config by a flat scan of configs/*.yaml and refuses a run
+# id two configs declare; out of that scan, configs/pro-as03-weighted.yaml
+# stays the run's one config for the analysis.
+#
+# Before running, set source_kwargs to exactly the values in
+# configs/pro-as03-weighted.yaml on the TF machine (the committed copy carries
+# placeholders). A different mesh or subset makes the rerun incomparable with
+# the combos it is summarized beside.
+#
+#   R=outputs/benchmark/v2/pro-as03-weighted/traffic_weighted_csv/anchors_to_probes
+#   mkdir -p $R/../../../.stale-spo && for f in $R/fold_*; do \
+#     cp -r $f/spotter_cbg $R/../../../.stale-spo/$(basename $f); done   # keep the old run
+#   CBG_SKIP_INSPECT=1 PATH=.venv/bin:$PATH ./cli.sh \
+#     --configfile configs/reruns/pro-as03-weighted.spo-only.yaml --forcerun run_combo
+#
+# --forcerun run_combo reruns every run_combo job in this DAG, which here is
+# spotter_cbg x 5 folds and nothing else. Then rerun v5 on the run:
+# classify, report-failures, plot-outcome-bars, plot-outcome-map.
+
+run_id: pro-as03-weighted
+
+benchmark:
+  source: traffic_weighted_csv
+  setup: anchors_to_probes
+  slices: [fold_0, fold_1, fold_2, fold_3, fold_4]
+
+  source_kwargs:
+    mesh_csv_path: datasets/final/
+    weighted_csv_path: datasets/final/
+    k: 5
+    seed: 42
+    asn_bucket_top_n: 20
+
+  enable_fallback: true
+  seed: 42
+
+  combos:
+    # Verbatim from configs/pro-as03-weighted.yaml.
+    - combo_id: spotter_cbg
+      ltd: normal_dist
+      mtl: gaussian_density
+      ctr: density_argmax
+      ltd_kwargs:
+        deg_mu: 3
+        deg_sigma: 2
+        cutoff_min_points: 5
+      mtl_kwargs:
+        grid: healpix
+        resolution: 128
+        coarse_resolution: 16
+        top_k: 8
+        neighbor_ring: 1
+
+# Verbatim from configs/pro-as03-weighted.yaml, so this file states the same
+# common analysis parameters as its parent. v5 still reads the parent's.
+analysis:
+  common:
+    # The dataset this run belongs to, for v5's cross-dataset figures.
+    # Declared rather than parsed: v5 used to split the run id on its first
+    # hyphen, which reads `pro` for every run here.
+    dataset_label: PRO-TF AS-C
+    grid: healpix
+    resolution: [128]
+    # Every distance axis is min-max normalized with these bounds, so no
+    # figure prints an absolute distance: min 0 (a prediction on its TG), max
+    # the footprint span D, the largest great-circle distance between any two
+    # VPs or sites pooled over the three pro datasets (4,387.257 km; computed
+    # by scripts/analysis/v5/modules/footprint.py). The same bounds in every
+    # pro config.
+    dist_norm_km:
+      min: 0.0
+      max: 4387.257
+    # Every RTT axis is min-max normalized with these bounds, so no figure
+    # prints an absolute RTT: min 0 (a 0 ms RTT), max the largest (VP, TG)
+    # pair RTT pooled over the three pro mesh datasets (as02's, 92.395 ms).
+    # The same bounds in every pro config.
+    rtt_norm_ms:
+      min: 0.0
+      max: 92.395
+
+    pni_csv: datasets/pni/as2906.csv
+    peer_asn: 2906
