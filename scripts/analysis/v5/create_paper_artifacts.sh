@@ -128,13 +128,18 @@ grun plot-error-cdf
 # Fig. VP-distance CDF; the shares the text reads off it (thresholds in the
 # group file) in vp_distance_cdf.norm.shares.csv, the median ratio in the manifest.
 grun plot-vp-distance-cdf
-# Fig. Delta_VP vs D_X-TG scatter (rho, clusters: pni_gap.manifest.json) --
-# built above -- and Fig. RTT boxes per cluster.
+# No longer figures in the paper, but they still back numbers: the Delta_VP vs
+# D_X-TG scatter (built above by plot-pni-gap; rho and clusters in
+# pni_gap.manifest.json) and the RTT boxes per cluster.
 grun plot-pni-cluster-rtt
-# v3: the baseline row without the nearest-interconnect proxy -- nearest-VP and
-# nearest-X distance vs. S-P error (two panels), S-P accuracy by has-X / no-X, and the has-X TGs'
-# min RTT vs. S-P error (shares, medians, the misses and the conjecture test in sp_baseline.manifest.json).
-# Replaces the three figures above in the paper; they still back numbers.
+# §4.2 (Understand the Baseline: Shortest Ping), all four PNGs from this one
+# command, written beside the pooled clusters in _cross/pni-gap/<group>.seen/:
+#   Fig. 5(a) sp_vp_scatter       S-P error vs. distance to the nearest VP
+#   Fig. 5(b) sp_x_scatter        S-P error vs. distance to the nearest X (rho)
+#   Fig. 6    sp_accuracy_by_x    S-P region classification, has-X vs. no-X
+#   Fig. 7    sp_rtt_error_has_x  has-X TGs' min RTT vs. S-P error
+# Shares, medians, the has-X misses (inflated RTT / near-tie) and the
+# conjecture test are in sp_baseline.manifest.json.
 grun plot-sp-baseline
 
 # ---- §5 Evaluation on region classification -------------------------------------------
