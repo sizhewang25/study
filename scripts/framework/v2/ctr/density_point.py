@@ -64,6 +64,9 @@ class DensityArgmaxCTR(CTRMethod):
     Reads `log_density` directly rather than `probabilities()`: the normalised
     form is a monotone transform of it, so the argmax is identical and the
     exponentiation is wasted work.
+
+    A one-cell field is `GaussianDensityMTL`'s single-centre case: the cell is
+    the VP's exact coordinate, off-grid, and this returns it unquantised.
     """
 
     def _select_centroid(self, mtl: MTLResult) -> CTRResult:

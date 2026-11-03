@@ -163,11 +163,102 @@ class TestInsufficientInput(unittest.TestCase):
         self.assertEqual(result.error, Error.INSUFFICIENT_DATA)
         self.assertIsNone(result.density)
 
-    def test_two_constraints_is_insufficient_constraints(self):
-        """Distinguished from INSUFFICIENT_DATA: VPs answered, just too few."""
+    def test_two_constraints_go_through_the_surface(self):
+        """Two distinct centres are not isotropic, so there is no shortcut: the
+        result is an ordinary on-grid field."""
         result = mtl().multilaterate(exact_constraints()[:2])
-        self.assertFalse(result.success)
-        self.assertEqual(result.error, Error.INSUFFICIENT_CONSTRAINTS)
+        self.assertTrue(result.success)
+        self.assertEqual(result.density.grid, "healpix")
+        self.assertGreater(len(result.density.cells), 1)
+        self.assertEqual(len(result.participating_vp_ids), 2)
+
+
+class TestSingleCentre(unittest.TestCase):
+    """One ring is isotropic, so the answer is its centre, not a tie-break."""
+
+    def test_one_constraint_answers_with_the_exact_vp_coordinate(self):
+        vp = VPS[0]
+        result = mtl().multilaterate([density_result(vp, 1000.0, 50.0, "vp0")])
+        self.assertTrue(result.success)
+        self.assertEqual(result.density.cells, (vp,))
+        self.assertEqual(result.intersection, [vp])
+        self.assertEqual(result.participating_vp_ids, (VpId("vp0"),))
+
+    def test_the_single_centre_field_does_not_claim_the_grid(self):
+        """The VP is not a HEALPix cell centre; snapping it to one would give
+        SPO a quantisation floor shortest ping does not have."""
+        result = mtl().multilaterate([density_result(VPS[0], 1000.0, 50.0, "vp0")])
+        self.assertIsNone(result.density.grid)
+        self.assertIsNone(result.density.resolution)
+
+    def test_the_answer_ignores_mu_and_sigma(self):
+        """The ring's radius moves where the argmax would land, never the centre."""
+        for mu, sigma in ((5.0, 1.0), (1000.0, 50.0), (4000.0, 900.0)):
+            with self.subTest(mu=mu, sigma=sigma):
+                r = mtl().multilaterate([density_result(VPS[2], mu, sigma, "vp")])
+                self.assertEqual(r.density.cells, (VPS[2],))
+
+    def test_co_located_vps_are_one_centre(self):
+        """Concentric rings are as isotropic as one; participation keeps both."""
+        cons = [
+            density_result(VPS[1], 800.0, 40.0, "a"),
+            density_result(VPS[1], 900.0, 60.0, "b"),
+        ]
+        result = mtl().multilaterate(cons)
+        self.assertTrue(result.success)
+        self.assertEqual(result.density.cells, (VPS[1],))
+        self.assertEqual(result.participating_vp_ids, (VpId("a"), VpId("b")))
+
+    def test_a_nearby_but_distinct_vp_goes_through_the_surface(self):
+        """Exact equality, not a tolerance: 0.01 deg apart is two centres."""
+        near = Coord(VPS[1].lat + 0.01, VPS[1].lon)
+        cons = [
+            density_result(VPS[1], 800.0, 40.0, "a"),
+            density_result(near, 800.0, 40.0, "b"),
+        ]
+        self.assertEqual(mtl().multilaterate(cons).density.grid, "healpix")
+
+    def test_bounds_only_results_do_not_count_as_a_centre(self):
+        """A result without a distribution is skipped before the centre check,
+        so one density VP plus bounds-only VPs is still the single-centre case."""
+        bounds_only = LTDResult(
+            success=True,
+            vp_id=VpId("bounds"),
+            vp_coord=VPS[3],
+            latency=Latency(10.0),
+            tg_distance=Distance(upper_km=1000.0, lower_km=500.0),
+        )
+        result = mtl().multilaterate(
+            [bounds_only, density_result(VPS[0], 1000.0, 50.0, "vp0")]
+        )
+        self.assertEqual(result.density.cells, (VPS[0],))
+        self.assertEqual(result.participating_vp_ids, (VpId("vp0"),))
+
+
+class TestTwoCrossingRings(unittest.TestCase):
+    """Two crossing rings have two mirror-image maxima. The argmax takes one by
+    tie-break; this pins that behaviour so it is not later mistaken for a bug."""
+
+    def test_the_answer_is_one_of_the_two_mirror_points(self):
+        # Two VPs on the equator, 20 deg apart, both rings through the two
+        # points at (+/-lat, 10): symmetric about the great circle joining them.
+        a, b = Coord(0.0, 0.0), Coord(0.0, 20.0)
+        top, bottom = Coord(10.0, 10.0), Coord(-10.0, 10.0)
+        mu = haversine((a.lat, a.lon), (top.lat, top.lon))
+        cons = [density_result(a, mu, 50.0, "a"), density_result(b, mu, 50.0, "b")]
+        result = mtl().multilaterate(cons)
+        best = max(
+            range(len(result.density.log_density)),
+            key=lambda i: result.density.log_density[i],
+        )
+        pred = result.density.cells[best]
+
+        def d(c):
+            return haversine((pred.lat, pred.lon), (c.lat, c.lon))
+
+        # Within a cell of one mirror point, and far from the other.
+        self.assertLess(min(d(top), d(bottom)), 50.0)
+        self.assertGreater(max(d(top), d(bottom)), 1000.0)
 
 
 class TestRecovery(unittest.TestCase):

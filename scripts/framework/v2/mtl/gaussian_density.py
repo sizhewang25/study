@@ -33,6 +33,24 @@ reason this class exists:
   intersecting bands discards exactly this, which is the whole reason the LTD
   fits `σ(d)` at all.
 
+## One centre: the VP, not the argmax
+
+When every constraint shares one centre -- a single VP, or several VPs at the
+same coordinate -- the surface is isotropic (§III-A): `log P` is maximised on
+the whole ring `s = µ`, and which cell of it the argmax returns is decided by
+grid orientation and pruning, not by the data. That case answers with the
+centre itself instead. It is the ring's mean, the other §III-B reading of the
+surface, and the point minimising expected error against a uniform ring: µ,
+against 4µ/π for a random ring point and up to 2µ for the worst. It is also
+exactly what shortest ping returns, which is the honest description of it.
+
+Returned as a success rather than left to `CBGModel`'s fallback, because the
+fallback is scored as "no answer": a method whose own reading is well-defined
+here should not be charged as refusing. Two or more distinct centres go
+through the surface as usual, including two crossing rings, whose mirror-image
+maxima the argmax resolves by tie-break -- a real property of the method on
+sparse targets, deliberately not engineered away.
+
 ## Discretisation
 
 §V-A-2 divides the globe into HTM cells and evaluates (2) per cell. We use
@@ -109,12 +127,6 @@ EARTH_RADIUS_KM = HP.EARTH_RADIUS_KM
 #: should state which tessellation produced a number, and because adding HTM
 #: later should be a new branch here rather than a silent change of meaning.
 GRID_HEALPIX = "healpix"
-
-#: Below this many distribution-carrying constraints the surface is not worth
-#: evaluating: one Gaussian ring is isotropic (the paper says so in §III-A), and
-#: two leave a two-point ambiguity. Three is the first count that can pin a
-#: position, matching `INSUFFICIENT_CONSTRAINTS` elsewhere in the framework.
-MIN_CONSTRAINTS = 3
 
 #: Largest nside either resolution may name.
 #:
@@ -288,18 +300,30 @@ class GaussianDensityMTL(DensityMTLMethod):
             constraints.append((r.vp_coord, float(d.mu_km), float(d.sigma_km)))
             participating.append(r.vp_id)
 
-        if len(constraints) < MIN_CONSTRAINTS:
-            # Distinguishes "the LTD carries no distribution" (a composition
-            # error — a bounds-only LTD was paired with a density MTL) from
-            # "too few VPs answered", because the fix differs.
-            error = (
-                Error.INSUFFICIENT_DATA
-                if not constraints
-                else Error.INSUFFICIENT_CONSTRAINTS
-            )
+        if not constraints:
+            # Either no VP answered, or the LTD carries no distribution (a
+            # composition error -- a bounds-only LTD paired with a density MTL).
             return MTLResult(
                 success=False,
-                error=error,
+                error=Error.INSUFFICIENT_DATA,
+                participating_vp_ids=tuple(participating),
+            )
+
+        centres = {(c.lat, c.lon) for c, _, _ in constraints}
+        if len(centres) == 1:
+            # Isotropic: answer with the shared centre, not the grid's tie-break
+            # on the ring. See "One centre" in the module docstring. Exact
+            # coordinate equality, deliberately: any tolerance would be a new
+            # unexamined knob, and near-coincident VPs do have a defined maximum.
+            #
+            # `grid`/`resolution` stay None because the VP is not a cell centre,
+            # so the field does not claim to be on the HEALPix grid.
+            centre = constraints[0][0]
+            field = DensityField(cells=(centre,), log_density=(0.0,))
+            return MTLResult(
+                success=True,
+                intersection=[centre],
+                density=field,
                 participating_vp_ids=tuple(participating),
             )
 
