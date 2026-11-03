@@ -1,30 +1,31 @@
-# SPO-only rerun of pro-as01-weighted: re-score spotter_cbg into the SAME run
+# SPO-only rerun of pro-as03-weighted: re-score spotter_cbg into the SAME run
 # tree when its existing TF results may come from a stale implementation.
 #
 # Same run_id on purpose. The benchmark's summarize step collects every
-# run.json under outputs/benchmark/v2/pro-as01-weighted/, so the other combos
+# run.json under outputs/benchmark/v2/pro-as03-weighted/, so the other combos
 # already on disk stay in summary.parquet and every v5 figure, and only the
 # spotter_cbg folds are replaced. This file lives in configs/reruns/ because
 # v5 finds a run's config by a flat scan of configs/*.yaml and refuses a run
-# id two configs declare; out of that scan, configs/pro-as01-weighted.yaml
+# id two configs declare; out of that scan, configs/pro-as03-weighted.yaml
 # stays the run's one config for the analysis.
 #
 # Before running, set source_kwargs to exactly the values in
-# configs/pro-as01-weighted.yaml on the TF machine (the committed copy carries
+# configs/pro-as03-weighted.yaml on the TF machine (the committed copy carries
 # placeholders). A different mesh or subset makes the rerun incomparable with
 # the combos it is summarized beside.
 #
-#   R=outputs/benchmark/v2/pro-as01-weighted/traffic_weighted_csv/anchors_to_probes
-#   mkdir -p $R/../../../.stale-spo && for f in $R/fold_*; do \
-#     cp -r $f/spotter_cbg $R/../../../.stale-spo/$(basename $f); done   # keep the old run
+#   R=outputs/benchmark/v2/pro-as03-weighted/traffic_weighted_csv/anchors_to_probes
+#   B=outputs/benchmark/v2/.stale-spo/pro-as03-weighted   # one dir per run
+#   mkdir -p $B && for f in $R/fold_*; do \
+#     mkdir -p $B/$(basename $f) && cp -r $f/spotter_cbg $B/$(basename $f)/; done   # keep the old run
 #   CBG_SKIP_INSPECT=1 PATH=.venv/bin:$PATH ./cli.sh \
-#     --configfile configs/reruns/pro-as01-weighted.spo-only.yaml --forcerun run_combo
+#     --configfile configs/reruns/pro-as03-weighted.spo-only.yaml --forcerun run_combo
 #
 # --forcerun run_combo reruns every run_combo job in this DAG, which here is
 # spotter_cbg x 5 folds and nothing else. Then rerun v5 on the run:
 # classify, report-failures, plot-outcome-bars, plot-outcome-map.
 
-run_id: pro-as01-weighted
+run_id: pro-as03-weighted
 
 benchmark:
   source: traffic_weighted_csv
@@ -42,7 +43,7 @@ benchmark:
   seed: 42
 
   combos:
-    # Verbatim from configs/pro-as01-weighted.yaml.
+    # Verbatim from configs/pro-as03-weighted.yaml.
     - combo_id: spotter_cbg
       ltd: normal_dist
       mtl: gaussian_density
@@ -58,14 +59,14 @@ benchmark:
         top_k: 8
         neighbor_ring: 1
 
-# Verbatim from configs/pro-as01-weighted.yaml, so this file states the same
+# Verbatim from configs/pro-as03-weighted.yaml, so this file states the same
 # common analysis parameters as its parent. v5 still reads the parent's.
 analysis:
   common:
     # The dataset this run belongs to, for v5's cross-dataset figures.
     # Declared rather than parsed: v5 used to split the run id on its first
     # hyphen, which reads `pro` for every run here.
-    dataset_label: PRO-TF AS-A
+    dataset_label: PRO-TF AS-C
     grid: healpix
     resolution: [128]
     # Every distance axis is min-max normalized with these bounds, so no
@@ -85,5 +86,5 @@ analysis:
       min: 0.0
       max: 92.395
 
-    pni_csv: datasets/pni/as20940.csv
-    peer_asn: 20940
+    pni_csv: datasets/pni/as2906.csv
+    peer_asn: 2906

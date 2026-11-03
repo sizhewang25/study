@@ -15,8 +15,9 @@
 # the combos it is summarized beside.
 #
 #   R=outputs/benchmark/v2/pro-as02-weighted/traffic_weighted_csv/anchors_to_probes
-#   mkdir -p $R/../../../.stale-spo && for f in $R/fold_*; do \
-#     cp -r $f/spotter_cbg $R/../../../.stale-spo/$(basename $f); done   # keep the old run
+#   B=outputs/benchmark/v2/.stale-spo/pro-as02-weighted   # one dir per run
+#   mkdir -p $B && for f in $R/fold_*; do \
+#     mkdir -p $B/$(basename $f) && cp -r $f/spotter_cbg $B/$(basename $f)/; done   # keep the old run
 #   CBG_SKIP_INSPECT=1 PATH=.venv/bin:$PATH ./cli.sh \
 #     --configfile configs/reruns/pro-as02-weighted.spo-only.yaml --forcerun run_combo
 #
