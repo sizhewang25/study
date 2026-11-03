@@ -487,7 +487,7 @@ def plot_outcome_bars_cmd(
             f"{figure_outcome_bars.BOUNDED} (cell label broken down by ring "
             f"tier), {figure_outcome_bars.UNBOUNDED} (the cell axis alone, "
             f"the plain nearest-seed verdict) or {figure_outcome_bars.VP} "
-            f"(cell label broken down by single- vs multi-VP TGs; needs "
+            f"(cell label broken down by VP count, 1 / 2 / 3+; needs "
             f"classify parquets with n_obs). Repeatable; default: "
             f"{figure_outcome_bars.BOUNDED}."
         ),

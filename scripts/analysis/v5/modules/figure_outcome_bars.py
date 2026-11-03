@@ -17,11 +17,12 @@ may be. The pair is the argument: same predictions, same denominator, and a
 method can lead on serving region while holding no ring0 at all.
 
 In `vp` mode the answered groups are broken down by how many VPs the TG was
-scored on instead -- one VP, or two and more (`classify.VP_TIERS`, counted at
-`n_obs == 1` after every eval-side filter). On a one-VP TG every method that
-answers with the VP's location *is* Shortest Ping, so the orange share of a
-`correct` group is the part of that method's accuracy it shares with S-P by
-construction. "No answer" stays one ungraded segment, as in `bounded`. Needs
+scored on instead -- one VP, two, or three and more (`classify.VP_TIERS`,
+counted on `n_obs` after every eval-side filter). On a one-VP TG every method
+that answers with the VP's location *is* Shortest Ping, so the orange share of
+a `correct` group is the part of that method's accuracy it shares with S-P by
+construction. Two VPs is split out because two rings meet at two mirror
+points: the light-blue share is where an MTL has to pick between them. "No answer" stays one ungraded segment, as in `bounded`. Needs
 per-TG parquets that carry `n_obs`; older ones are refused with "re-run".
 
 ## Encoding
@@ -117,7 +118,8 @@ TIER_LABELS = {
     "ring2": "2 pixel dist.",
     "beyond": ">2 pixel dist.",
     "vp1": "1 VP",
-    "vp2plus": "≥2 VPs",
+    "vp2": "2 VPs",
+    "vp3plus": "≥3 VPs",
     UNANSWERED: "no answer",
 }
 
@@ -144,21 +146,24 @@ VP_TIERS: tuple[str, ...] = C.VP_TIERS
 #: two greys are outside the mid-tone categorical band), and the contrast WARN
 #: is relieved by the tier borders, the in-place labels and the CSV twin.
 #:
-#: `vp1` / `vp2plus` are mid-tone orange and blue (the dataviz reference
-#: categorical slots 2 and 1), deliberately *not* light tints: every light
-#: tint echoes a ring tier's fill, and the `vp` figure sits beside the
-#: `bounded` one. Validated in stack order (orange, blue, orange, blue, grey):
-#: lightness band, CVD (worst adjacent dE 17.7 protan, tritan 12.6), the
-#: normal-vision floor (17.8) and contrast all PASS; only the neutral grey
-#: fails the chroma floor, by intent. The same orange marks one VP in
-#: `figure_vp_obs`.
+#: `vp1` is the mid-tone orange (dataviz reference categorical slot 2);
+#: `vp2` / `vp3plus` are the light and mid steps of `figure_vp_obs`' ordinal
+#: blue ramp, so "2 VPs" is one fill across both VP figures. Validated in
+#: stack order (orange, light blue, blue, x2, grey): CVD (worst adjacent dE
+#: 17.7 protan, tritan 12.6) and the normal-vision floor (17.8) PASS. The
+#: light blue fails the chroma floor and WARNs on contrast (2.06:1), as it
+#: does in the ramp: it is an ordinal step, not a categorical slot, and the
+#: group borders, in-place labels and CSV twin carry it. Known cost: it sits
+#: dE 10 from `ring1`'s fill, but the two never share a figure and their
+#: legends differ.
 TIER_INK = {
     "ring0": "#79bf9b",
     "ring1": "#b8d2f8",
     "ring2": "#a58bd6",
     "beyond": "#d8d7cf",
     "vp1": "#eb6834",
-    "vp2plus": "#2a78d6",
+    "vp2": "#86b6ef",
+    "vp3plus": "#2a78d6",
     UNANSWERED: "#6b6a65",
 }
 
@@ -307,7 +312,7 @@ LAYOUTS: tuple[str, ...] = (COMPARE, POOLED)
 #: scored with and without the ring.
 BOUNDED = "bounded"
 UNBOUNDED = "unbounded"
-#: The answered groups broken down by single- vs multi-VP instead of by ring.
+#: The answered groups broken down by VP count (1 / 2 / >=3) instead of by ring.
 VP = "vp"
 MODES: tuple[str, ...] = (BOUNDED, UNBOUNDED, VP)
 
@@ -346,8 +351,8 @@ _SUBJECTS = {
     (POOLED, BOUNDED): "Serving region, then distance, datasets pooled",
     (COMPARE, UNBOUNDED): "Serving region alone, unbounded",
     (POOLED, UNBOUNDED): "Serving region alone, unbounded, datasets pooled",
-    (COMPARE, VP): "Serving region, then single- vs multi-VP TGs",
-    (POOLED, VP): "Serving region, then single- vs multi-VP TGs, datasets pooled",
+    (COMPARE, VP): "Serving region, then TGs by VP count (1, 2, 3+)",
+    (POOLED, VP): "Serving region, then TGs by VP count (1, 2, 3+), datasets pooled",
 }
 
 
@@ -772,6 +777,16 @@ def rail_labels(
         )
 
 
+def row_major(items: list, ncol: int) -> list:
+    """Reorder `items` so matplotlib's column-major legend reads row by row.
+
+    `fig.legend(ncol=k)` fills column 0 top-down, then column 1, ..., giving
+    the first `len % k` columns one extra row -- the same split a row-major
+    layout has -- so column `c` must hold `items[c::k]`.
+    """
+    return [x for c in range(ncol) for x in items[c::ncol]]
+
+
 def _legend_handles(mode: str = BOUNDED):
     """`(top row, bottom row)`. `unbounded` has one row: colour is the cell
     label there, so there is no colour-vs-stripe split to explain."""
@@ -909,7 +924,10 @@ def render(
             # between them, which is `_LEGEND_GAP_IN` alone.
             legends, top_frac = [], 1 - _LEGEND_TOP_IN / fig_h
             for h in rows:
-                legends.append(_key(h, top_frac, min(len(h), legend_ncol),
+                ncol = min(len(h), legend_ncol)
+                if mode == VP and h is tiers:
+                    h = row_major(h, ncol)  # 1 VP, 2 VPs, >=3 VPs on one line
+                legends.append(_key(h, top_frac, ncol,
                                     borderaxespad=0.0, borderpad=0.0))
                 fig.canvas.draw()
                 bottom_px = legends[-1].get_window_extent(renderer=fig.canvas.get_renderer()).y0
@@ -980,8 +998,12 @@ def csv_columns(mode: str = BOUNDED) -> list[str]:
 #: `classify`'s single-VP decomposition, carried into the `vp` twin so the
 #: figure's orange shares sit beside the accuracy split they come from.
 VP_SUMMARY_COLUMNS: tuple[str, ...] = (
-    "single_vp_rate", "accuracy_cell_correct_1vp", "accuracy_cell_correct_2plus_vp",
-    "accuracy_ring0_1vp", "accuracy_ring0_2plus_vp", "contrib_1vp", "agree_sp_1vp",
+    "single_vp_rate", "two_vp_rate",
+    "accuracy_cell_correct_1vp", "accuracy_cell_correct_2plus_vp",
+    "accuracy_cell_correct_2vp", "accuracy_cell_correct_3plus_vp",
+    "accuracy_ring0_1vp", "accuracy_ring0_2plus_vp",
+    "accuracy_ring0_2vp", "accuracy_ring0_3plus_vp",
+    "contrib_1vp", "agree_sp_1vp",
 )
 
 
@@ -1026,8 +1048,8 @@ def _manifest(
             "bounded: each cell label broken down by ring tier, so a correct "
             "cell far from the TG is visibly far. unbounded: the cell axis "
             "alone, the plain nearest-seed verdict with nothing bounding how "
-            "far a correct may be. vp: each cell label broken down by whether "
-            "the TG was scored on one VP or more (n_obs == 1). Same "
+            "far a correct may be. vp: each cell label broken down by how "
+            "many VPs the TG was scored on (n_obs 1, 2, >=3). Same "
             "predictions, same denominator."
         ),
         "subject": _SUBJECTS[(layout, mode)],
@@ -1063,7 +1085,7 @@ def _manifest(
         },
         "grouping": (
             "cell label outer (correct, wrong, no answer); ring tier inner in "
-            "bounded mode, single- vs multi-VP inner in vp mode, absent in unbounded"
+            "bounded mode, VP count (1 / 2 / >=3) inner in vp mode, absent in unbounded"
         ),
         "order_note": (
             "each panel ranked by its own cumulative (true, true & ring0, true & <=ring1, "

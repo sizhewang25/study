@@ -262,6 +262,40 @@ class TestSingleVpSplit:
         recomposed = r * row["accuracy_cell_correct_1vp"] + (1 - r) * row["accuracy_cell_correct_2plus_vp"]
         assert recomposed == pytest.approx(row["accuracy_cell_correct"])
 
+    def test_the_three_bin_split_recomposes_the_total(self):
+        # Seattle (1 VP) right; Omaha (2 VPs) right; Chicago (2 VPs) wrong,
+        # answered at Seattle; Miami (5 VPs) right.
+        row = self._row(
+            [_offset(SEATTLE, north_km=2), _offset(OMAHA, north_km=2), SEATTLE, MIAMI],
+            n_obs=(1, 2, 2, 5),
+        )
+        assert row["single_vp_rate"] == pytest.approx(0.25)
+        assert row["two_vp_rate"] == pytest.approx(0.5)
+        assert row["accuracy_cell_correct_2vp"] == pytest.approx(0.5)
+        assert row["accuracy_cell_correct_3plus_vp"] == pytest.approx(1.0)
+        # The 2+ bin is the 2 and 3+ bins together.
+        assert row["accuracy_cell_correct_2plus_vp"] == pytest.approx(2 / 3, abs=1e-4)
+        assert (row["n_vp2_cell_correct"], row["n_vp2_cell_wrong"]) == (1, 1)
+        assert (row["n_vp3plus_cell_correct"], row["n_vp1_cell_correct"]) == (1, 1)
+        r1, r2 = row["single_vp_rate"], row["two_vp_rate"]
+        recomposed = (
+            r1 * row["accuracy_cell_correct_1vp"]
+            + r2 * row["accuracy_cell_correct_2vp"]
+            + (1 - r1 - r2) * row["accuracy_cell_correct_3plus_vp"]
+        )
+        assert recomposed == pytest.approx(row["accuracy_cell_correct"])
+
+    def test_the_guard_catches_a_three_bin_drift(self):
+        row = self._row(
+            [_offset(SEATTLE, north_km=2), _offset(OMAHA, north_km=2), SEATTLE, MIAMI],
+            n_obs=(1, 2, 2, 5),
+        )
+        bad = pd.DataFrame([row]).reset_index(drop=True)
+        C.guard_single_vp(bad)
+        bad.loc[0, "accuracy_cell_correct_3plus_vp"] = 0.0
+        with pytest.raises(ValueError, match="1/2/3"):
+            C.guard_single_vp(bad)
+
     def test_an_empty_bin_is_nan_and_contributes_nothing(self):
         row = self._row(
             [_offset(SEATTLE, north_km=2), OMAHA, CHICAGO, MIAMI], n_obs=(5, 5, 5, 5)

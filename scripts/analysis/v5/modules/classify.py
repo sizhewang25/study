@@ -122,9 +122,12 @@ TG_FRAME_COLUMNS = ("tg_id", "tg_lat", "tg_lon", "pred_lat", "pred_lon", "status
 #: rather than a plausible number.
 N_OBS = "n_obs"
 
-#: The `n_obs` split as a breakdown tier, single-VP first: `n_vp1_cell_correct`
-#: and `n_vp2plus_cell_correct` partition `n_cell_correct`, and likewise wrong.
-VP_TIERS: tuple[str, ...] = ("vp1", "vp2plus")
+#: The `n_obs` split as a breakdown tier, single-VP first: `n_vp1_cell_correct`,
+#: `n_vp2_cell_correct` and `n_vp3plus_cell_correct` partition `n_cell_correct`,
+#: and likewise wrong. Two VPs is its own tier because it is its own regime:
+#: two crossing rings meet at two mirror points, so an MTL either picks one of
+#: them or averages across both -- neither S-P (one VP) nor multilateration.
+VP_TIERS: tuple[str, ...] = ("vp1", "vp2", "vp3plus")
 _BENCHMARK_FRAME_COLUMNS = (*BENCHMARK_TG_COLUMNS, "pred_lat", "pred_lon", "status")
 
 
@@ -309,9 +312,17 @@ def _single_vp_block(
 
     `agree_sp_1vp` is the share of single-VP TGs a method answered in the same
     grid as Shortest Ping: what makes "on these TGs it is S-P" a measurement.
+
+    The multi-VP side is split once more, at `n_obs == 2` (`two_vp_rate`,
+    `*_2vp`, `*_3plus_vp`), with the same identity over three bins:
+
+        accuracy = r1 * acc_1vp + r2 * acc_2vp + (1 - r1 - r2) * acc_3plus_vp
     """
-    one = df[N_OBS].to_numpy() == 1
+    n_obs = df[N_OBS].to_numpy()
+    one = n_obs == 1
     rest = ~one
+    two = n_obs == 2
+    three = n_obs >= 3
     correct = answered & (label == "correct")
     ring0 = answered & (offset == 0)
 
@@ -320,10 +331,15 @@ def _single_vp_block(
 
     block = {
         "single_vp_rate": round(float(one.mean()), 4),
+        "two_vp_rate": round(float(two.mean()), 4),
         "accuracy_cell_correct_1vp": acc(correct, one),
         "accuracy_cell_correct_2plus_vp": acc(correct, rest),
+        "accuracy_cell_correct_2vp": acc(correct, two),
+        "accuracy_cell_correct_3plus_vp": acc(correct, three),
         "accuracy_ring0_1vp": acc(ring0, one),
         "accuracy_ring0_2plus_vp": acc(ring0, rest),
+        "accuracy_ring0_2vp": acc(ring0, two),
+        "accuracy_ring0_3plus_vp": acc(ring0, three),
         "contrib_1vp": round(float((correct & one).mean()), 4),
     }
     # The same split as counts per graded cell label, named like the ring
@@ -332,7 +348,7 @@ def _single_vp_block(
     # ungraded segment in every mode.
     for lab in GRADED_CELL_LABELS:
         hit = answered & (label == lab)
-        for tier, members in zip(VP_TIERS, (one, rest)):
+        for tier, members in zip(VP_TIERS, (one, two, three)):
             block[f"n_{tier}_cell_{lab}"] = int((hit & members).sum())
     if sp_grid is not None:
         keys = [k for k in sp_grid.index.names]
@@ -455,6 +471,13 @@ def guard_single_vp(summary: pd.DataFrame) -> None:
         drift = (r * a1 + (1 - r) * a2 - summary[overall]).abs()
         for i in summary.index[drift > _SINGLE_VP_TOL]:
             problems.append(f"{summary.at[i, 'method']} {overall}: drift {drift[i]:.5f}")
+        # The same identity over the three bins 1 / 2 / >=3.
+        r2 = summary["two_vp_rate"]
+        b2 = summary[f"{stem}_2vp"].fillna(0.0)
+        b3 = summary[f"{stem}_3plus_vp"].fillna(0.0)
+        drift = (r * a1 + r2 * b2 + (1 - r - r2) * b3 - summary[overall]).abs()
+        for i in summary.index[drift > _SINGLE_VP_TOL]:
+            problems.append(f"{summary.at[i, 'method']} {overall} (1/2/3+): drift {drift[i]:.5f}")
     a1 = summary["accuracy_cell_correct_1vp"].fillna(0.0)
     drift = (r * a1 - summary["contrib_1vp"]).abs()
     for i in summary.index[drift > _SINGLE_VP_TOL]:

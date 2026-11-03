@@ -4,8 +4,8 @@
 #   scripts/analysis/v5/create_tf_artifacts.sh        # every figure below
 #
 # Same shape as pro-paper.yaml, cut down to the figures on seen sites: the
-# error CDF, the outcome bars (bounded, unbounded and split by single- vs
-# multi-VP TGs), the Pareto frontier (unbounded and bounded), and the VP-count
+# error CDF, the outcome bars (bounded, unbounded and split by VP count:
+# 1, 2, 3+), the Pareto frontier (unbounded and bounded), and the VP-count
 # distribution with its has-X / no-X split. There are no LOSO twins of the TF
 # runs, so the group has no `unseen` role and nothing here reads one.
 #
@@ -39,8 +39,8 @@ analysis:
     run-id: "@seen"
     method: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
 
-  # Bounded, unbounded, and `vp` (correct / wrong split by single- vs
-  # multi-VP TGs) in one call.
+  # Bounded, unbounded, and `vp` (correct / wrong split by VP count,
+  # 1 / 2 / 3+) in one call.
   plot-outcome-bars:
     layout: [pooled, compare]
     mode: [bounded, unbounded, vp]

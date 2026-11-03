@@ -10,7 +10,7 @@ on a traffic-filtered (TF) run the filter leaves some with one or two.
 
 * `plot-vp-obs-hist` -- **the distribution**: share of TGs per VP-count bin
   (`HIST_BINS`), one bar per bin. The single-VP bar is orange and every other
-  bar blue, the same 1-VP / multi-VP encoding as the `vp` outcome bars.
+  bar blue, the same orange as the `vp` outcome bars' 1-VP tier.
 * `plot-vp-obs-has-x` -- **by has-X / no-X**: two 100%-stacked bars per panel,
   the TGs whose own cell holds their nearest interconnect X and those whose
   cell does not, each broken down by `SPLIT_BINS`. It answers whether the
@@ -79,7 +79,7 @@ SPLIT_BINS: tuple[tuple[int, int | None, str], ...] = (
 
 #: Single-VP orange, shared with the `vp` outcome bars; the rest blue.
 VP1_INK = TIER_INK["vp1"]
-MULTI_INK = TIER_INK["vp2plus"]
+MULTI_INK = TIER_INK["vp3plus"]
 
 #: `SPLIT_BINS` fills: the 1-VP orange, then a three-step blue ramp light to
 #: dark for the ordered multi-VP bins. Validated (dataviz validate_palette):
@@ -89,7 +89,7 @@ MULTI_INK = TIER_INK["vp2plus"]
 #: categorical chroma floor, as a ramp's light step does; every segment is
 #: labelled in place.
 SPLIT_INK: dict[str, str] = {
-    "1 VP": VP1_INK, "2 VPs": "#86b6ef", "3–10 VPs": "#2a78d6", ">10 VPs": "#104281",
+    "1 VP": VP1_INK, "2 VPs": TIER_INK["vp2"], "3–10 VPs": TIER_INK["vp3plus"], ">10 VPs": "#104281",
 }
 
 SIDES: tuple[str, ...] = (HAS_X, NO_X)

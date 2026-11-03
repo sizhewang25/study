@@ -46,8 +46,8 @@ def _scored(space, preds, statuses=None):
             "pred_lat": [p[0] if p else np.nan for p in preds],
             "pred_lon": [p[1] if p else np.nan for p in preds],
             "status": statuses or ["SUCCESS"] * n,
-            # Every other row single-VP, so `vp` mode has both tiers to draw.
-            C.N_OBS: [1 if i % 2 == 0 else 5 for i in range(n)],
+            # Cycling 1 / 2 / 5 VPs, so `vp` mode has every tier to draw.
+            C.N_OBS: [(1, 2, 5)[i % 3] for i in range(n)],
         }
     )
     return C.score_method(frame, space)
@@ -105,8 +105,8 @@ def test_unbounded_segments_are_the_cell_axis_alone():
 def test_vp_segments_are_cell_label_outer_vp_tier_inner():
     segs = F.segments(F.VP)
     assert segs == [
-        ("vp1", "correct"), ("vp2plus", "correct"),
-        ("vp1", "wrong"), ("vp2plus", "wrong"),
+        ("vp1", "correct"), ("vp2", "correct"), ("vp3plus", "correct"),
+        ("vp1", "wrong"), ("vp2", "wrong"), ("vp3plus", "wrong"),
         (F.UNANSWERED, F.UNANSWERED),
     ]
 
@@ -163,7 +163,7 @@ def test_vp_draws_the_rail_and_its_own_key(table, tmp_path, monkeypatch):
     rails = [p for p in fig.axes[0].patches if p.get_width() == pytest.approx(F._RAIL_W)]
     assert rails, "vp breaks each group down, so the rail gives the group back"
     keys = [t.get_text() for lg in fig.legends for t in lg.get_texts()]
-    assert {"1 VP", "≥2 VPs", "no answer"} <= set(keys)
+    assert {"1 VP", "2 VPs", "≥3 VPs", "no answer"} <= set(keys)
     assert not {"0 pixel dist.", "1 pixel dist."} & set(keys)
 
 
@@ -357,3 +357,33 @@ def test_pooled_table_carries_the_pooled_single_vp_rate(tmp_path):
     assert row["n_tgs"] == 8
     assert row["single_vp_rate"] == pytest.approx(3 / 8)
     assert row["contrib_1vp"] == pytest.approx(3 / 8)
+
+
+def test_pooled_table_carries_the_pooled_two_vp_split(tmp_path):
+    a = _single_vp_run(tmp_path, "syn1-000000-000000-mesh", "a", (1, 2, 2, 5))
+    b = _single_vp_run(tmp_path, "syn2-000000-000000-mesh", "b", (2, 5, 5, 5))
+    row = F.pooled_table([a, b], 128).iloc[0]
+    assert row["two_vp_rate"] == pytest.approx(3 / 8)
+    assert row["n_vp2_cell_correct"] == 3 and row["n_vp3plus_cell_correct"] == 4
+    assert row["accuracy_cell_correct_2vp"] == pytest.approx(1.0)
+
+
+def test_the_two_vp_fill_matches_the_vp_obs_two_vp_bin():
+    from scripts.analysis.v5.modules import figure_vp_obs as V
+
+    assert F.TIER_INK["vp2"] == V.SPLIT_INK["2 VPs"]
+    assert F.TIER_INK["vp3plus"] == V.SPLIT_INK["3–10 VPs"]
+
+
+@pytest.mark.parametrize("n,ncol", [(4, 3), (5, 3), (3, 3), (7, 2)])
+def test_row_major_reads_left_to_right_under_column_major_fill(n, ncol):
+    items = list(range(n))
+    placed = F.row_major(items, ncol)
+    # Simulate matplotlib: split into ncol columns, the first n % ncol one longer.
+    rows = -(-n // ncol)
+    sizes = [rows if c < (n % ncol or ncol) else rows - 1 for c in range(ncol)]
+    cols, i = [], 0
+    for size in sizes:
+        cols.append(placed[i:i + size]); i += size
+    read = [col[r] for r in range(rows) for col in cols if r < len(col)]
+    assert read == items

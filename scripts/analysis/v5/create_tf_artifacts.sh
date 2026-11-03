@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Build the traffic-filtered (TF) figures: error CDF, outcome bars (bounded,
-# unbounded and single- vs multi-VP), Pareto frontier (unbounded and bounded)
+# unbounded and by VP count 1 / 2 / 3+), Pareto frontier (unbounded and bounded)
 # and the VP-count distribution with its has-X / no-X split, seen sites only.
 #
 #   ./create_tf_artifacts.sh                         # build into outputs/analysis/v5
@@ -76,7 +76,7 @@ done
 
 section "figures"
 grun plot-error-cdf       # error_cdf.pooled.norm.cut
-grun plot-outcome-bars    # outcome_bars{,.unbounded,.vp}.pooled (bounded, unbounded, single- vs multi-VP)
+grun plot-outcome-bars    # outcome_bars{,.unbounded,.vp}.pooled (bounded, unbounded, by VP count)
 grun plot-pareto          # pareto.cell.seen (unbounded), pareto.bounded.seen
 grun plot-vp-obs-hist     # vp_obs_hist{,.pooled}
 grun plot-vp-obs-has-x    # vp_obs_has_x{,.pooled}
