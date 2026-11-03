@@ -247,8 +247,13 @@ def load(
             t["run_id"] = run.run_id
             err_frames.append(t)
 
-    dist = pd.concat(dist_frames, ignore_index=True)
     err = pd.concat(err_frames, ignore_index=True)
+    # The scored TGs, not every TG in the edge CSV: `classify` may have left
+    # some out under a coverage floor (`coverage.py`), and `n_tgs` and every
+    # distance distribution must be over the population the errors are.
+    dist = pd.concat(dist_frames, ignore_index=True).merge(
+        err[["run_id", "tg_id"]].drop_duplicates(), on=["run_id", "tg_id"], how="inner"
+    )
     long = err.merge(dist, on=["run_id", "tg_id"], how="left", validate="m:1")
     if long[MEASURE_COLUMNS[GEO]].isna().any():
         n = int(long[MEASURE_COLUMNS[GEO]].isna().sum())

@@ -66,6 +66,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
+from scripts.analysis.v5.modules import coverage as COV
 from scripts.analysis.v5.modules import grid as G
 from scripts.analysis.v5.modules.answer_space import (
     BENCHMARK_TG_COLUMNS,
@@ -381,11 +382,18 @@ def score_rung(
     methods: list[str] | None = None,
     analysis_root: Path | None = None,
     inputs_root: Path | None = None,
+    min_vps: int | None = None,
+    low_coverage: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Score every method at one rung, write the rung's artifacts, return the summary.
 
     `inputs_root` is the benchmark's materialized inputs tree, which the
     Shortest-Ping control is read from (default `DEFAULT_INPUTS_ROOT`).
+
+    `min_vps` is the run's coverage floor (`coverage.py`): TGs measured by
+    fewer distinct VPs are left out of every method's frame, and the manifest
+    names them. The answer space keeps them. `low_coverage` is the dropped set
+    when the caller already computed it (`score_for_run`, once per run).
     """
     space_dir = run.answer_space_dir(nside, root=analysis_root)
     if not (space_dir / "meta.json").exists():
@@ -396,16 +404,19 @@ def score_rung(
     require_mesh_universe(run, space)
     combos = run.combo_ids
     wanted = list(methods) if methods else [*combos, SHORTEST_PING]
+    if low_coverage is None:
+        low_coverage = COV.low_coverage(run, min_vps)
     scored: dict[str, pd.DataFrame] = {}
     for method in wanted:
         if method == SHORTEST_PING:
             if not combos:
                 continue
             frame = load_shortest_ping_frame(
-                run, load_method_frame(run, combos[0]), inputs_root=inputs_root
+                run, COV.drop(load_method_frame(run, combos[0]), low_coverage),
+                inputs_root=inputs_root,
             )
         else:
-            frame = load_method_frame(run, method)
+            frame = COV.drop(load_method_frame(run, method), low_coverage)
         scored[method] = score_method(frame, space)
 
     summary = summarize(scored, nside)
@@ -432,6 +443,7 @@ def score_rung(
                     "targets_source", "the run's own evaluated TGs"
                 ),
                 "methods": sorted(scored),
+                COV.RECORD_KEY: COV.record(min_vps, low_coverage),
                 "max_ring": MAX_RING,
                 "max_ring_note": "the last graded tier; past it rows are `beyond`",
                 GRID_OFFSET: (
@@ -467,11 +479,17 @@ def score_for_run(
     methods: list[str] | None = None,
     analysis_root: Path | None = None,
     inputs_root: Path | None = None,
+    min_vps: int | None = None,
 ) -> pd.DataFrame:
-    """Score every rung and write `accuracy_by_grid.csv`. Returns the long frame."""
+    """Score every rung and write `accuracy_by_grid.csv`. Returns the long frame.
+
+    `min_vps` is the coverage floor; see `score_rung`.
+    """
+    low = COV.low_coverage(run, min_vps)
     parts = [
         score_rung(
-            run, nside, methods=methods, analysis_root=analysis_root, inputs_root=inputs_root
+            run, nside, methods=methods, analysis_root=analysis_root, inputs_root=inputs_root,
+            min_vps=min_vps, low_coverage=low,
         )
         for nside in sorted({G.validate_nside(n) for n in nsides}, reverse=True)
     ]

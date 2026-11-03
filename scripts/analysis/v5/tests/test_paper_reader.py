@@ -68,9 +68,9 @@ def test_section_5_tables():
 def test_sections_3_6_7_and_appendix():
     assert "| All | 134 | 1269 | 65 |" in _cells(_section("s3_methodology"), "datasets")
     six = _section("s6_overhead")
-    assert "| OCT-H | All | 13.8 s | 3843 | 5.0 days |" in _cells(six, "batch budget")
-    assert "| OCT-H | 20 ms | 4.5 s | 466 ms |" in _cells(six, "fig:boxplot-speed-memory (phases)")
-    assert "| OCT-H | 74 (64–82)† | 61 (52–72)† | 58 (46–73)† | 49 (42–62) | 5.2 s | 2.3 s |" in _cells(
+    assert "| OCT-H | All | 13.4 s | 3710 | 4.8 days |" in _cells(six, "batch budget")
+    assert "| OCT-H | 20 ms | 4.2 s | 447 ms |" in _cells(six, "fig:boxplot-speed-memory (phases)")
+    assert "| OCT-H | 74 (64–82)† | 61 (52–72)† | 58 (46–74)† | 49 (43–62) | 4.9 s | 2.3 s |" in _cells(
         _section("s7_comprehensive"), "tab:sota")
     appx = _section("sB_appendix")
     assert "| 7 | 128 | 196,608 | 2,594 | 50.9 |" in _cells(appx, "tab:healpix-levels")

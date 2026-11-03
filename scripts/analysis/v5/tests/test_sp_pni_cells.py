@@ -254,24 +254,24 @@ class TestTheRealPaperNumbers:
 
     def test_population(self, rep):
         a = rep["shares"]["all"]
-        assert (a["n_tgs"], a["n_sites"]) == (1269, 65)
+        assert (a["n_tgs"], a["n_sites"]) == (1267, 65)
         assert rep["consistency"]["n_tgs_sp_tie_broken_differently"] == 5
 
     def test_sp_answers_the_interconnect_cell(self, rep):
         a = rep["shares"]["all"]
-        assert round(a["pred_in_x_cell_pct"], 1) == 85.0
+        assert round(a["pred_in_x_cell_pct"], 1) == 85.1
         assert round(a["random_in_x_cell_pct"], 1) == 6.7
-        assert round(a["pred_in_interconnect_cell_pct"], 1) == 99.9
+        assert round(a["pred_in_interconnect_cell_pct"], 1) == 100.0
         assert round(a["random_in_interconnect_cell_pct"], 1) == 67.3
 
     def test_clusters_split_on_the_tg_cell(self, rep):
         c = rep["shares"]["by_cluster"]
         assert [round(c[k]["tg_cell_holds_x_pct"], 1) for k in "123"] == [100.0, 0.0, 100.0]
-        assert [round(c[k]["correct_pct"], 1) for k in "123"] == [96.9, 0.2, 0.0]
-        assert [round(c[k]["pred_in_x_cell_pct"], 1) for k in "123"] == [96.9, 75.9, 0.0]
+        assert [round(c[k]["correct_pct"], 1) for k in "123"] == [96.9, 0.0, 0.0]
+        assert [round(c[k]["pred_in_x_cell_pct"], 1) for k in "123"] == [96.9, 76.0, 0.0]
 
     def test_the_rule(self, rep):
         assert round(rep["rule"]["all"]["agree_pct"], 1) == 96.4
         [hit] = [c for c in rep["contingency"]["all"] if c["pred_in_x_cell"] and c["tg_cell_holds_x"]]
-        assert (hit["n_tgs"], hit["correct_pct"]) == (623, 100.0)
-        assert sum(p["n_tgs"] for p in rep["rule_misses"]["points"]) == 46
+        assert (hit["n_tgs"], hit["correct_pct"]) == (622, 100.0)
+        assert sum(p["n_tgs"] for p in rep["rule_misses"]["points"]) == 45

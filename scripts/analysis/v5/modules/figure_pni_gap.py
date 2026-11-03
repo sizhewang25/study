@@ -277,11 +277,13 @@ def build_for_runs(
     analysis_root: Path | None = None,
     source_csvs: dict[str, Path] | None = None,
     dist_norm_km: dict[str, tuple[float, float] | None] | None = None,
+    min_vps: dict[str, int | None] | None = None,
 ) -> list[Path]:
     """Every requested layout. `per-run` writes one figure per run into that
     run's tree; `pooled` writes one figure over all of them into `_cross/`.
     Each run is measured against its own PNI list either way. `dist_norm_km`
-    maps run id to its declared bounds; the pooled runs must agree."""
+    maps run id to its declared bounds; the pooled runs must agree. `min_vps`
+    maps run id to its coverage floor (`coverage.py`)."""
     _checked_k(k)
     bad = [lay for lay in layouts if lay not in P.LAYOUTS]
     if bad:
@@ -291,14 +293,14 @@ def build_for_runs(
         for run in runs:
             one = {run.run_id: (source_csvs or {}).get(run.run_id)} if source_csvs else None
             tgs, pts, meta = P.compute_runs([run], pni_csvs, layout=P.PER_RUN, k=k, method=method,
-                                             source_csvs=one)
+                                             source_csvs=one, min_vps=min_vps)
             out_dir = P.output_dir(run.run_id, pni_csvs[run.run_id], analysis_root=analysis_root)
             pngs.append(_draw(tgs, pts, meta, out_dir,
                               DN.common_bounds([run.run_id], dist_norm_km)))
     if P.POOLED in layouts:
         bounds = DN.common_bounds([r.run_id for r in runs], dist_norm_km)
         tgs, pts, meta = P.compute_runs(runs, pni_csvs, layout=P.POOLED, k=k, method=method,
-                                         source_csvs=source_csvs)
+                                         source_csvs=source_csvs, min_vps=min_vps)
         out_dir = P.pooled_output_dir([r.run_id for r in runs], analysis_root=analysis_root)
         pngs.append(_draw(tgs, pts, meta, out_dir, bounds))
     return pngs

@@ -76,6 +76,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from scipy.stats import ConstantInputWarning, spearmanr  # noqa: E402
 
+from scripts.analysis.v5.modules import coverage as COV  # noqa: E402
 from scripts.analysis.v5.modules import pni_gap as P  # noqa: E402
 from scripts.analysis.v5.modules import sites as S  # noqa: E402
 from scripts.analysis.v5.modules.answer_space import BENCHMARK_TG_COLUMNS  # noqa: E402
@@ -478,7 +479,8 @@ def load_runs(
         csv = P.checked_source_csv(run, pni_csvs[run.run_id], records.get(run.run_id, {}),
                                    (source_csvs or {}).get(run.run_id))
         pnis = P.load_pnis(pni_csvs[run.run_id])
-        edges = load_edges(csv)
+        # The TGs the clusters left out under a coverage floor (`coverage.py`).
+        edges = COV.drop(load_edges(csv), COV.from_record(records.get(run.run_id, {})))
         frames.append(tg_frame(edges, pnis, run_id=run.run_id))
         coverage[run.run_id] = interconnect_coverage(edges, pnis)
     tgs = check_against_clusters(pd.concat(frames, ignore_index=True), clusters)

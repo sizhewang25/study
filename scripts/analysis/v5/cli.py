@@ -283,17 +283,26 @@ def classify_cmd(
     """Label every prediction with its ring and its cell.
 
     Always scores every combo: which ones a figure draws is decided at plot
-    time, by `--method` or the figure's own `combo_ids`.
+    time, by `--method` or the figure's own `combo_ids`. A run (or its group)
+    declaring `analysis.common.min_vps_per_tg` scores only the TGs measured by
+    at least that many VPs; the manifest lists the rest.
     """
+    from scripts.analysis.v5.modules.labels import declared_min_vps_per_tg
+
     for run in _runs(run_id, all_runs, outputs_root):
         _refuse_combo_ids("classify", [run.run_id], outputs_root)
+        min_vps = declared_min_vps_per_tg(run.run_id, outputs_root)
         long = classify.score_for_run(
             run,
             nsides=_nsides(nside),
             methods=list(method) if method else None,
             analysis_root=analysis_root,
             inputs_root=inputs_root,
+            min_vps=min_vps,
         )
+        if min_vps is not None:
+            n = int(long[long.nside == long.nside.max()].n_tgs.iloc[0]) if len(long) else 0
+            typer.echo(f"{run.run_id}: scoring TGs measured by >= {min_vps} VPs ({n} TGs)")
         for _, r in long[long.nside == long.nside.max()].iterrows():
             typer.echo(
                 f"{run.run_id} nside={int(r.nside)} {r.method}: "
@@ -1755,12 +1764,13 @@ def plot_pni_gap_cmd(
     _refuse_combo_ids("plot-pni-gap", run_id or [], outputs_root)
     try:
         runs, pni_csvs, layouts, source_csvs = _pni_inputs(run_id, layout, pni_csv, source_csv, outputs_root)
-        from scripts.analysis.v5.modules.labels import declared_dist_norm_km
+        from scripts.analysis.v5.modules.labels import declared_dist_norm_km, declared_min_vps_per_tg
 
         pngs = figure_pni_gap.build_for_runs(
             runs, pni_csvs, layouts=layouts, k=k, method=method,
             analysis_root=analysis_root, source_csvs=source_csvs,
             dist_norm_km={r.run_id: declared_dist_norm_km(r.run_id, outputs_root) for r in runs},
+            min_vps={r.run_id: declared_min_vps_per_tg(r.run_id, outputs_root) for r in runs},
         )
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc

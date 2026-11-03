@@ -119,6 +119,7 @@ from sklearn.cluster import AgglomerativeClustering, KMeans
 from sklearn.metrics import adjusted_rand_score, silhouette_samples, silhouette_score
 
 from scripts.analysis.v5.modules import cross, edges
+from scripts.analysis.v5.modules import coverage as COV
 from scripts.analysis.v5.modules import sites as S
 from scripts.analysis.v5.modules.answer_space import BENCHMARK_TG_COLUMNS
 from scripts.analysis.v5.modules.figure_vp_proximity import MEASURE_COLUMNS, vp_distances
@@ -530,12 +531,21 @@ def pooled_output_dir(run_ids: list[str], *, analysis_root: Path | None = None) 
 
 
 def run_population(
-    run: RunPaths, pni_csv: Path, *, source_csv: Path | None = None
+    run: RunPaths, pni_csv: Path, *, source_csv: Path | None = None,
+    min_vps: int | None = None,
 ) -> tuple[pd.DataFrame, dict]:
-    """One run's per-TG frame against **its own** PNI list, and its provenance."""
+    """One run's per-TG frame against **its own** PNI list, and its provenance.
+
+    `min_vps` is the run's coverage floor (`coverage.py`): TGs measured by
+    fewer distinct VPs are dropped here, before clustering, so every reader
+    of the clusters inherits the drop. The record names them.
+    """
     csv = edges.resolve_source_csv(run, source_csv)
     pnis = load_pnis(pni_csv)
-    pop = population(vp_distances(run, source_csv=csv), tg_coordinates(csv), pnis, run_id=run.run_id)
+    dist = vp_distances(run, source_csv=csv)
+    low = COV.low_coverage(run, min_vps, counts=dist.set_index("tg_id")["n_vp"])
+    dist = COV.drop(dist, low)
+    pop = population(dist, tg_coordinates(csv), pnis, run_id=run.run_id)
     pop.insert(0, "run_id", run.run_id)
     record = {
         "run_id": run.run_id,
@@ -546,6 +556,7 @@ def run_population(
         "n_pnis": int(len(pnis)),
         "n_tgs": int(len(pop)),
         "n_sites": int(pop[S.SITE_KEY_COL].nunique()),
+        COV.RECORD_KEY: COV.record(min_vps, low),
     }
     return pop, record
 
@@ -558,8 +569,11 @@ def compute_runs(
     k: int | None = None,
     method: str = DEFAULT_METHOD,
     source_csvs: dict[str, Path] | None = None,
+    min_vps: dict[str, int | None] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """`(tgs, points, meta)` over one run, or several pooled. Writes nothing.
+
+    `min_vps` maps run id to its coverage floor (absent = no floor).
 
     Pooling concatenates the runs' TGs **after** each has been measured against
     its own PNI list: `d_pni` against another operator's PNIs means nothing.
@@ -579,7 +593,8 @@ def compute_runs(
     pops, records = [], []
     for run in runs:
         pop, record = run_population(run, pni_csvs[run.run_id],
-                                     source_csv=(source_csvs or {}).get(run.run_id))
+                                     source_csv=(source_csvs or {}).get(run.run_id),
+                                     min_vps=(min_vps or {}).get(run.run_id))
         pops.append(pop)
         records.append(record)
     cross.guard_disjoint_tgs(

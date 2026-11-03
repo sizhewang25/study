@@ -52,6 +52,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from scripts.analysis.v5.modules import coverage as COV
 from scripts.analysis.v5.modules.classify import load_method_frame
 from scripts.analysis.v5.modules.paths import MissingArtifactError, RunPaths
 from scripts.analysis.v5.modules.status import SHORTEST_PING, solved_mask
@@ -265,7 +266,9 @@ def load_cost_frame(
             f"targets.parquet), so there is nothing measured to draw."
         )
     cols = tuple(dict.fromkeys(c for spec in specs for c in spec.stage_cols))
-    df = load_method_frame(run, method, columns=cols)
+    # The TGs `classify` scored: a run declaring a coverage floor leaves the
+    # low-coverage TGs out of cost too, so accuracy and cost share one roster.
+    df = COV.drop(load_method_frame(run, method, columns=cols), COV.declared_low_coverage(run))
     dup = df["tg_id"].duplicated()
     if dup.any():
         raise ValueError(

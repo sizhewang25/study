@@ -211,16 +211,16 @@ class TestTheRealPaperNumbers:
 
     def test_pooled(self, stats):
         h, n = stats.loc[(X.ALL_RUNS, "has-X")], stats.loc[(X.ALL_RUNS, "no-X")]
-        assert (h.n_tgs, h.n_sites, n.n_tgs, n.n_sites) == (668, 34, 601, 31)
+        assert (h.n_tgs, h.n_sites, n.n_tgs, n.n_sites) == (667, 34, 600, 31)
         assert (round(h.p50_ms, 2), round(n.p50_ms, 1)) == (1.55, 10.5)
-        assert (h.n_le_split, n.n_le_split) == (613, 0)
+        assert (h.n_le_split, n.n_le_split) == (612, 0)
 
     def test_per_network_medians_and_sites(self, stats):
         got = {(r, s): (round(stats.loc[(r, s)].p50_ms, 1), int(stats.loc[(r, s)].n_sites))
                for r in self.RUNS for s in ("has-X", "no-X")}
         assert got == {
             ("pro-as01-mesh", "has-X"): (1.5, 15), ("pro-as01-mesh", "no-X"): (13.7, 5),
-            ("pro-as02-mesh", "has-X"): (1.4, 9), ("pro-as02-mesh", "no-X"): (13.3, 13),
+            ("pro-as02-mesh", "has-X"): (1.4, 9), ("pro-as02-mesh", "no-X"): (12.6, 13),
             ("pro-as03-mesh", "has-X"): (1.6, 10), ("pro-as03-mesh", "no-X"): (8.8, 13),
         }
 

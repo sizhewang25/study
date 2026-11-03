@@ -340,6 +340,28 @@ def declared_pni_csv(run_id: str, root: Path | str = DEFAULT_OUTPUTS_ROOT) -> Pa
     return None if value is None else _under_repo(str(value))
 
 
+#: Where a run's TG coverage floor is declared: the fewest distinct VPs a TG
+#: must have been measured by to be scored. Read by `classify` and
+#: `plot-pni-gap` (`coverage.py`).
+MIN_VPS_PATH = ("analysis", "common", "min_vps_per_tg")
+
+
+def declared_min_vps_per_tg(run_id: str, root: Path | str = DEFAULT_OUTPUTS_ROOT) -> int | None:
+    """The run's declared `analysis.common.min_vps_per_tg`, or None for "score every TG".
+
+    Must be a positive integer. Anything else raises: a float or a string
+    would be compared against VP counts and silently keep or drop the wrong TGs.
+    """
+    value = declared(run_id, MIN_VPS_PATH, root)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(
+            f"{run_id}: analysis.common.min_vps_per_tg must be a positive integer, got {value!r}"
+        )
+    return int(value)
+
+
 #: Where a run's RTT normalizer is declared: the `{min, max}` ms bounds every
 #: RTT axis is min-max normalized with. Read by `plot-pni-cluster-rtt`.
 RTT_NORM_PATH = ("analysis", "common", "rtt_norm_ms")

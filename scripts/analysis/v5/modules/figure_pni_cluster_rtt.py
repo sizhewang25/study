@@ -79,6 +79,7 @@ from matplotlib.ticker import MultipleLocator  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
+from scripts.analysis.v5.modules import coverage as COV  # noqa: E402
 from scripts.analysis.v5.modules import edges  # noqa: E402
 from scripts.analysis.v5.modules import pni_gap as P  # noqa: E402
 from scripts.analysis.v5.modules.cost import cost_stats  # noqa: E402
@@ -123,7 +124,8 @@ OUTLIER_MS_PT = 2.0
 def _checked_run(run: RunPaths, pni_csv: Path, record: dict, source_csv: Path | None) -> pd.DataFrame:
     """One run's min-RTT edges, after checking its inputs are the clustered ones."""
     csv = P.checked_source_csv(run, pni_csv, record, source_csv)
-    rtt = edges.load_min_rtt(run, source_csv=csv)
+    # The TGs the clusters left out under a coverage floor (`coverage.py`).
+    rtt = COV.drop(edges.load_min_rtt(run, source_csv=csv), COV.from_record(record))
     rtt.insert(0, "run_id", run.run_id)
     return rtt
 

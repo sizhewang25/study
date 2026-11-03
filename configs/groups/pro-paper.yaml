@@ -38,6 +38,13 @@ analysis:
     rtt_norm_ms:
       min: 0.0
       max: 92.395
+    # Score only TGs measured by at least this many distinct VPs (of 134).
+    # Scoring only: the benchmark outputs and the answer space keep every TG
+    # (scripts/analysis/v5/modules/coverage.py). On the meshes it drops two
+    # measurement gaps, a 26-VP AS-B TG and an 80-VP AS-A TG; every other TG
+    # has >= 130. Read by `classify` and `plot-pni-gap`, so every frame built
+    # from their outputs drops the same TGs; each manifest names them.
+    min_vps_per_tg: 130
 
   # -- bounds and datasets (§3) ---------------------------------------------------
   report-bounds:                  # computes D and R_max, checks analysis.common
