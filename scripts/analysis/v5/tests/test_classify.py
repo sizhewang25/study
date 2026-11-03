@@ -218,6 +218,125 @@ class TestSummary:
             C.guard_cross_tab(bad)
 
 
+def _per_tg_frame(space, preds, n_obs, statuses=None):
+    """One row per TG of `space`, in order: TG `i` predicts `preds[i]`."""
+    t = space.tgs
+    n = len(preds)
+    return pd.DataFrame(
+        {
+            "tg_id": t["tg_id"].iloc[:n].tolist(),
+            "tg_lat": t["tg_lat"].iloc[:n].tolist(),
+            "tg_lon": t["tg_lon"].iloc[:n].tolist(),
+            "pred_lat": [p[0] if p else np.nan for p in preds],
+            "pred_lon": [p[1] if p else np.nan for p in preds],
+            "status": statuses or ["SUCCESS"] * n,
+            C.N_OBS: list(n_obs),
+        }
+    )
+
+
+class TestSingleVpSplit:
+    """Accuracy split at `n_obs == 1`, and the identities that tie it to the total."""
+
+    #: Seattle and Omaha have one VP, Chicago and Miami more.
+    N_OBS = (1, 1, 5, 5)
+
+    def _row(self, preds, statuses=None, n_obs=N_OBS):
+        s = _space()
+        scored = C.score_method(_per_tg_frame(s, preds, n_obs, statuses), s)
+        return C.summarize({"m": scored}, s.nside).iloc[0]
+
+    def test_the_split_recomposes_the_total(self):
+        # Seattle right; Omaha unanswered (stays in its bin); Chicago right;
+        # Miami wrong (answered at Seattle).
+        row = self._row(
+            [_offset(SEATTLE, north_km=2), None, _offset(CHICAGO, north_km=2), SEATTLE],
+            ["SUCCESS", "ERROR", "SUCCESS", "SUCCESS"],
+        )
+        assert row["single_vp_rate"] == pytest.approx(0.5)
+        assert row["accuracy_cell_correct_1vp"] == pytest.approx(0.5)
+        assert row["accuracy_cell_correct_2plus_vp"] == pytest.approx(0.5)
+        assert row["accuracy_ring0_1vp"] == pytest.approx(0.5)
+        assert row["contrib_1vp"] == pytest.approx(0.25)
+        r = row["single_vp_rate"]
+        recomposed = r * row["accuracy_cell_correct_1vp"] + (1 - r) * row["accuracy_cell_correct_2plus_vp"]
+        assert recomposed == pytest.approx(row["accuracy_cell_correct"])
+
+    def test_an_empty_bin_is_nan_and_contributes_nothing(self):
+        row = self._row(
+            [_offset(SEATTLE, north_km=2), OMAHA, CHICAGO, MIAMI], n_obs=(5, 5, 5, 5)
+        )
+        assert row["single_vp_rate"] == 0.0
+        assert np.isnan(row["accuracy_cell_correct_1vp"])
+        assert np.isnan(row["accuracy_ring0_1vp"])
+        assert row["contrib_1vp"] == 0.0
+        assert row["accuracy_cell_correct_2plus_vp"] == pytest.approx(row["accuracy_cell_correct"])
+
+    def test_a_frame_without_n_obs_omits_the_columns(self):
+        """Absent, never wrong: a stale parquet gets no split at all."""
+        s = _space()
+        scored = C.score_method(_frame(s, [OMAHA]), s)
+        row = C.summarize({"m": scored}, s.nside).iloc[0]
+        assert "single_vp_rate" not in row.index
+
+    def test_the_split_is_all_or_nothing_across_methods(self):
+        """One method without `n_obs` would otherwise read as a NaN difference."""
+        s = _space()
+        with_n = C.score_method(_per_tg_frame(s, [SEATTLE, OMAHA], (1, 5)), s)
+        without = with_n.drop(columns=[C.N_OBS])
+        summary = C.summarize({"a": with_n, "b": without}, s.nside)
+        assert "single_vp_rate" not in summary.columns
+
+    def test_agreement_with_shortest_ping_on_single_vp_tgs(self):
+        """1.0 where the method answers in S-P's grid; lower where it does not."""
+        s = _space()
+        sp_preds = [_offset(SEATTLE, north_km=2), _offset(OMAHA, north_km=2), CHICAGO, MIAMI]
+        sp = C.score_method(
+            _per_tg_frame(s, sp_preds, self.N_OBS, ["BASELINE"] * 4), s
+        )
+        same = C.score_method(_per_tg_frame(s, sp_preds, self.N_OBS), s)
+        # Omaha moved ~300 km: a different grid from S-P's.
+        moved = C.score_method(
+            _per_tg_frame(s, [sp_preds[0], _offset(OMAHA, east_km=300), CHICAGO, MIAMI], self.N_OBS),
+            s,
+        )
+        summary = C.summarize(
+            {C.SHORTEST_PING: sp, "same": same, "moved": moved}, s.nside
+        ).set_index("method")
+        assert summary.at[C.SHORTEST_PING, "agree_sp_1vp"] == 1.0
+        assert summary.at["same", "agree_sp_1vp"] == 1.0
+        assert summary.at["moved", "agree_sp_1vp"] == pytest.approx(0.5)
+
+    def test_an_unanswered_row_never_agrees(self):
+        """A FALLBACK row carries S-P's coordinate; it is still no answer."""
+        s = _space()
+        preds = [_offset(SEATTLE, north_km=2), _offset(OMAHA, north_km=2), CHICAGO, MIAMI]
+        sp = C.score_method(_per_tg_frame(s, preds, self.N_OBS, ["BASELINE"] * 4), s)
+        fb = C.score_method(
+            _per_tg_frame(s, preds, self.N_OBS, ["FALLBACK", "SUCCESS", "SUCCESS", "SUCCESS"]), s
+        )
+        summary = C.summarize({C.SHORTEST_PING: sp, "fb": fb}, s.nside).set_index("method")
+        assert summary.at["fb", "agree_sp_1vp"] == pytest.approx(0.5)
+
+    def test_no_agreement_column_without_shortest_ping(self):
+        row = self._row([SEATTLE, OMAHA, CHICAGO, MIAMI])
+        assert "agree_sp_1vp" not in row.index
+
+    def test_guard_catches_a_split_that_does_not_recompose(self):
+        row = self._row([_offset(SEATTLE, north_km=2), OMAHA, CHICAGO, MIAMI])
+        bad = pd.DataFrame([row])
+        bad["accuracy_cell_correct_1vp"] = 0.0
+        with pytest.raises(ValueError, match="does not recompose"):
+            C.guard_single_vp(bad)
+
+    def test_guard_catches_methods_on_one_roster_disagreeing_on_the_rate(self):
+        row = self._row([SEATTLE, OMAHA, CHICAGO, MIAMI])
+        bad = pd.DataFrame([row, row]).reset_index(drop=True)
+        bad.loc[1, "single_vp_rate"] = 0.25
+        with pytest.raises(ValueError, match="disagree on single_vp_rate"):
+            C.guard_single_vp(bad)
+
+
 class TestPopulationContract:
     def test_unknown_tg_is_refused(self):
         s = _space()

@@ -110,6 +110,17 @@ OUTCOME_COUNTS: tuple[str, ...] = ("n_ring0", "n_ring1", "n_ring2", "n_beyond", 
 
 #: Per-TG columns every scoring path needs, in v5 names.
 TG_FRAME_COLUMNS = ("tg_id", "tg_lat", "tg_lon", "pred_lat", "pred_lon", "status")
+
+#: Observations the TG was scored on, after every eval-side filter (`min_obs`,
+#: the traffic mask). The same for every method on one TG, which is what lets
+#: `summarize` split accuracy by it.
+#:
+#: Optional, unlike `GRID_OFFSET`: read when the `targets.parquet` holds it
+#: (every benchmark-written one does), and the single-VP columns are emitted
+#: only when every frame carries it. A frame without it yields *absent*
+#: columns, never wrong ones, so a reader of a stale artifact gets a KeyError
+#: rather than a plausible number.
+N_OBS = "n_obs"
 _BENCHMARK_FRAME_COLUMNS = (*BENCHMARK_TG_COLUMNS, "pred_lat", "pred_lon", "status")
 
 
@@ -140,9 +151,8 @@ def load_method_frame(
         # existed is ordinary stale state -- the map degrades to "no LTD
         # layer" for it, which is a missing layer rather than a crash.
         have = set(pq.read_schema(path).names)
-        t = pq.read_table(
-            path, columns=list(_BENCHMARK_FRAME_COLUMNS) + [c for c in extra if c in have]
-        ).to_pandas()
+        optional = [c for c in (N_OBS, *extra) if c in have]
+        t = pq.read_table(path, columns=list(_BENCHMARK_FRAME_COLUMNS) + optional).to_pandas()
         t["fold"] = int(fold.split("_")[1])
         frames.append(t)
     if not frames:
@@ -165,6 +175,8 @@ def load_shortest_ping_frame(
 
     sping = shortest_ping(run, inputs_root).set_index(["tg_id", "fold"])
     out = roster[["tg_id", "tg_lat", "tg_lon", "fold"]].copy()
+    if N_OBS in roster.columns:
+        out[N_OBS] = roster[N_OBS].to_numpy()
     hit = sping.reindex(pd.MultiIndex.from_frame(out[["tg_id", "fold"]]))
     out["pred_lat"] = hit["sping_vp_lat"].to_numpy()
     out["pred_lon"] = hit["sping_vp_lon"].to_numpy()
@@ -259,6 +271,67 @@ def _tier(offset: np.ndarray) -> np.ndarray:
     return np.array(RING_TIERS, dtype=object)[np.where(placed, offset, len(RING_TIERS) - 1)]
 
 
+def _sp_grid_lookup(scored: dict[str, pd.DataFrame]) -> pd.Series | None:
+    """Shortest-Ping's predicted grid per TG, or None when S-P is not scored.
+
+    Keyed on `(tg_id, fold)` when the frames carry `fold`, else on `tg_id`. A
+    K-fold or LOSO run evaluates each TG in one fold, and pooled runs have
+    disjoint TGs (`cross.guard_disjoint_tgs`), so either key is unique.
+    """
+    sp = scored.get(SHORTEST_PING)
+    if sp is None:
+        return None
+    keys = ["tg_id", "fold"] if "fold" in sp.columns else ["tg_id"]
+    return sp.set_index(keys)["pred_grid_id"]
+
+
+def _single_vp_block(
+    df: pd.DataFrame,
+    answered: np.ndarray,
+    offset: np.ndarray,
+    label: np.ndarray,
+    sp_grid: pd.Series | None,
+) -> dict:
+    """Accuracy split at `n_obs == 1`, so the single-VP rate links to each method.
+
+    Cell and ring0 accuracy are means over TGs, so with `r = single_vp_rate`
+
+        accuracy = r * acc_1vp + (1 - r) * acc_2plus_vp
+
+    and `contrib_1vp = r * acc_1vp` is the share of all TGs a method gets right
+    *on* single-VP TGs -- on the scale of `accuracy_cell_correct`, not in pp.
+    Unanswered rows stay in each bin's denominator, as they do overall. An
+    empty bin's accuracy is NaN; its contribution is 0.
+
+    `agree_sp_1vp` is the share of single-VP TGs a method answered in the same
+    grid as Shortest Ping: what makes "on these TGs it is S-P" a measurement.
+    """
+    one = df[N_OBS].to_numpy() == 1
+    rest = ~one
+    correct = answered & (label == "correct")
+    ring0 = answered & (offset == 0)
+
+    def acc(hit: np.ndarray, members: np.ndarray) -> float:
+        return round(float(hit[members].mean()), 4) if members.any() else np.nan
+
+    block = {
+        "single_vp_rate": round(float(one.mean()), 4),
+        "accuracy_cell_correct_1vp": acc(correct, one),
+        "accuracy_cell_correct_2plus_vp": acc(correct, rest),
+        "accuracy_ring0_1vp": acc(ring0, one),
+        "accuracy_ring0_2plus_vp": acc(ring0, rest),
+        "contrib_1vp": round(float((correct & one).mean()), 4),
+    }
+    if sp_grid is not None:
+        keys = [k for k in sp_grid.index.names]
+        sp = sp_grid.reindex(pd.MultiIndex.from_frame(df[keys]) if len(keys) > 1 else df[keys[0]])
+        sp = sp.fillna(-1).to_numpy(dtype=np.int64)
+        mine = df["pred_grid_id"].to_numpy()
+        same = answered & (mine >= 0) & (mine == sp)
+        block["agree_sp_1vp"] = acc(same, one)
+    return block
+
+
 def summarize(scored: dict[str, pd.DataFrame], nside: int) -> pd.DataFrame:
     """One row per method: the grid axis, the cell axis, and their cross-tab."""
     stale = [m for m, df in scored.items() if GRID_OFFSET not in df.columns]
@@ -267,6 +340,10 @@ def summarize(scored: dict[str, pd.DataFrame], nside: int) -> pd.DataFrame:
             f"{stale} have no {GRID_OFFSET!r} column; these are per-TG frames from "
             f"before it existed -- re-run `classify` to rewrite them"
         )
+    # All or nothing: a column present for some methods and NaN for others
+    # would read as a measured difference between them.
+    split = bool(scored) and all(N_OBS in df.columns for df in scored.values())
+    sp_grid = _sp_grid_lookup(scored) if split else None
     rows = []
     for method, df in scored.items():
         n = len(df)
@@ -324,11 +401,54 @@ def summarize(scored: dict[str, pd.DataFrame], nside: int) -> pd.DataFrame:
         row[f"{GRID_OFFSET}_p50"] = round(float(g.quantile(0.50)), 1) if len(g) else None
         row[f"{GRID_OFFSET}_p90"] = round(float(g.quantile(0.90)), 1) if len(g) else None
         row[f"{GRID_OFFSET}_max"] = int(g.max()) if len(g) else None
+        if split:
+            row.update(_single_vp_block(df, answered, offset, label, sp_grid))
         rows.append(row)
     out = pd.DataFrame(rows).sort_values("accuracy_ring0", ascending=False)
     guard_partition(out)
     guard_cross_tab(out)
+    if split:
+        guard_single_vp(out)
     return out
+
+
+#: Slack on the single-VP identities: each term is rounded to 4 decimals, so a
+#: product of two can drift by ~1e-4 from the directly counted value.
+_SINGLE_VP_TOL = 1e-3
+
+
+def guard_single_vp(summary: pd.DataFrame) -> None:
+    """The single-VP split recomposes each method's accuracy.
+
+    Three assertions: methods scored on the same number of TGs share one
+    `single_vp_rate` (one roster); `r * acc_1vp + (1 - r) * acc_2plus_vp`
+    equals the overall accuracy on both the cell axis and ring0; and
+    `contrib_1vp == r * acc_1vp`. An empty bin's NaN accuracy carries zero
+    weight.
+
+    Grouped by `n_tgs` rather than asserted over every row, so a pooled table
+    whose methods saw different populations still reaches `pooled_table`'s own
+    refusal, which says what to do about it.
+    """
+    problems = []
+    for n, group in summary.groupby("n_tgs"):
+        rates = group["single_vp_rate"].unique()
+        if len(rates) > 1:
+            problems.append(f"methods over {n} TGs disagree on single_vp_rate: {sorted(rates)}")
+    r = summary["single_vp_rate"]
+    for overall, stem in (("accuracy_cell_correct", "accuracy_cell_correct"),
+                          ("accuracy_ring0", "accuracy_ring0")):
+        a1 = summary[f"{stem}_1vp"].fillna(0.0)
+        a2 = summary[f"{stem}_2plus_vp"].fillna(0.0)
+        drift = (r * a1 + (1 - r) * a2 - summary[overall]).abs()
+        for i in summary.index[drift > _SINGLE_VP_TOL]:
+            problems.append(f"{summary.at[i, 'method']} {overall}: drift {drift[i]:.5f}")
+    a1 = summary["accuracy_cell_correct_1vp"].fillna(0.0)
+    drift = (r * a1 - summary["contrib_1vp"]).abs()
+    for i in summary.index[drift > _SINGLE_VP_TOL]:
+        problems.append(f"{summary.at[i, 'method']} contrib_1vp: drift {drift[i]:.5f}")
+    if problems:
+        raise ValueError("the single-VP split does not recompose: " + "; ".join(problems))
 
 
 def guard_partition(summary: pd.DataFrame) -> None:

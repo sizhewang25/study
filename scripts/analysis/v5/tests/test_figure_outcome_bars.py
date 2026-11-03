@@ -250,3 +250,40 @@ def test_csv_columns_are_all_emitted(table, mode):
     assert missing == []
     for g in F.GROUPS:
         assert F.group_col(g) in F.csv_columns(mode)
+
+
+def _single_vp_run(root, run_id, prefix, n_obs):
+    """A run whose four TGs (`<prefix>-0..3`) S-P and one method both answer at home."""
+    from scripts.analysis.v5.tests.conftest import FakeRun
+
+    places = (SEATTLE, OMAHA, CHICAGO, MIAMI)
+    t = pd.DataFrame(
+        {
+            "tg_id": [f"{prefix}-{i}" for i in range(4)],
+            "tg_lat": [p[0] for p in places],
+            "tg_lon": [p[1] for p in places],
+        }
+    )
+    sp = A.build_answer_space(t, nside=128, run_id=run_id)
+    run = FakeRun(run_id, root)
+    sp.write(run.answer_space_dir(128))
+    frame = t.assign(
+        pred_lat=[p[0] for p in places], pred_lon=[p[1] for p in places],
+        status="SUCCESS", **{C.N_OBS: list(n_obs)},
+    )
+    scored = {"m": C.score_method(frame, sp)}
+    d = run.classify_dir(128)
+    scored["m"].to_parquet(d / C.TGS_PARQUET.format(method="m"), index=False)
+    C.summarize(scored, 128).to_csv(d / C.ACCURACY_CSV, index=False)
+    return run
+
+
+def test_pooled_table_carries_the_pooled_single_vp_rate(tmp_path):
+    """`pooled_table` re-summarizes the concatenated TGs, so the split is the
+    pooled one -- 3 single-VP TGs of 8 -- not an average of the runs' rates."""
+    a = _single_vp_run(tmp_path, "syn1-000000-000000-mesh", "a", (1, 1, 5, 5))
+    b = _single_vp_run(tmp_path, "syn2-000000-000000-mesh", "b", (1, 5, 5, 5))
+    row = F.pooled_table([a, b], 128).iloc[0]
+    assert row["n_tgs"] == 8
+    assert row["single_vp_rate"] == pytest.approx(3 / 8)
+    assert row["contrib_1vp"] == pytest.approx(3 / 8)

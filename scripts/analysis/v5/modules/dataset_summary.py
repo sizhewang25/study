@@ -17,6 +17,9 @@ be checked.
 * **VPs.** Distinct `vp_id`s in the run's edge CSV, the fewest and median VPs
   measuring a TG, and the TGs measured by fewer than all of them
   (`partial_mesh`). The manifest says whether every run's VP set is identical.
+  The TGs measured by a single VP and the sites holding any (`single_vp`):
+  the population on which every method's accuracy reduces toward S-P's;
+  `classify` splits each method's accuracy on the same line.
 * **Sites.** TGs per site (min / median / max); sites merged into a shared
   seed, from the answer space's `n_sites_merged`.
 * **Filter removal (estimated).** No pre-filter CSV survives (the final CSVs
@@ -46,6 +49,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from scripts.analysis.v5.modules import answer_space as A
 from scripts.analysis.v5.modules import classify as C
 from scripts.analysis.v5.modules import cross
 from scripts.analysis.v5.modules import edges as EDGES
@@ -101,6 +105,30 @@ def fold_layout(run: RunPaths, nside: int, root: Path | None) -> dict:
     }
 
 
+#: `single_vp_counts`' keys. Summed by `pooled_row` and shared by `add_shares`
+#: only when present, so rows from before they existed still pool.
+SINGLE_VP_COUNTS = ("n_tgs_measured", "n_tgs_single_vp", "n_sites_measured", "n_sites_single_vp")
+
+
+def single_vp_counts(per_tg: pd.Series, tgs: pd.DataFrame) -> dict:
+    """TGs measured by exactly one VP, and the sites holding any.
+
+    `per_tg` is distinct VPs per TG over the run's edges; `tgs` maps `tg_id` to
+    `site_id` (the answer space's `tgs.csv`). Denominators are the TGs and
+    sites the **edges** hold, not the answer space's: a traffic-weighted run's
+    space is its mesh's, so `meta.n_tgs` would count TGs this run never scored.
+    """
+    site_of = tgs.set_index(tgs["tg_id"].astype(str))["site_id"]
+    sites = site_of.reindex(per_tg.index.astype(str))
+    one = per_tg.to_numpy() == 1
+    return {
+        "n_tgs_measured": int(len(per_tg)),
+        "n_tgs_single_vp": int(one.sum()),
+        "n_sites_measured": int(sites.nunique()),
+        "n_sites_single_vp": int(sites[one].nunique()),
+    }
+
+
 def run_row(
     run: RunPaths, *, nside: int, root: Path | None, cap: int,
     loso: RunPaths | None = None, dist_norm_km: tuple[float, float] | None = None,
@@ -128,6 +156,9 @@ def run_row(
         "vps_per_tg_min": int(per_tg.min()),
         "vps_per_tg_median": float(per_tg.median()),
         "n_tgs_partial_mesh": int((per_tg < len(vps)).sum()),
+        **single_vp_counts(
+            per_tg, pd.read_csv(run.answer_space_dir(nside, root=root) / A.TGS_CSV)
+        ),
         "replicas_cap": cap,
         "n_sites_below_cap": int((shortfall > 0).sum()),
         "est_removed_tgs": removed,
@@ -153,6 +184,11 @@ def add_shares(t: pd.DataFrame) -> pd.DataFrame:
     t = t.copy()
     t["sites_merged_pct"] = 100 * t["n_sites_merged"] / t["n_sites"]
     t["partial_mesh_pct"] = 100 * t["n_tgs_partial_mesh"] / t["n_tgs"]
+    # Conditional: a `dataset.csv` from before the single-VP counts re-shares
+    # without them rather than failing (`paper_readings` reads it back).
+    if "n_tgs_single_vp" in t:
+        t["single_vp_pct"] = 100 * t["n_tgs_single_vp"] / t["n_tgs_measured"]
+        t["single_vp_sites_pct"] = 100 * t["n_sites_single_vp"] / t["n_sites_measured"]
     t["est_removed_pct"] = 100 * t["est_removed_tgs"] / t["est_tgs_before_filter"]
     t["kfold_sites_all_folds_pct"] = 100 * t["kfold_n_sites_all_folds"] / t["n_sites"]
     t["max_error_over_d"] = t["max_error_km"] / t["dist_norm_max_km"]
@@ -167,6 +203,9 @@ def pooled_row(rows: list[dict]) -> dict:
                 "n_sites_below_cap", "est_removed_tgs", "est_tgs_before_filter",
                 "kfold_n_sites_all_folds"):
         out[col] = int(t[col].sum())
+    for col in SINGLE_VP_COUNTS:
+        if col in t:
+            out[col] = int(t[col].sum())
     for col in ("replicas_min", "vps_per_tg_min", "kfold_fold_size_min"):
         out[col] = int(t[col].min())
     for col in ("replicas_max", "n_vps", "kfold_fold_size_max", "kfold_sites_per_fold_max",
@@ -198,6 +237,12 @@ def _manifest(run_ids, loso_ids, vp_sets, cap, nside) -> str:
         "partial_mesh_note": (
             "n_tgs_partial_mesh: TGs measured by fewer than n_vps VPs -- the filter drops "
             "a TG's violating pairs as well as whole TGs, so the mesh is not full."
+        ),
+        "single_vp_note": (
+            "n_tgs_single_vp: TGs measured by exactly one VP in the run's edges; "
+            "n_sites_single_vp: sites holding at least one such TG. Shares are over "
+            "the TGs and sites the edges hold (n_*_measured), not the answer space, "
+            "which for a traffic-weighted run is its mesh's."
         ),
         "d_note": (
             "dist_norm_max_km is the configs' analysis.common.dist_norm_km max (D, "
