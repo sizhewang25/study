@@ -1,0 +1,115 @@
+# Traffic-weighted PRECOMPUTED run on SYNTHETIC weights, with sparse targets.
+#
+# The as01-randweight-precomputed subset, with 15% of its TGs cut to their one
+# heaviest flow and 10% to their two (seed 42). Built to see what the
+# single-VP figures and the 1/2-VP accuracy split look like when sparse TGs
+# exist -- as01-randweight-precomputed has none (min 64 VPs per TG).
+#
+#   .venv/bin/python -m scripts.processing.source.sparsify_weighted_flows \
+#       --input datasets/final/as01-20260728-20260802.mainland.sanitized.randweight.pniboost.traffic-weighted.csv \
+#       --seed 42
+#   ./cli.sh --configfile configs/as01-sparse-precomputed.yaml
+#
+# Same mesh, k and seed as as01-randweight-precomputed, so the folds and the
+# fit side are identical; only the scored observations differ. The weights are
+# the pniboost synthetic ones, so a sparse TG's surviving VP is chosen by
+# synthetic traffic, not by geometry. A fixture, not a finding.
+
+run_id: as01-sparse-precomputed
+
+benchmark:
+  source: traffic_weighted_csv
+  setup: anchors_to_probes
+  slices: [fold_0, fold_1, fold_2, fold_3, fold_4]
+
+  source_kwargs:
+    mesh_csv_path: datasets/final/as01-20260728-20260802.mainland.sanitized.randweight.pniboost.csv
+    weighted_csv_path: datasets/final/as01-20260728-20260802.mainland.sanitized.randweight.pniboost.sparse.traffic-weighted.csv
+    k: 5
+    seed: 42
+    asn_bucket_top_n: 20
+
+  enable_fallback: true
+  seed: 42
+
+  # The pro TF combos (configs/pro-as01-weighted.yaml), unchanged.
+  combos:
+    - combo_id: vanilla_cbg
+      ltd: low_envelope
+      mtl: planar_circle
+      ctr: geometric_centroid
+      mtl_kwargs:
+        n_pts: 64
+        enable_circle_filter: true
+
+    - combo_id: million_scale_cbg
+      ltd: speed_of_internet
+      mtl: planar_circle
+      ctr: geometric_centroid
+      ltd_kwargs:
+        speed_ratio: 0.6667
+      mtl_kwargs:
+        n_pts: 64
+        enable_circle_filter: true
+
+    - combo_id: octant_cbg_hull
+      ltd: bounded_spline
+      mtl: planar_annulus_weighted
+      ctr: monte_carlo_medoid
+      ltd_kwargs:
+        fit_spline: false
+        cutoff_min_points: 5
+        bin_size_ms: 5.0
+      mtl_kwargs:
+        n_pts: 64
+        enable_circle_filter: true
+        weight_mode: inv_power
+        weight_k: 2
+        highest_weight_only: true
+      ctr_kwargs:
+        n_samples: 1024
+
+    - combo_id: octant_cbg_spl
+      ltd: bounded_spline
+      mtl: planar_annulus_weighted
+      ctr: monte_carlo_medoid
+      ltd_kwargs:
+        fit_spline: true
+        spline_n_knots: 4
+        target_coverage: 0.9
+        cutoff_min_points: 5
+        bin_size_ms: 5.0
+      mtl_kwargs:
+        n_pts: 64
+        enable_circle_filter: true
+        weight_mode: inv_power
+        weight_k: 2
+        highest_weight_only: true
+      ctr_kwargs:
+        n_samples: 1024
+
+    - combo_id: spotter_cbg
+      ltd: normal_dist
+      mtl: gaussian_density
+      ctr: density_argmax
+      ltd_kwargs:
+        deg_mu: 3
+        deg_sigma: 2
+        cutoff_min_points: 5
+      mtl_kwargs:
+        grid: healpix
+        resolution: 128
+        coarse_resolution: 16
+        top_k: 8
+        neighbor_ring: 1
+
+analysis:
+  common:
+    dataset_label: SYN-TF AS-A
+    grid: healpix
+    resolution: [128]
+    # The as01 randweight run's site list and peer, for plot-pni-gap and
+    # report-sp-pni-cells (the has-X flag). Same caveat as there: peer_asn
+    # labels the peering, it does not verify it.
+    pni_csv: datasets/pni/as01-us-pni.approx.csv
+    peer_asn: 20940
