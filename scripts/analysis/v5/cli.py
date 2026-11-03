@@ -77,6 +77,7 @@ from scripts.analysis.v5.modules import (
     figure_stability,
     figure_vp_dist_gap,
     figure_vp_distance_cdf,
+    figure_vp_obs,
     figure_vp_proximity,
     figure_x_cell_rtt,
     bounds,
@@ -484,8 +485,10 @@ def plot_outcome_bars_cmd(
         "--mode",
         help=(
             f"{figure_outcome_bars.BOUNDED} (cell label broken down by ring "
-            f"tier) or {figure_outcome_bars.UNBOUNDED} (the cell axis alone, "
-            f"the plain nearest-seed verdict). Repeatable; default: "
+            f"tier), {figure_outcome_bars.UNBOUNDED} (the cell axis alone, "
+            f"the plain nearest-seed verdict) or {figure_outcome_bars.VP} "
+            f"(cell label broken down by single- vs multi-VP TGs; needs "
+            f"classify parquets with n_obs). Repeatable; default: "
             f"{figure_outcome_bars.BOUNDED}."
         ),
     ),
@@ -495,7 +498,8 @@ def plot_outcome_bars_cmd(
     """Outcome bars, one figure per rung: cell label first (correct / wrong /
     no answer). In `bounded` each label is broken down by ring tier, colour =
     ring tier and stripe = cell label; in `unbounded` the cell axis is drawn
-    alone and colour = cell label.
+    alone and colour = cell label; in `vp` each label is broken down by
+    whether the TG was scored on one VP or more.
 
     Cross-dataset by nature, so `--run-id` is repeatable and there is no
     `--all-runs`. Written to `_cross/classify/<datasets>[@<arm>]/`.
@@ -530,6 +534,68 @@ def plot_outcome_bars_cmd(
         raise typer.BadParameter(str(exc)) from exc
     for png in pngs:
         typer.echo(f"wrote {png}")
+
+
+def _plot_vp_obs(figure: str, run_id, layout, outputs_root: Path, analysis_root: Path) -> None:
+    """Shared body of the two `figure_vp_obs` commands."""
+    command = {figure_vp_obs.HIST: "plot-vp-obs-hist", figure_vp_obs.HAS_X_FIG: "plot-vp-obs-has-x"}[figure]
+    if not run_id:
+        raise typer.BadParameter("pass at least one --run-id")
+    _refuse_combo_ids(command, run_id, outputs_root)
+    layouts = tuple(dict.fromkeys(layout or ())) or figure_vp_obs.LAYOUTS
+    try:
+        pngs = figure_vp_obs.build_for_runs(
+            [resolve_run(r, outputs_root) for r in run_id],
+            figure,
+            layouts=layouts,
+            analysis_root=analysis_root,
+        )
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for png in pngs:
+        typer.echo(f"wrote {png}")
+
+
+_VP_OBS_LAYOUT_HELP = (
+    f"{figure_vp_obs.COMPARE} (one panel per dataset) or {figure_vp_obs.POOLED} "
+    f"(every run's TGs as one population). Repeatable; default: both."
+)
+
+
+@app.command("plot-vp-obs-hist")
+def plot_vp_obs_hist_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Run (repeatable)."),
+    layout: list[str] = typer.Option(None, "--layout", help=_VP_OBS_LAYOUT_HELP),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """How many VPs measured each scored TG: share of TGs per VP-count bin, the
+    single-VP bar orange. Reads `n_obs` off classify's Shortest-Ping parquet,
+    the count the single-VP accuracy split is cut on.
+
+    Writes `vp_obs_hist[.pooled].{png,csv,manifest.json}` into
+    `_cross/classify/<runs>/`. Needs `classify` (re-run it on parquets from
+    before `n_obs`).
+    """
+    _plot_vp_obs(figure_vp_obs.HIST, run_id, layout, outputs_root, analysis_root)
+
+
+@app.command("plot-vp-obs-has-x")
+def plot_vp_obs_has_x_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Run (repeatable)."),
+    layout: list[str] = typer.Option(None, "--layout", help=_VP_OBS_LAYOUT_HELP),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """VP count per TG, split has-X / no-X: each side a 100% stack of 1 / 2 /
+    3-10 / >10 VPs. The CSV twin also carries, per bin, the share of its TGs on
+    each side -- where the single-VP TGs sit.
+
+    Writes `vp_obs_has_x[.pooled].{png,csv,manifest.json}` into
+    `_cross/classify/<runs>/`. Needs `classify`, and `plot-pni-gap` then
+    `report-sp-pni-cells` per run (the has-X flag is theirs).
+    """
+    _plot_vp_obs(figure_vp_obs.HAS_X_FIG, run_id, layout, outputs_root, analysis_root)
 
 
 @app.command("plot-outcome-map")

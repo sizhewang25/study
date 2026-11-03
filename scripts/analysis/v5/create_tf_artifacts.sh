@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Build the traffic-filtered (TF) figures: error CDF, outcome bars (unbounded
-# and bounded) and Pareto frontier (unbounded and bounded), seen sites only.
+# Build the traffic-filtered (TF) figures: error CDF, outcome bars (bounded,
+# unbounded and single- vs multi-VP), Pareto frontier (unbounded and bounded)
+# and the VP-count distribution with its has-X / no-X split, seen sites only.
 #
 #   ./create_tf_artifacts.sh                         # build into outputs/analysis/v5
 #   ./create_tf_artifacts.sh --group ID              # another group file (default pro-tf)
@@ -11,9 +12,11 @@
 # there, and the committed configs carry placeholder paths. Flags live in
 # configs/groups/$GROUP.yaml; this script only orders the calls.
 #
-# None of the three figures opens the edge CSV, so a TF run filtering on the
-# fly needs no materialized weighted CSV here. build-answer-space does need
-# the run's pre-filter mesh (`mesh_csv_path`): a TF run's cells are its mesh's.
+# Only the has-X split opens the edge CSV: its flag comes from plot-pni-gap and
+# report-sp-pni-cells per run, which read it. A TF run filtering on the fly has
+# no edge file of its own, so that one figure fails there and the rest build.
+# build-answer-space needs the run's pre-filter mesh (`mesh_csv_path`): a TF
+# run's cells are its mesh's.
 #
 # Deliberately NOT `set -e`, as in create_paper_artifacts.sh: failures are
 # collected and summarised, and the script exits non-zero if any occurred.
@@ -62,14 +65,21 @@ section() { printf '\n==================== %s ====================\n' "$1"; }
 section "prerequisites"
 for r in "${SEEN[@]}"; do
   if run "build-answer-space $r" $V5 build-answer-space --run-id "$r"; then
-    run "classify $r" $V5 classify --run-id "$r"
+    if run "classify $r" $V5 classify --run-id "$r"; then
+      # The has-X flag for plot-vp-obs-has-x.
+      if run "plot-pni-gap $r" $V5 plot-pni-gap --run-id "$r"; then
+        run "report-sp-pni-cells $r" $V5 report-sp-pni-cells --run-id "$r"
+      fi
+    fi
   fi
 done
 
 section "figures"
 grun plot-error-cdf       # error_cdf.pooled.norm.cut
-grun plot-outcome-bars    # outcome_bars.unbounded.pooled, outcome_bars.pooled (bounded)
+grun plot-outcome-bars    # outcome_bars{,.unbounded,.vp}.pooled (bounded, unbounded, single- vs multi-VP)
 grun plot-pareto          # pareto.cell.seen (unbounded), pareto.bounded.seen
+grun plot-vp-obs-hist     # vp_obs_hist{,.pooled}
+grun plot-vp-obs-has-x    # vp_obs_has_x{,.pooled}
 
 printf '\n==================== summary ====================\n'
 printf 'commands ok: %d   failed: %d\n' "$N_OK" "${#FAILED[@]}"

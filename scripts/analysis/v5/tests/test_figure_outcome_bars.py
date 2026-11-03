@@ -46,6 +46,8 @@ def _scored(space, preds, statuses=None):
             "pred_lat": [p[0] if p else np.nan for p in preds],
             "pred_lon": [p[1] if p else np.nan for p in preds],
             "status": statuses or ["SUCCESS"] * n,
+            # Every other row single-VP, so `vp` mode has both tiers to draw.
+            C.N_OBS: [1 if i % 2 == 0 else 5 for i in range(n)],
         }
     )
     return C.score_method(frame, space)
@@ -100,6 +102,71 @@ def test_unbounded_segments_are_the_cell_axis_alone():
     assert all(tier in (None, F.UNANSWERED) for tier, _ in segs)
 
 
+def test_vp_segments_are_cell_label_outer_vp_tier_inner():
+    segs = F.segments(F.VP)
+    assert segs == [
+        ("vp1", "correct"), ("vp2plus", "correct"),
+        ("vp1", "wrong"), ("vp2plus", "wrong"),
+        (F.UNANSWERED, F.UNANSWERED),
+    ]
+
+
+def test_vp_tiers_partition_each_graded_group(table):
+    for lab in F.GRADED:
+        parts = sum(table[F.count_col(t, lab)] for t in F.VP_TIERS)
+        assert (parts == table[F.group_col(lab)]).all()
+
+
+def test_vp_mode_is_refused_on_a_table_without_n_obs():
+    """The bounded and unbounded figures still draw from a pre-`n_obs` table;
+    `vp` says what to re-run rather than raising a bare KeyError."""
+    from scripts.analysis.v5.modules.paths import MissingArtifactError
+
+    s = A.build_answer_space(
+        pd.DataFrame({"tg_id": ["t"], "tg_lat": [SEATTLE[0]], "tg_lon": [SEATTLE[1]]}),
+        nside=128, run_id="syn",
+    )
+    frame = pd.DataFrame({
+        "tg_id": ["t"], "tg_lat": [SEATTLE[0]], "tg_lon": [SEATTLE[1]],
+        "pred_lat": [SEATTLE[0]], "pred_lon": [SEATTLE[1]], "status": ["SUCCESS"],
+    })
+    stale = F._add_shares(C.summarize({"m": C.score_method(frame, s)}, 128))
+    F.require_mode(stale, F.BOUNDED)
+    with pytest.raises(MissingArtifactError, match="re-run `classify`"):
+        F.require_mode(stale, F.VP)
+
+
+def test_vp_twin_carries_the_single_vp_split():
+    assert set(F.VP_SUMMARY_COLUMNS) <= set(F.csv_columns(F.VP))
+    assert not set(F.VP_SUMMARY_COLUMNS) & set(F.csv_columns(F.BOUNDED))
+
+
+def test_vp_fills_are_not_ring_tier_fills():
+    """The `vp` figure sits beside the `bounded` one: no fill may mean both."""
+    rings = {F.TIER_INK[t] for t in F.TIERS}
+    assert not rings & {F.TIER_INK[t] for t in F.VP_TIERS}
+
+
+def test_vp_draws_the_rail_and_its_own_key(table, tmp_path, monkeypatch):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    captured = {}
+    real_close = plt.close
+    monkeypatch.setattr(plt, "close", lambda fig=None: captured.setdefault("fig", fig))
+    png = F.render(table, 128, tmp_path, mode=F.VP, png_name="outcome_bars.vp.healpix-128.png")
+    real_close(captured["fig"])
+    assert png.exists()
+    fig = captured["fig"]
+    rails = [p for p in fig.axes[0].patches if p.get_width() == pytest.approx(F._RAIL_W)]
+    assert rails, "vp breaks each group down, so the rail gives the group back"
+    keys = [t.get_text() for lg in fig.legends for t in lg.get_texts()]
+    assert {"1 VP", "≥2 VPs", "no answer"} <= set(keys)
+    assert not {"0 pixel dist.", "1 pixel dist."} & set(keys)
+
+
 def test_an_unknown_mode_is_refused():
     with pytest.raises(ValueError, match="unknown mode"):
         F.segments("landmass")
@@ -112,6 +179,7 @@ def test_hatches_are_empty_right_empty():
 def test_only_the_unbounded_figure_takes_a_filename_token():
     assert F.mode_token(F.BOUNDED) == ""
     assert F.mode_token(F.UNBOUNDED) == ".unbounded"
+    assert F.mode_token(F.VP) == ".vp"
 
 
 def test_each_panel_ranks_by_serving_region_first(table):
@@ -243,9 +311,11 @@ def test_guard_rejects_a_table_whose_cross_tab_does_not_close(table, tmp_path):
 @pytest.mark.parametrize("mode", F.MODES)
 def test_csv_columns_are_all_emitted(table, mode):
     twin = F.add_of_correct(table.copy())  # the derived columns are added at write time
+    # `agree_sp_1vp` exists only when S-P is scored, which this fixture is not;
+    # the writer keeps the columns the table holds.
     missing = [
         c for c in F.csv_columns(mode)
-        if c not in twin.columns and c not in ("run_id", "dataset")
+        if c not in twin.columns and c not in ("run_id", "dataset", "agree_sp_1vp")
     ]
     assert missing == []
     for g in F.GROUPS:

@@ -121,6 +121,10 @@ TG_FRAME_COLUMNS = ("tg_id", "tg_lat", "tg_lon", "pred_lat", "pred_lon", "status
 #: columns, never wrong ones, so a reader of a stale artifact gets a KeyError
 #: rather than a plausible number.
 N_OBS = "n_obs"
+
+#: The `n_obs` split as a breakdown tier, single-VP first: `n_vp1_cell_correct`
+#: and `n_vp2plus_cell_correct` partition `n_cell_correct`, and likewise wrong.
+VP_TIERS: tuple[str, ...] = ("vp1", "vp2plus")
 _BENCHMARK_FRAME_COLUMNS = (*BENCHMARK_TG_COLUMNS, "pred_lat", "pred_lon", "status")
 
 
@@ -322,6 +326,14 @@ def _single_vp_block(
         "accuracy_ring0_2plus_vp": acc(ring0, rest),
         "contrib_1vp": round(float((correct & one).mean()), 4),
     }
+    # The same split as counts per graded cell label, named like the ring
+    # cross-tab (`n_<tier>_cell_<label>`) so `figure_outcome_bars` stacks it
+    # as one more breakdown. `unanswered` is not split: the bars draw it as one
+    # ungraded segment in every mode.
+    for lab in GRADED_CELL_LABELS:
+        hit = answered & (label == lab)
+        for tier, members in zip(VP_TIERS, (one, rest)):
+            block[f"n_{tier}_cell_{lab}"] = int((hit & members).sum())
     if sp_grid is not None:
         keys = [k for k in sp_grid.index.names]
         sp = sp_grid.reindex(pd.MultiIndex.from_frame(df[keys]) if len(keys) > 1 else df[keys[0]])
@@ -420,11 +432,11 @@ _SINGLE_VP_TOL = 1e-3
 def guard_single_vp(summary: pd.DataFrame) -> None:
     """The single-VP split recomposes each method's accuracy.
 
-    Three assertions: methods scored on the same number of TGs share one
+    Four assertions: methods scored on the same number of TGs share one
     `single_vp_rate` (one roster); `r * acc_1vp + (1 - r) * acc_2plus_vp`
-    equals the overall accuracy on both the cell axis and ring0; and
-    `contrib_1vp == r * acc_1vp`. An empty bin's NaN accuracy carries zero
-    weight.
+    equals the overall accuracy on both the cell axis and ring0;
+    `contrib_1vp == r * acc_1vp`; and the `VP_TIERS` counts partition each
+    graded cell label. An empty bin's NaN accuracy carries zero weight.
 
     Grouped by `n_tgs` rather than asserted over every row, so a pooled table
     whose methods saw different populations still reaches `pooled_table`'s own
@@ -447,6 +459,14 @@ def guard_single_vp(summary: pd.DataFrame) -> None:
     drift = (r * a1 - summary["contrib_1vp"]).abs()
     for i in summary.index[drift > _SINGLE_VP_TOL]:
         problems.append(f"{summary.at[i, 'method']} contrib_1vp: drift {drift[i]:.5f}")
+    # Exact, being counts: the VP tiers partition each graded cell label.
+    for lab in GRADED_CELL_LABELS:
+        parts = sum(summary[f"n_{tier}_cell_{lab}"] for tier in VP_TIERS)
+        for i in summary.index[parts != summary[f"n_cell_{lab}"]]:
+            problems.append(
+                f"{summary.at[i, 'method']} {lab}: VP tiers sum to {parts[i]}, "
+                f"not n_cell_{lab} {summary.at[i, f'n_cell_{lab}']}"
+            )
     if problems:
         raise ValueError("the single-VP split does not recompose: " + "; ".join(problems))
 

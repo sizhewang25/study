@@ -1,12 +1,13 @@
 # The paper's pooled traffic-filtered (TF) datasets, declared once.
 #
 #   python -m scripts.analysis.v5.cli plot-error-cdf --group pro-tf
-#   scripts/analysis/v5/create_tf_artifacts.sh        # all three figures
+#   scripts/analysis/v5/create_tf_artifacts.sh        # every figure below
 #
-# Same shape as pro-paper.yaml, cut down to three figures on seen sites:
-# the error CDF, the outcome bars (unbounded and bounded) and the Pareto
-# frontier (unbounded and bounded). There are no LOSO twins of the TF runs, so
-# the group has no `unseen` role and nothing here reads one.
+# Same shape as pro-paper.yaml, cut down to the figures on seen sites: the
+# error CDF, the outcome bars (bounded, unbounded and split by single- vs
+# multi-VP TGs), the Pareto frontier (unbounded and bounded), and the VP-count
+# distribution with its has-X / no-X split. There are no LOSO twins of the TF
+# runs, so the group has no `unseen` role and nothing here reads one.
 #
 # The TF runs live on the TF machine: their committed configs carry
 # placeholder source paths. Run this there.
@@ -38,10 +39,11 @@ analysis:
     run-id: "@seen"
     method: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
 
-  # Unbounded and bounded in one call.
+  # Bounded, unbounded, and `vp` (correct / wrong split by single- vs
+  # multi-VP TGs) in one call.
   plot-outcome-bars:
     layout: [pooled, compare]
-    mode: [bounded, unbounded]
+    mode: [bounded, unbounded, vp]
     run-id: "@seen"
     method: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
 
@@ -49,3 +51,14 @@ analysis:
   plot-pareto:
     seen: "@seen"
     method: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
+
+  # How many VPs measured each TG after the traffic filter, and how the
+  # single-VP TGs fall across has-X / no-X. The has-X figure reads each run's
+  # report-sp-pni-cells CSV, which create_tf_artifacts.sh builds per run.
+  plot-vp-obs-hist:
+    layout: [pooled, compare]
+    run-id: "@seen"
+
+  plot-vp-obs-has-x:
+    layout: [pooled, compare]
+    run-id: "@seen"

@@ -16,6 +16,14 @@ In `unbounded` mode the breakdown is dropped and the cell axis is drawn alone
 may be. The pair is the argument: same predictions, same denominator, and a
 method can lead on serving region while holding no ring0 at all.
 
+In `vp` mode the answered groups are broken down by how many VPs the TG was
+scored on instead -- one VP, or two and more (`classify.VP_TIERS`, counted at
+`n_obs == 1` after every eval-side filter). On a one-VP TG every method that
+answers with the VP's location *is* Shortest Ping, so the orange share of a
+`correct` group is the part of that method's accuracy it shares with S-P by
+construction. "No answer" stays one ungraded segment, as in `bounded`. Needs
+per-TG parquets that carry `n_obs`; older ones are refused with "re-run".
+
 ## Encoding
 
 * **Colour = ring tier**: green (0 pixel dist.), light blue (1 pixel dist.),
@@ -108,8 +116,13 @@ TIER_LABELS = {
     "ring1": "1 pixel dist.",
     "ring2": "2 pixel dist.",
     "beyond": ">2 pixel dist.",
+    "vp1": "1 VP",
+    "vp2plus": "≥2 VPs",
     UNANSWERED: "no answer",
 }
+
+#: `vp` mode's breakdown, bottom-up: single-VP first, on the group's baseline.
+VP_TIERS: tuple[str, ...] = C.VP_TIERS
 
 #: Ring tier -> fill. Hue for the three graded tiers -- green for the TG's own
 #: grid, light blue one ring out, light purple two rings out -- so adjacent
@@ -130,11 +143,22 @@ TIER_LABELS = {
 #: The lightness-band and chroma checks FAIL by construction (light tints and
 #: two greys are outside the mid-tone categorical band), and the contrast WARN
 #: is relieved by the tier borders, the in-place labels and the CSV twin.
+#:
+#: `vp1` / `vp2plus` are mid-tone orange and blue (the dataviz reference
+#: categorical slots 2 and 1), deliberately *not* light tints: every light
+#: tint echoes a ring tier's fill, and the `vp` figure sits beside the
+#: `bounded` one. Validated in stack order (orange, blue, orange, blue, grey):
+#: lightness band, CVD (worst adjacent dE 17.7 protan, tritan 12.6), the
+#: normal-vision floor (17.8) and contrast all PASS; only the neutral grey
+#: fails the chroma floor, by intent. The same orange marks one VP in
+#: `figure_vp_obs`.
 TIER_INK = {
     "ring0": "#79bf9b",
     "ring1": "#b8d2f8",
     "ring2": "#a58bd6",
     "beyond": "#d8d7cf",
+    "vp1": "#eb6834",
+    "vp2plus": "#2a78d6",
     UNANSWERED: "#6b6a65",
 }
 
@@ -283,7 +307,12 @@ LAYOUTS: tuple[str, ...] = (COMPARE, POOLED)
 #: scored with and without the ring.
 BOUNDED = "bounded"
 UNBOUNDED = "unbounded"
-MODES: tuple[str, ...] = (BOUNDED, UNBOUNDED)
+#: The answered groups broken down by single- vs multi-VP instead of by ring.
+VP = "vp"
+MODES: tuple[str, ...] = (BOUNDED, UNBOUNDED, VP)
+
+#: The breakdown each mode draws inside a graded group; `unbounded` draws none.
+MODE_TIERS: dict[str, tuple[str, ...]] = {BOUNDED: TIERS, UNBOUNDED: (), VP: VP_TIERS}
 
 
 def validate_mode(mode: str) -> str:
@@ -317,6 +346,8 @@ _SUBJECTS = {
     (POOLED, BOUNDED): "Serving region, then distance, datasets pooled",
     (COMPARE, UNBOUNDED): "Serving region alone, unbounded",
     (POOLED, UNBOUNDED): "Serving region alone, unbounded, datasets pooled",
+    (COMPARE, VP): "Serving region, then single- vs multi-VP TGs",
+    (POOLED, VP): "Serving region, then single- vs multi-VP TGs, datasets pooled",
 }
 
 
@@ -336,13 +367,13 @@ def segments(mode: str = BOUNDED) -> list[tuple[str, str | None]]:
     """Every drawn segment bottom-up, as `(tier, cell label)`.
 
     `bounded` is cell label outer, ring tier inner, for the two graded labels;
-    `unbounded` is the cell axis alone. Either way the ungraded `unanswered`
-    slot comes last, because it has no ring to break down.
+    `vp` the same with the VP tiers inner; `unbounded` is the cell axis alone.
+    Either way the ungraded `unanswered` slot comes last, unbroken.
     """
     validate_mode(mode)
     if mode == UNBOUNDED:
         return [(UNANSWERED, lab) if lab == UNANSWERED else (None, lab) for lab in GROUPS]
-    return [(t, lab) for lab in GRADED for t in TIERS] + [(UNANSWERED, UNANSWERED)]
+    return [(t, lab) for lab in GRADED for t in MODE_TIERS[mode]] + [(UNANSWERED, UNANSWERED)]
 
 
 def segment_col(tier: str | None, label: str | None) -> str:
@@ -359,12 +390,27 @@ def segment_ink(tier: str | None, label: str | None, mode: str) -> str:
 
 
 def _add_shares(table: pd.DataFrame) -> pd.DataFrame:
-    """Exact shares -- the drawn geometry. Rounding lives in labels and sort keys."""
+    """Exact shares -- the drawn geometry. Rounding lives in labels and sort keys.
+
+    Over the count columns the table holds: the `vp` counts exist only when
+    every per-TG frame carried `n_obs`, and a table without them still draws
+    `bounded` and `unbounded`. `require_mode` refuses `vp` on such a table.
+    """
     cols = {segment_col(t, lab) for mode in MODES for t, lab in segments(mode)}
     cols |= {group_col(g) for g in GROUPS}
-    for col in cols:
+    for col in cols & set(table.columns):
         table[f"share_{col}"] = table[col] / table["n_tgs"]
     return table
+
+
+def require_mode(table: pd.DataFrame, mode: str) -> None:
+    """Refuse a mode whose segment counts the table does not hold."""
+    missing = [c for t, lab in segments(mode) if (c := segment_col(t, lab)) not in table.columns]
+    if missing:
+        raise MissingArtifactError(
+            f"mode {mode!r} needs {missing}, which `classify` writes only when every "
+            f"per-TG parquet carries {C.N_OBS!r} -- re-run `classify` on these runs"
+        )
 
 
 #: The tiers a correct-cell TG can sit at, cumulated for `of_correct_*`:
@@ -660,7 +706,7 @@ def _draw_bar(
                 )
         if group != UNANSWERED:
             groups.append((group, group_bottom, height))
-    if mode == BOUNDED:
+    if mode != UNBOUNDED:
         _draw_rail(ax, x, groups, nd, label_pt, bar_frac, rail_gap)
 
 
@@ -743,7 +789,7 @@ def _legend_handles(mode: str = BOUNDED):
         return cells, []
     tiers = [
         Patch(facecolor=TIER_INK[t], edgecolor=GROUP_EDGE, linewidth=0.8, label=TIER_LABELS[t])
-        for t in STACK
+        for t in (*MODE_TIERS[mode], UNANSWERED)
     ]
     cells = [
         Patch(
@@ -819,7 +865,7 @@ def render(
             ax.set_xticklabels([method_label(m) for m in ranked], fontsize=pt["tick"], color=_INK_2)
             # Room on the right of the last bar for its rail and labels;
             # `unbounded` draws no rail, so it needs none.
-            pad = 0.25 if mode == BOUNDED else 0.0
+            pad = 0.0 if mode == UNBOUNDED else 0.25
             ax.set_xlim(-0.5, len(ranked) - 0.5 + pad)
             ax.set_ylim(0, 1)
             ticks = np.arange(0, 1.01, 0.2)
@@ -927,7 +973,16 @@ def csv_columns(mode: str = BOUNDED) -> list[str]:
         "accuracy_bounded", *[f"of_correct_{suffix}" for suffix, _ in OF_CORRECT],
         "pred_dist_to_tg_km_p50", "pred_dist_to_tg_km_p90",
         "pred_dist_to_seed_km_p50", "pred_dist_to_seed_km_p90",
+        *(VP_SUMMARY_COLUMNS if mode == VP else ()),
     ]
+
+
+#: `classify`'s single-VP decomposition, carried into the `vp` twin so the
+#: figure's orange shares sit beside the accuracy split they come from.
+VP_SUMMARY_COLUMNS: tuple[str, ...] = (
+    "single_vp_rate", "accuracy_cell_correct_1vp", "accuracy_cell_correct_2plus_vp",
+    "accuracy_ring0_1vp", "accuracy_ring0_2plus_vp", "contrib_1vp", "agree_sp_1vp",
+)
 
 
 def _tgs_per_run(runs, nside, *, analysis_root=None) -> dict[str, int]:
@@ -971,7 +1026,9 @@ def _manifest(
             "bounded: each cell label broken down by ring tier, so a correct "
             "cell far from the TG is visibly far. unbounded: the cell axis "
             "alone, the plain nearest-seed verdict with nothing bounding how "
-            "far a correct may be. Same predictions, same denominator."
+            "far a correct may be. vp: each cell label broken down by whether "
+            "the TG was scored on one VP or more (n_obs == 1). Same "
+            "predictions, same denominator."
         ),
         "subject": _SUBJECTS[(layout, mode)],
         "subject_note": (
@@ -987,9 +1044,12 @@ def _manifest(
             m: {"term": method_label(m), "name": methods.METHOD_TERMS.get(method_label(m))}
             for m in method_order(table)
         },
-        "stack": [count_col(t, lab) for t, lab in segments()],
+        "stack": [segment_col(t, lab) for t, lab in segments(mode)],
         "encoding": {
-            "colour": {"ring tier": TIER_INK, "labels": TIER_LABELS},
+            "colour": {
+                "breakdown": {t: TIER_INK[t] for t in (*MODE_TIERS[mode], UNANSWERED)},
+                "labels": {t: TIER_LABELS[t] for t in (*MODE_TIERS[mode], UNANSWERED)},
+            },
             "stripe": {"cell label": CELL_HATCH, "labels": CELL_LEGEND},
             "group_border": (
                 f"{GROUP_EDGE} {GROUP_EDGE_PT} pt around every cell-label group, 'no answer' included"
@@ -1003,7 +1063,7 @@ def _manifest(
         },
         "grouping": (
             "cell label outer (correct, wrong, no answer); ring tier inner in "
-            "bounded mode, absent in unbounded"
+            "bounded mode, single- vs multi-VP inner in vp mode, absent in unbounded"
         ),
         "order_note": (
             "each panel ranked by its own cumulative (true, true & ring0, true & <=ring1, "
@@ -1059,6 +1119,7 @@ def build_for_runs(
                 names = {k: v.format(slug=slug, mode=tok) for k, v in
                          zip(("png", "csv", "man"), (png_t, csv_t, man_t))}
                 table = builders[layout](runs, nside, methods=methods, analysis_root=analysis_root)
+                require_mode(table, mode)
                 twin = add_of_correct(table.copy())
                 twin[[c for c in csv_columns(mode) if c in twin.columns]].to_csv(
                     out_dir / names["csv"], index=False
@@ -1069,7 +1130,7 @@ def build_for_runs(
                 else:
                     size = {
                         "panel_w": POOLED_PANEL_W,
-                        "fig_h": POOLED_FIG_H_BOUNDED if mode == BOUNDED else POOLED_FIG_H,
+                        "fig_h": POOLED_FIG_H if mode == UNBOUNDED else POOLED_FIG_H_BOUNDED,
                         "min_fig_w": 0.0, "fonts": COLUMN_FONTS, "dpi": 300, "trim": True,
                         "legend_ncol": COLUMN_LEGEND_NCOL, "bar_frac": COLUMN_BAR_FRAC,
                         "rail_gap": COLUMN_RAIL_GAP,
