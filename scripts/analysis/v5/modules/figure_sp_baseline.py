@@ -23,8 +23,8 @@ space and the interconnect list alone, never which interconnect serves the TG.
 * `sp_rtt_error_has_x` -- the has-X TGs only: each TG's minimum RTT against
   S-P's error, correct against wrong. It explains the has-X misses the bars
   show. A wrong TG whose minimum RTT is above every correct has-X TG's is
-  outlined as *inflated RTT* (the RTT no longer tracks distance); the other
-  wrong TGs as *near-tie* (a VP outside the cell wins by a fraction of a ms).
+  outlined and labelled *Inflation* (the RTT no longer tracks distance); the
+  other wrong TGs *Near-ties* (a VP outside the cell wins by a fraction of a ms).
 
 ## Distances
 
@@ -105,6 +105,9 @@ WHERE_ORDER = (CORRECT, ADJACENT, FARTHER)
 OUTCOMES = ("correct", "wrong")
 #: Why a has-X TG is wrong, in the RTT scatter's outlines.
 INFLATED, NEAR_TIE = "inflated RTT", "near-tie"
+#: The labels Fig. 8 draws, as the paper names the two kinds (§4.2). The
+#: constants above stay the manifest keys `report-paper` reads.
+KIND_LABEL = {INFLATED: "Inflation", NEAR_TIE: "Near-ties"}
 
 #: `(flag, tick label, legend label)`, has-X first, as in `figure_x_cell_rtt`.
 GROUPS = ((True, "has-$X$", "has-X"), (False, "no-$X$", "no-X"))
@@ -334,9 +337,9 @@ def plot_rtt_scatter(tgs: pd.DataFrame, out_png: Path) -> Path:
                                    edgecolor=INK_2, zorder=4, clip_on=False))
         # Inflated sits at the right edge, so its label goes below the box; near-tie's to its right.
         if kind == INFLATED:
-            ax.text(x1, y0 / 1.3, kind, ha="right", va="top", fontsize=NOTE_PT, color=INK)
+            ax.text(x1, y0 / 1.3, KIND_LABEL[kind], ha="right", va="top", fontsize=NOTE_PT, color=INK)
         else:
-            ax.text(x1 * 1.1, (y0 * y1) ** 0.5, kind, ha="left", va="center", fontsize=NOTE_PT, color=INK)
+            ax.text(x1 * 1.1, (y0 * y1) ** 0.5, KIND_LABEL[kind], ha="left", va="center", fontsize=NOTE_PT, color=INK)
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlim(*RTT_LIM)
