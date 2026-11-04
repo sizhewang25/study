@@ -92,6 +92,7 @@ from scripts.analysis.v5.modules import (
     pni_gap,
     ripe_vs_databases,
     sp_pni_cells,
+    sp_taxonomy,
     variant_delta,
 )
 from scripts.analysis.v5.modules import grid as G
@@ -1977,6 +1978,40 @@ def report_sp_pni_cells_cmd(
     try:
         runs, pni_csvs, layouts, source_csvs = _pni_inputs(run_id, layout, pni_csv, source_csv, outputs_root)
         reports = sp_pni_cells.build_for_runs(
+            runs, pni_csvs, layouts=layouts,
+            analysis_root=analysis_root, source_csvs=source_csvs,
+        )
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for path in reports:
+        typer.echo(f"wrote {path}")
+
+
+@app.command("report-sp-taxonomy")
+def report_sp_taxonomy_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Run (repeatable): the set `plot-pni-gap` clustered."),
+    layout: list[str] = typer.Option(None, "--layout", help=_PNI_LAYOUT_HELP),
+    pni_csv: Path = typer.Option(None, "--pni-csv", help=_PNI_CSV_HELP + " One --run-id only."),
+    source_csv: Path = typer.Option(None, "--source-csv", help="Override the run's edge CSV. One --run-id only."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """Why each S-P prediction lands where it does: one cause per TG, per has-X / no-X side.
+
+    Causes, first match wins: correct; RTT ignores distance (per-TG rho < 0.3);
+    X_in != X proven (RTT below the propagation floor through the TG's
+    nearest interconnect); near-tie (the 1 ms tie spans cells); X_in != X by
+    fit; expected no-X; residual. Also the RTT of the VP nearest each TG over
+    its lowest RTT, per side, and whether the rho threshold sits in an empty band.
+
+    Writes `sp_taxonomy.report.json` and `sp_taxonomy_tgs.csv` beside the
+    clusters. Needs `classify` and `plot-pni-gap`, with the same checks as
+    `report-sp-pni-cells`.
+    """
+    _refuse_combo_ids("report-sp-taxonomy", run_id or [], outputs_root)
+    try:
+        runs, pni_csvs, layouts, source_csvs = _pni_inputs(run_id, layout, pni_csv, source_csv, outputs_root)
+        reports = sp_taxonomy.build_for_runs(
             runs, pni_csvs, layouts=layouts,
             analysis_root=analysis_root, source_csvs=source_csvs,
         )

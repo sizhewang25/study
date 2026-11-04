@@ -272,6 +272,7 @@ def _path_fit(pts: pd.DataFrame, col: str) -> dict:
         "log10_ratio_iqr_long_range": float(lr.quantile(0.75) - lr.quantile(0.25)),
         "n_points_below_floor": int(below.sum()),
         "n_tgs_below_floor": int(pts.n_tgs[below].sum()),
+        "tgs_below_floor_pct": 100.0 * float(pts.n_tgs[below].sum() / pts.n_tgs.sum()),
     }
 
 

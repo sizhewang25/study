@@ -373,7 +373,10 @@ def _misses(tgs: pd.DataFrame) -> dict:
         out[kind] = {"n_tgs": int(len(w)), "n_sites": int(w[S.SITE_KEY_COL].nunique()),
                      "runs": sorted(w.run_id.unique()),
                      "min_rtt_norm": [float(w[D_RTT].min()), float(w[D_RTT].max())] if len(w) else None,
-                     "d_sp": [float(w[D_SP].min()), float(w[D_SP].max())] if len(w) else None}
+                     "d_sp": [float(w[D_SP].min()), float(w[D_SP].max())] if len(w) else None,
+                     # Its smallest min RTT over the largest of any correct has-X TG.
+                     "min_rtt_over_correct_max": (float(w[D_RTT].min()) / out["correct_min_rtt_norm_max"]
+                                                  if len(w) else None)}
     return out
 
 
@@ -400,6 +403,9 @@ def _manifest(tgs: pd.DataFrame, table: pd.DataFrame, meta: dict, bounds: DN.Bou
             "median_d_sp_over_d_geo": float((tgs[D_SP] / tgs[D_GEO]).median()),
             "median_d_sp_over_d_x": float((tgs[D_SP] / tgs[D_X]).median()),
             "median_d_sp_over_d_x_no_x": float((tgs[D_SP] / tgs[D_X])[~tgs[HAS_X]].median()),
+            # The nearest VP is about as close to a no-X TG as to a has-X one, so
+            # proximity does not separate the sides (a ratio: no magnitude leaks).
+            "median_d_geo_no_x_over_has_x": float(nox[D_GEO].median() / has[D_GEO].median()),
             "within_2x_of_diagonal_pct": {
                 "d_geo": 100.0 * float(((tgs[D_SP] / tgs[D_GEO]).between(0.5, 2.0)).mean()),
                 "d_x": 100.0 * float(((tgs[D_SP] / tgs[D_X]).between(0.5, 2.0)).mean()),

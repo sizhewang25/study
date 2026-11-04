@@ -97,6 +97,10 @@ analysis:
     layout: pooled
     run-id: "@seen"
 
+  report-sp-taxonomy:             # §4.2: a cause per S-P prediction
+    layout: pooled
+    run-id: "@seen"
+
   report-loso-delta:              # Table x-cell and Table seen-unseen
     pair: "@seen:@unseen"
     method: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]

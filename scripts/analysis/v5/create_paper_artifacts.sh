@@ -154,6 +154,11 @@ grun plot-x-cell-rtt
 # S-P on each side of the split, where its wrong answers land, and why it
 # misses (sides in sp_pni_cells.report.json).
 grun report-sp-pni-cells
+# §4.2: a cause for every S-P prediction (RTT ignores distance / near-tie on
+# has-X; X_in != X and the expected miss on no-X) and the nearest-VP RTT ratio
+# per side, in sp_taxonomy.report.json. report-paper's sp-mechanism and
+# sp-taxonomy blocks read it with the three S-P artifacts above.
+grun report-sp-taxonomy
 # Table x-cell (has-X / no-X accuracy, seen sites) and, in §5.4, Table
 # seen-unseen: both from loso_delta.{csv,by_has_x.csv}.
 grun report-loso-delta

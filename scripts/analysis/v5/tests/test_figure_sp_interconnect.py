@@ -122,6 +122,8 @@ class TestTheFramesAgainstBruteForce:
             below = pts.rtt_sp_ms < pts[col] / B.FLOOR_KM_PER_MS
             assert rep["path_fit"][name]["n_points_below_floor"] == int(below.sum())
             assert rep["path_fit"][name]["n_tgs_below_floor"] == int(pts.n_tgs[below].sum())
+            assert rep["path_fit"][name]["tgs_below_floor_pct"] == pytest.approx(
+                100.0 * pts.n_tgs[below].sum() / pts.n_tgs.sum())
 
     def test_every_interconnect_is_covered_in_the_fixture(self, clustered):
         """The fixture puts a VP on each of its two interconnects."""
@@ -222,6 +224,7 @@ class TestTheRealPaperNumbers:
         fit = rep["path_fit"]
         assert fit["via_sp_vp_nearest_interconnect"]["n_points_below_floor"] == 0
         assert fit["via_tg_nearest_interconnect"]["n_tgs_below_floor"] == 57
+        assert round(fit["via_tg_nearest_interconnect"]["tgs_below_floor_pct"], 1) == 4.5
         assert round(fit["via_sp_vp_nearest_interconnect"]["rho_long_range"], 2) == 0.95
 
     def test_latency_condition(self, rep):

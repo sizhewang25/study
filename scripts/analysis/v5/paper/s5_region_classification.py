@@ -68,6 +68,7 @@ def build(ctx: Context) -> tuple[list[Table], dict[str, str]]:
     xr = pd.read_csv(p_dir / "x_cell_rtt.csv")
     xr["net"] = [network(r) for r in xr.run_id]
     share = {(r.net, r.side): r.tgs_pct for r in xr.itertuples()}
+    med = {(r.net, r.side): r.p50_norm for r in xr.itertuples()}
     cols = ["Method"] + [f"{n} {k}" for n in NETWORKS for k in (*SIDES, "Acc")]
     rows = [["(group share)"] + [x for n in NETWORKS for x in
                                 (fmt.pct(share[(n, "has-X")]), fmt.pct(share[(n, "no-X")]), "")]]
@@ -99,7 +100,9 @@ def build(ctx: Context) -> tuple[list[Table], dict[str, str]]:
         [("Network", lambda r: r.net), ("Side", lambda r: r.side), ("TGs", lambda r: fmt.pct(r.tgs_pct)),
          ("Sites", lambda r: fmt.pct(r.sites_pct)),
          *[(f"p{p}", lambda r, p=p: fmt.dp(r[f"p{p}_norm"], 3)) for p in (5, 25, 50, 75, 95)],
-         (f"≤ split ({fmt.dp(split, 3)})", lambda r: fmt.pct(r.le_split_pct))],
+         (f"≤ split ({fmt.dp(split, 3)})", lambda r: fmt.pct(r.le_split_pct)),
+         # no-X median over has-X median, per network (on the no-X row): a ratio, no RTT leaks.
+         ("p50 no-X / has-X", lambda r: fmt.times(r.p50_norm / med[(r.net, "has-X")]) if r.side == "no-X" else "")],
     ))
     ex = pd.read_csv(p_dir / "x_cell_rtt.exceptions.csv")
     ex["net"] = [network(r) for r in ex.run_id]
