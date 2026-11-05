@@ -112,8 +112,6 @@ BIND_TOL = 0.01
 SEGMENT_DEG = 0.02
 #: LTD x-axis span, as a multiple of the representative VP's RTT to the TG.
 LTD_ZOOM = 3.5
-#: SPO's other rings are drawn at this share of black (they overlap into a grey wash otherwise).
-SPO_DIM = 0.3
 
 
 # ---- the example pipeline ----------------------------------------------------------------
@@ -522,38 +520,55 @@ def _markers(ax, frame: Frame, ex: MethodExample, vp_id: str, tg_xy=(0.0, 0.0)) 
                zorder=8)
 
 
-def _density_field(frame: Frame, ext, parts: list[dict]) -> list[np.ndarray]:
-    """Per-VP exp(-z^2/2) over a DENSITY_PX raster of the frame."""
+def _distance_fields(frame: Frame, ext, parts: list[dict]) -> list[np.ndarray]:
+    """Great-circle km from each VP over a DENSITY_PX raster of the frame (SPO's s_i(x))."""
     xs = np.linspace(ext[0], ext[1], DENSITY_PX)
     ys = np.linspace(ext[2], ext[3], DENSITY_PX)
     X, Y = np.meshgrid(xs, ys)
     lat, lon = frame.latlon(X.ravel(), Y.ravel())
-    fields = []
-    for p in parts:
-        s = R._haversine_km(p["vp_lat"], p["vp_lon"], lat, lon)
-        z = (s - p["mu_km"]) / p["sigma_km"]
-        fields.append(np.exp(-0.5 * z * z).reshape(X.shape))
-    return fields
+    return [R._haversine_km(p["vp_lat"], p["vp_lon"], lat, lon).reshape(X.shape) for p in parts]
+
+
+def joint_density(dists: list[np.ndarray], parts: list[dict]) -> np.ndarray:
+    """exp(-1/2 sum z_i^2), scaled to 1 at its peak over the raster: what SPO's MTL returns."""
+    acc = np.zeros_like(dists[0])
+    for s, p in zip(dists, parts):
+        acc += ((s - p["mu_km"]) / p["sigma_km"]) ** 2
+    logp = -0.5 * acc
+    return np.exp(logp - logp.max())
+
+
+def _draw_spo(ax, frame: Frame, ex: MethodExample, vp_id: str, ext, *, highlight: bool) -> None:
+    """The joint density in grey (black at its peak) under each VP's ring.
+
+    The density is SPO's MTL output, the analogue of the filled intersection. Each VP's
+    ring is drawn as its mu circle (solid) with dotted mu +/- sigma circles, the annulus
+    convention; the representative VP's in LTD's red, the others' mu circle dimmed.
+    """
+    from matplotlib.colors import LinearSegmentedColormap
+
+    dists = _distance_fields(frame, ext, ex.participants)
+    joint = joint_density(dists, ex.participants)
+    cmap = LinearSegmentedColormap.from_list("spo", ["#ffffff", "#000000"])
+    ax.imshow(joint, extent=ext, origin="lower", cmap=cmap, vmin=0, vmax=1, interpolation="bilinear", zorder=1)
+    xs = np.linspace(ext[0], ext[1], DENSITY_PX)
+    ys = np.linspace(ext[2], ext[3], DENSITY_PX)
+    for p, d in sorted(zip(ex.participants, dists), key=lambda t: t[0]["vp_id"] == vp_id):
+        if highlight and p["vp_id"] == vp_id:
+            lo, mu, hi = p["mu_km"] - p["sigma_km"], p["mu_km"], p["mu_km"] + p["sigma_km"]
+            ax.contourf(xs, ys, d, levels=[max(lo, 0.0), hi], colors=[STAR], alpha=0.12, zorder=2)
+            ax.contour(xs, ys, d, levels=[mu], colors=[STAR], linewidths=1.1, zorder=4)
+            ax.contour(xs, ys, d, levels=[v for v in (lo, hi) if v > 0], colors=[STAR], linewidths=0.9,
+                       linestyles=[(0, (1, 1.2))], zorder=4)
+        else:
+            ax.contour(xs, ys, d, levels=[p["mu_km"]], colors=[DIM], linewidths=0.6, alpha=DIM_ALPHA, zorder=3)
 
 
 def draw_map(ax, frame: Frame, ex: MethodExample, vp_id: str, ext, *, highlight: bool, star: bool) -> None:
     """Panel (b) (highlight) or (c) (star): constraints, region, VPs, TG, scale bar."""
     ax.set_xlim(ext[0], ext[1]); ax.set_ylim(ext[2], ext[3]); ax.set_aspect("equal")
     if ex.combo == SPO:
-        fields = _density_field(frame, ext, ex.participants)
-        others = [f for p, f in zip(ex.participants, fields) if not (highlight and p["vp_id"] == vp_id)]
-        img = SPO_DIM * np.max(others, axis=0) if others else np.zeros((DENSITY_PX, DENSITY_PX))
-        ax.imshow(img, extent=ext, origin="lower", cmap="Greys", vmin=0, vmax=1, interpolation="bilinear",
-                  zorder=1)
-        rep = [f for p, f in zip(ex.participants, fields) if highlight and p["vp_id"] == vp_id]
-        if rep:
-            # The representative VP's ring in LTD's red, opaque where its density is high.
-            from matplotlib.colors import to_rgb
-
-            rgba = np.zeros((*rep[0].shape, 4))
-            rgba[..., :3] = to_rgb(STAR)
-            rgba[..., 3] = 0.85 * rep[0]
-            ax.imshow(rgba, extent=ext, origin="lower", interpolation="bilinear", zorder=1.5)
+        _draw_spo(ax, frame, ex, vp_id, ext, highlight=highlight)
     else:
         mtl = "planar_circle" if ex.combo in ("million_scale_cbg", "vanilla_cbg") else "planar_annulus_weighted"
         if ex.region is not None and not ex.region.is_empty:
@@ -764,8 +779,10 @@ def map_legend(combo: str, *, highlight: bool, star: bool, filtered: bool = Fals
     h.append(_mark("TG", TG_MARKER, TG_FILL, TG_EDGE, 6.0))
     if combo == SPO:
         if highlight:
-            h.append(Patch(facecolor=STAR, edgecolor="none", alpha=0.85, label="Rep. VP's ring"))
-        h.append(Patch(facecolor="#b3b3b3", edgecolor="none", label="Other rings" if highlight else "VP rings"))
+            h += [_line(r"Rep. VP's $\mu$", color=STAR, lw=1.1),
+                  _line(r"Rep. VP's $\mu\pm\sigma$", color=STAR, lw=0.9, ls=(0, (1, 1.2)))]
+        h.append(_line(r"Other $\mu$" if highlight else r"VPs' $\mu$", color=DIM, lw=0.6, alpha=DIM_ALPHA))
+        h.append(Patch(facecolor="#555555", edgecolor=INK, linewidth=0.4, label="Joint density"))
     else:
         if highlight:
             h.append(_line(f"Rep. VP's {shape}", color=STAR, lw=1.1))

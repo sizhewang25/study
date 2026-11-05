@@ -91,8 +91,10 @@ def test_maps_carry_no_ticks_and_draw_only_participants(tmp_path):
             fig, ax = F._fig_map()
             F.draw_map(ax, fr, ex, "a", ext, highlight=hl, star=st)
             assert list(ax.get_xticks()) == [] and list(ax.get_yticks()) == []
+            from matplotlib.collections import PathCollection
+
             n_vp_markers = sum(len(c.get_offsets()) for c in ax.collections
-                               if getattr(c, "get_offsets", None) is not None and c.get_offsets().shape[0] == 1
+                               if isinstance(c, PathCollection) and c.get_offsets().shape[0] == 1
                                and c.get_paths() and c.get_sizes()[0] in (16, 26))
             assert n_vp_markers == len(ex.participants)
             out = F._save(fig, tmp_path / f"{combo}.{hl}.png")
@@ -115,3 +117,17 @@ def test_ltd_panel_marks_the_bound_the_vp_rtt_yields(tmp_path):
     ys = sorted(reds[0].get_offsets()[:, 1])
     assert ys == pytest.approx([0.12, 0.30]) and reds[0].get_offsets()[0, 0] == pytest.approx(0.2)
     assert F._save(fig, tmp_path / "ltd.png").exists()
+
+
+def test_spo_joint_density_peaks_where_the_rings_agree():
+    fr = F.Frame(0.0, 0.0, D)
+    # Three VPs whose mean distance to the origin is exactly their true distance.
+    parts = [_p(v, lat, lon, 0) for v, lat, lon in (("a", 0.5, 0.0), ("b", -0.3, 0.4), ("c", -0.3, -0.4))]
+    for q in parts:
+        q["mu_km"] = float(F.R._haversine_km(0.0, 0.0, q["vp_lat"], q["vp_lon"]))
+        q["sigma_km"] = 10.0
+    ext = (-0.05, 0.05, -0.05, 0.05)
+    j = F.joint_density(F._distance_fields(fr, ext, parts), parts)
+    iy, ix = np.unravel_index(np.argmax(j), j.shape)
+    xs = np.linspace(ext[0], ext[1], F.DENSITY_PX)
+    assert j.max() == pytest.approx(1.0) and abs(xs[ix]) < 0.002 and abs(xs[iy]) < 0.002
