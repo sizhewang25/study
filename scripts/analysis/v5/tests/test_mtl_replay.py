@@ -40,6 +40,14 @@ def test_single_disk_area_matches_the_cap_within_two_percent():
     assert m["contains_tg"] and m["tg_to_region_over_D"] == 0.0 and m["pred_to_region_over_D"] == 0.0
 
 
+def test_area_of_a_region_past_the_pole_is_finite():
+    # A planar lon/lat polygon reaching lat 95: pyproj alone returns NaN there.
+    from shapely.geometry import box
+
+    a = R.geodesic_area_km2(box(-10.0, 80.0, 10.0, 95.0))
+    assert math.isfinite(a) and a == pytest.approx(R.geodesic_area_km2(box(-10.0, 80.0, 10.0, 90.0)))
+
+
 def test_outside_tg_distance_and_exclusion():
     # Two overlapping disks around lon 0..0.5; the TG sits ~1 degree east, outside both.
     parts = [_p("a", 0.0, 0.0, 60.0), _p("b", 0.0, 0.5, 60.0)]

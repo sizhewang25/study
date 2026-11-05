@@ -80,6 +80,8 @@ from scripts.analysis.v5.modules import (
     figure_vp_dist_gap,
     figure_vp_distance_cdf,
     figure_vp_obs,
+    figure_x_side_regions,
+    figure_cbg_mechanism,
     figure_vp_proximity,
     figure_x_cell_rtt,
     bounds,
@@ -2121,6 +2123,91 @@ def plot_step_heading_cmd(
     try:
         written = figure_step_heading.build([resolve_run(r, outputs_root) for r in run_id],
                                             analysis_root=analysis_root)
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for path in written.values():
+        typer.echo(f"wrote {path}")
+
+
+@app.command("plot-cbg-mechanism")
+def plot_cbg_mechanism_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Seen-site run (repeatable)."),
+    tg_id: str = typer.Option(None, "--tg-id", help="The example TG; omit to rank candidates."),
+    vp_id: str = typer.Option(None, "--vp-id", help="The representative VP (with --tg-id)."),
+    k: int = typer.Option(figure_cbg_mechanism.DEFAULT_K, "--k", help="Lowest-RTT VPs the example uses."),
+    candidates: int = typer.Option(6, "--candidates", help="Candidates on the contact sheet."),
+    sample_frac: float = typer.Option(1.0, "--sample-frac", help="Site-stratified share of TGs to rank."),
+    workers: int = typer.Option(8, "--workers", help="Processes for the candidate ranking."),
+    inputs_root: Path = typer.Option(None, "--inputs-root", help="Benchmark inputs root (fit samples)."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """Three-phase mechanism example of each CBG method (appendix): LTD, MTL and EST panels.
+
+    Without --tg-id: rank (TG, VP) pairs over the runs and write `candidates.csv`
+    and a contact sheet. With --tg-id/--vp-id: re-run every method on the TG's K
+    lowest-RTT VPs and write `cbg_mech.<method>.<ltd|mtl|est>.png` plus
+    `cbg_mechanism.json`, after checking that the all-VP rebuild reproduces the
+    recorded predictions. Needs `classify` and `report-sp-pni-cells`.
+    """
+    if not run_id:
+        raise typer.BadParameter("pass at least one --run-id")
+    from scripts.analysis.v5.modules.labels import declared_dist_norm_km, declared_rtt_norm_ms
+    from scripts.benchmark.v2.inputs import DEFAULT_INPUTS_ROOT
+
+    try:
+        runs = [resolve_run(r, outputs_root) for r in run_id]
+        D = {declared_dist_norm_km(r.run_id, outputs_root)[1] for r in runs}
+        Rm = {declared_rtt_norm_ms(r.run_id, outputs_root)[1] for r in runs}
+        if len(D) != 1 or len(Rm) != 1:
+            raise ValueError("the runs declare different D or R_max")
+        D_km, R_ms = D.pop(), Rm.pop()
+        if tg_id is None:
+            written = figure_cbg_mechanism.build_candidates(
+                runs, D_km=D_km, k=k, top=candidates, frac=sample_frac, workers=workers,
+                analysis_root=analysis_root, progress=typer.echo)
+        else:
+            if vp_id is None:
+                raise ValueError("--tg-id needs --vp-id")
+            holders = [r for r in runs if tg_id in set(
+                figure_cbg_mechanism.R._scored(r, figure_cbg_mechanism.METHODS[0], analysis_root).tg_id.astype(str))]
+            if len(holders) != 1:
+                raise ValueError(f"{tg_id} is scored in {len(holders)} of the runs, need exactly one")
+            written = figure_cbg_mechanism.build_example(
+                holders[0], tg_id, vp_id, D_km=D_km, R_ms=R_ms, k=k,
+                inputs_root=Path(inputs_root) if inputs_root is not None else DEFAULT_INPUTS_ROOT,
+                analysis_root=analysis_root)
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for path in written.values():
+        typer.echo(f"wrote {path}")
+
+
+@app.command("plot-x-side-regions")
+def plot_x_side_regions_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Seen-site run (repeatable); pooled."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """Error distance (every method) and region area / TG inclusion (SOI, VAN, OCT-H, OCT-S), has-X vs no-X.
+
+    Three PNGs (`x_side_error`, `x_side_area`, `x_side_inside`) and
+    `x_side_regions.json`. Needs `classify`, `report-sp-pni-cells` and
+    `report-mtl-replay` on every run.
+    """
+    if not run_id:
+        raise typer.BadParameter("pass at least one --run-id")
+    try:
+        from scripts.analysis.v5.modules.labels import declared_dist_norm_km
+
+        runs = [resolve_run(r, outputs_root) for r in run_id]
+        D_km = {}
+        for run in runs:
+            bounds = declared_dist_norm_km(run.run_id, outputs_root)
+            if bounds is None:
+                raise ValueError(f"{run.run_id} declares no analysis.common.dist_norm_km (D)")
+            D_km[run.run_id] = bounds[1]
+        written = figure_x_side_regions.build(runs, D_km, analysis_root=analysis_root)
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     for path in written.values():

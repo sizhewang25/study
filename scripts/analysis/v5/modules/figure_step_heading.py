@@ -22,9 +22,9 @@ share of the gap a method closes. No distance is written in km.
 Paper-ready, no title: gap-unit axes, the upper unit half circle, X_in and the
 TG (in a legend above the axes), every no-X answer, and the 95% site-bootstrap CI of the median step (radial segment, at
 the median heading) and of the median heading (arc, at the median step).
-Every panel shares one fixed window, x in [-2, 2] and y in [0, 2] gaps, with
-the y axis through X_in; answers more than 2 gaps off X_in are drawn at radius
-2 on their own heading, hollow (`capped_pct`). Every number is in `step_heading.json`.
+Every panel shares one fixed window, x in [-1.5, 1.5] and y in [0, 1.5] gaps,
+with the y axis through X_in; answers more than 1.5 gaps off X_in are drawn at
+radius 1.5 on their own heading, hollow (`capped_pct`). Every number is in `step_heading.json`.
 """
 
 from __future__ import annotations
@@ -57,16 +57,22 @@ VIEW_COVERAGE = 0.95  # of each method's answers
 VIEW_GRID = 0.25
 NEAR_TG_GAP = 0.1
 N_BOOT = 2000
-PANEL_IN = 1.8
+#: Printed at about its own size (a fifth of the text width), so the fonts below are print sizes.
+PANEL_IN = 1.4
 #: Fixed window and cap, in gap units: x in [-CAP, CAP], y in [0, CAP]; steps beyond CAP drawn at CAP.
-CAP = 2
-DOT_S = 2.5
-MARK_S = 12
+CAP = 1.5
+DOT_S = 3.0
+MARK_S = 14
+#: Ticks, in gaps: the unit half circle's ends and X_in.
+X_TICKS = (-1, 0, 1)
+Y_TICKS = (1,)
+FONT = 6.5
+TICK_FONT = 6
 #: Axes margins (left, bottom, right, top), inches: fixed so every panel is identical.
-MARGIN_IN = (0.16, 0.26, 0.06, 0.16)
-#: Both axes are in units of d(X_in, TG).
-AXIS_LABEL_X = r"along $X_{\mathrm{in}}\!\to$TG (gap)"
-AXIS_LABEL_Y = r"across (gap)"
+MARGIN_IN = (0.17, 0.29, 0.05, 0.17)
+#: Both axes are in units of d(X_in, TG); the caption names the unit.
+AXIS_LABEL_X = r"Dist. along $X_{\mathrm{in}}\!\to$TG"
+AXIS_LABEL_Y = r"Dist. across"
 
 
 # ---- geometry ----------------------------------------------------------------------------
@@ -209,7 +215,7 @@ def render(g: pd.DataFrame, stats: dict, color: str, out_png: Path) -> Path:
     ax.scatter([0], [0], marker="^", s=MARK_S, color="k", zorder=8, clip_on=False, label=r"$X_{\mathrm{in}}$")
     ax.scatter([1], [0], marker="*", s=MARK_S * 1.8, color="k", zorder=8, clip_on=False, label="TG")
     # Above the axes, in the fixed top margin: never over an answer, same in every panel.
-    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2, fontsize=6, frameon=False,
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2, fontsize=FONT, frameon=False,
               handletextpad=0.3, columnspacing=1.2, borderaxespad=0.1)
     ax.set_aspect("equal")
     ax.set_xlim(-CAP, CAP); ax.set_ylim(0, CAP)
@@ -218,10 +224,10 @@ def render(g: pd.DataFrame, stats: dict, color: str, out_png: Path) -> Path:
         ax.spines[side].set_visible(False)
     for side in ("left", "bottom"):
         ax.spines[side].set_linewidth(0.5)
-    ax.set_xticks(np.arange(-CAP, CAP + 1)); ax.set_yticks(np.arange(1, CAP + 1))
-    ax.tick_params(labelsize=5.5, length=2, pad=1.2, width=0.5)
-    ax.set_xlabel(AXIS_LABEL_X, fontsize=6, labelpad=1.5)
-    ax.set_ylabel(AXIS_LABEL_Y, fontsize=6, labelpad=1.5)
+    ax.set_xticks(X_TICKS); ax.set_yticks(Y_TICKS)
+    ax.tick_params(labelsize=TICK_FONT, length=2, pad=1.2, width=0.5)
+    ax.set_xlabel(AXIS_LABEL_X, fontsize=FONT, labelpad=1.5)
+    ax.set_ylabel(AXIS_LABEL_Y, fontsize=FONT, labelpad=1.5)
     # The y spine runs through X_in; its label sits at the frame's left edge, clear of the answers.
     ax.yaxis.set_label_coords(-0.035, 0.5)
     out_png.parent.mkdir(parents=True, exist_ok=True)

@@ -160,6 +160,14 @@ grun report-sp-pni-cells
 # per side, in sp_taxonomy.report.json. report-paper's sp-mechanism and
 # sp-taxonomy blocks read it with the three S-P artifacts above.
 grun report-sp-taxonomy
+# §4.3: each method's region replayed (SOI, VAN, OCT-H, OCT-S; cached per TG), then
+# Fig. x-side-regions: error distance by side, region area / D^2 and TG inside the
+# region (numbers in x_side_regions.json).
+grun report-mtl-replay
+grun plot-x-side-regions
+# Appendix: each CBG method's three phases on one TG and VP (cbg_mech.<method>.<phase>.png),
+# after checking that the all-VP rebuild reproduces the recorded predictions.
+grun plot-cbg-mechanism
 # Table x-cell (has-X / no-X accuracy, seen sites) and, in §5.4, Table
 # seen-unseen: both from loso_delta.{csv,by_has_x.csv}.
 grun report-loso-delta
@@ -238,6 +246,9 @@ FIGS=(
   "x_cell_rtt|_cross/pni-gap/$X3/x_cell_rtt.png"
   "x_cell_rtt.all|_cross/pni-gap/$X3/x_cell_rtt.all.png"
   "sp_rho_by_side|_cross/pni-gap/$X3/sp_rho_by_side.png"
+  "x_side_error|_cross/x-side-regions/$X3/x_side_error.png"
+  "x_side_area|_cross/x-side-regions/$X3/x_side_area.png"
+  "x_side_inside|_cross/x-side-regions/$X3/x_side_inside.png"
   "correct_upset.pooled.cell|_cross/classify/$X3/correct_upset.pooled.cell.png"
   "spo_vs_octh_exclusive_pixel_cdf|_cross/exclusive-error/$X3/exclusive_error_cdf.spo_vs_octh.png"
   "spo_vs_octh_replica_spread|_cross/stability/$X3/paired_std_grid_offset.spo_vs_octh.png"
@@ -250,6 +261,12 @@ FIGS=(
   "pareto.bounded.unseen|_cross/pareto/$X6/pareto.bounded.unseen.png"
   "ripe_vs_databases.cut|$RIPE/ripe-vs-databases/ripe_vs_databases.cut.png"
 )
+MECH_RUN=pro-as03-mesh   # configs/groups/pro-paper.yaml plot-cbg-mechanism.run-id
+for t in SOI VAN OCT-H OCT-S SPO; do
+  for ph in ltd mtl est; do
+    FIGS+=("cbg_mech.$t.$ph|$MECH_RUN/cbg-mechanism/cbg_mech.$t.$ph.png")
+  done
+done
 
 if [ -n "$CHECK_DIR" ] || [ -n "$COPY_DIR" ]; then
   section "figures"

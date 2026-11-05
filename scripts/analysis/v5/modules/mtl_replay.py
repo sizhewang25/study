@@ -129,9 +129,17 @@ def ring_polygon(mtl_name: str, p: dict, n_pts: int):
 
 
 def geodesic_area_km2(region) -> float:
-    """Geodesic area of a lon/lat Polygon / MultiPolygon on WGS84, km²."""
-    from pyproj import Geod
+    """Geodesic area of a lon/lat Polygon / MultiPolygon on WGS84, km².
 
+    Clipped to the valid lon/lat box first: a large planar 64-gon disk (SOI's
+    2/3 c bound from a far VP) overshoots |lat| > 90, where pyproj returns NaN.
+    """
+    from pyproj import Geod
+    from shapely.geometry import box
+
+    region = region.intersection(box(-180.0, -90.0, 180.0, 90.0))
+    if region.is_empty:
+        return 0.0
     area, _ = Geod(ellps="WGS84").geometry_area_perimeter(region)
     return abs(area) / 1e6
 

@@ -108,6 +108,17 @@ analysis:
   plot-step-heading:              # §5 no-X: step + heading off the ingress point
     run-id: "@seen"
 
+  plot-x-side-regions:            # §4.3: error, region area, TG inside, by has-X / no-X
+    run-id: "@seen"
+
+  plot-cbg-mechanism:             # appendix: LTD / MTL / EST example per CBG method
+    # Picked from `plot-cbg-mechanism --run-id @seen` (no --tg-id), the contact sheet
+    # in _cross/cbg-mechanism/pro-paper.seen/: VPs on both sides of the TG, the VP's
+    # ring forms part of every geometric region. Re-run on the 6 lowest-RTT VPs.
+    run-id: pro-as03-mesh
+    tg-id: tg-708990b
+    vp-id: vp-4f6bbe7
+
   report-cell-margin:             # §5 verification: room around each TG in its cell
     run-id: "@seen"
     pair: "@seen:@unseen"
