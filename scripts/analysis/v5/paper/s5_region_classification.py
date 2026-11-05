@@ -104,6 +104,18 @@ def build(ctx: Context) -> tuple[list[Table], dict[str, str]]:
          # no-X median over has-X median, per network (on the no-X row): a ratio, no RTT leaks.
          ("p50 no-X / has-X", lambda r: fmt.times(r.p50_norm / med[(r.net, "has-X")]) if r.side == "no-X" else "")],
     ))
+    # -- Direct vs indirect routing, by side (report-sp-taxonomy) ---------------------
+    tax = json.loads((p_dir / "sp_taxonomy.report.json").read_text())["routing"]
+    tables.append(Table(
+        "§5 has-X vs no-X: routing", "How well RTT tracks VP distance, by side (pooled, seen sites)",
+        "P sp_taxonomy.report.json (routing)",
+        ["Side", "per-TG ρ p50", "per-TG ρ p10", "nearest VP: ρ(RTT, path via X)", "nearest VP: ρ(RTT, own distance)"],
+        [[s, fmt.dp(tax[s]["per_tg_rho_p50"], 2), fmt.dp(tax[s]["per_tg_rho_p10"], 2),
+          fmt.dp(tax[s]["nearest_vp_rho_rtt_vs_path_via_x"], 2), fmt.dp(tax[s]["nearest_vp_rho_rtt_vs_own_distance"], 2)]
+         for s in SIDES],
+        [{"side": s, **tax[s]} for s in SIDES],
+        note="per-TG ρ = Spearman(RTT, VP distance) over the TG's VPs; the nearest-VP columns are Spearman across TGs.",
+    ))
     ex = pd.read_csv(p_dir / "x_cell_rtt.exceptions.csv")
     ex["net"] = [network(r) for r in ex.run_id]
     tables.append(from_frame(

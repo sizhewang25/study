@@ -688,22 +688,32 @@ def argmax_grid_regions(
 # ---- region replay ----------------------------------------------------------
 
 
-def _region_task(task: tuple[str, str, list[dict]]) -> dict | None:
-    """Replay one TG's MTL and serialize the region. Runs in a worker process.
+def participants_of(mtl_participants: Any) -> list[dict]:
+    """The plain-data constraint set an MTL replay reads, from one `mtl_participants` cell.
 
-    Module-level and taking only plain data so it pickles; the MTL is
-    instantiated per call because the registry object is not picklable and
-    construction is negligible against the intersection itself.
+    Shared by this map's `replay_mtl` and `mtl_replay`, so both replay exactly
+    the same constraints. A participant without an outer bound is skipped.
     """
-    import scripts.framework.v2  # noqa: F401  (populates the registries)
-    from scripts.framework.v2.ltd.base import LTDResult
-    from scripts.framework.v2.registry import MTL_REGISTRY
-    from scripts.framework.v2.types import Coord, Distance, Latency, VpId
-    from scripts.visualization.benchmark.v2.mtl_world_map import _serialize_intersection
+    return [
+        {
+            "vp_id": str(p["vp_id"]),
+            "vp_lat": float(p["vp_lat"]),
+            "vp_lon": float(p["vp_lon"]),
+            "rtt_ms": None if p.get("rtt_ms") is None else float(p["rtt_ms"]),
+            "upper_km": float(p["echoed_upper_km"]),
+            "lower_km": float(p.get("echoed_lower_km") or 0.0),
+        }
+        for p in _nested(mtl_participants)
+        if p.get("echoed_upper_km")
+    ]
 
-    mtl_name, mtl_kwargs_json, participants = task
-    mtl = MTL_REGISTRY[mtl_name](**json.loads(mtl_kwargs_json))
-    results = [
+
+def ltd_results(participants: list[dict]) -> list:
+    """`LTDResult`s for `participants_of` output. Imports the framework lazily (worker-safe)."""
+    from scripts.framework.v2.ltd.base import LTDResult
+    from scripts.framework.v2.types import Coord, Distance, Latency, VpId
+
+    return [
         LTDResult(
             success=True,
             error=None,
@@ -714,6 +724,22 @@ def _region_task(task: tuple[str, str, list[dict]]) -> dict | None:
         )
         for p in participants
     ]
+
+
+def _region_task(task: tuple[str, str, list[dict]]) -> dict | None:
+    """Replay one TG's MTL and serialize the region. Runs in a worker process.
+
+    Module-level and taking only plain data so it pickles; the MTL is
+    instantiated per call because the registry object is not picklable and
+    construction is negligible against the intersection itself.
+    """
+    import scripts.framework.v2  # noqa: F401  (populates the registries)
+    from scripts.framework.v2.registry import MTL_REGISTRY
+    from scripts.visualization.benchmark.v2.mtl_world_map import _serialize_intersection
+
+    mtl_name, mtl_kwargs_json, participants = task
+    mtl = MTL_REGISTRY[mtl_name](**json.loads(mtl_kwargs_json))
+    results = ltd_results(participants)
     if not results:
         return None
     result = mtl.multilaterate(results)
@@ -859,18 +885,7 @@ def replay_mtl(
                 regions[tid] = cached
             continue
 
-        participants = [
-            {
-                "vp_id": str(p["vp_id"]),
-                "vp_lat": float(p["vp_lat"]),
-                "vp_lon": float(p["vp_lon"]),
-                "rtt_ms": None if p.get("rtt_ms") is None else float(p["rtt_ms"]),
-                "upper_km": float(p["echoed_upper_km"]),
-                "lower_km": float(p.get("echoed_lower_km") or 0.0),
-            }
-            for p in _nested(row.mtl_participants)
-            if p.get("echoed_upper_km")
-        ]
+        participants = participants_of(row.mtl_participants)
         if not participants:
             continue
         tasks.append((tid, (mtl_name, kwargs_json, participants)))

@@ -101,6 +101,17 @@ analysis:
     layout: pooled
     run-id: "@seen"
 
+  report-mtl-replay:              # §5 verification: each method's region, replayed
+    run-id: "@seen"
+    pair: "@seen:@unseen"
+
+  plot-step-heading:              # §5 no-X: step + heading off the ingress point
+    run-id: "@seen"
+
+  report-cell-margin:             # §5 verification: room around each TG in its cell
+    run-id: "@seen"
+    pair: "@seen:@unseen"
+
   report-loso-delta:              # Table x-cell and Table seen-unseen
     pair: "@seen:@unseen"
     method: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]

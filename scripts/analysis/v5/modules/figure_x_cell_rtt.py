@@ -91,6 +91,8 @@ from scripts.analysis.v5.modules.mapping import INK, INK_2  # noqa: E402
 from scripts.analysis.v5.modules.paths import RunPaths  # noqa: E402
 
 PNG_NAME = "x_cell_rtt.png"
+#: The pooled view (one has-X and one no-X box over every run), written when several runs are pooled.
+PNG_ALL_NAME = "x_cell_rtt.all.png"
 CSV_NAME = "x_cell_rtt.csv"
 MANIFEST_NAME = "x_cell_rtt.manifest.json"
 
@@ -257,8 +259,9 @@ def exceptions_table(tgs: pd.DataFrame, rtt_norm_ms: R.Bounds | None = None) -> 
 def outliers(tgs: pd.DataFrame, stats: pd.DataFrame) -> dict[tuple[str, bool], list[float]]:
     """Per `(run, side)`, the TG floors outside that box's p5/p95 whiskers."""
     out = {}
-    for _, r in stats[stats.run_id != ALL_RUNS].iterrows():
-        g = tgs[(tgs.run_id == r.run_id) & (tgs[GROUP_COL] == r[GROUP_COL])]
+    for _, r in stats.iterrows():
+        on_side = tgs[GROUP_COL] == r[GROUP_COL]
+        g = tgs[on_side] if r.run_id == ALL_RUNS else tgs[(tgs.run_id == r.run_id) & on_side]
         out[(r.run_id, bool(r[GROUP_COL]))] = (
             R._outside(g[FLOOR_COL].to_numpy(float), r.p5_ms, r.p95_ms) if r.n_tgs else [])
     return out
@@ -303,17 +306,24 @@ def plot(
     out_png: Path,
     fliers: dict[tuple[str, bool], list[float]] | None = None,
     rtt_norm_ms: R.Bounds | None = None,
+    share_col: str | None = "sites_pct",
+    draw_split: bool = True,
 ) -> Path:
     """Two boxes per run, has-X then no-X, on a log axis; `fliers` drawn as open circles.
+
+    Tick labels give each side's `share_col`: its share of the network's sites by
+    default; None leaves the side's name alone (the pooled view, whose shares Table 1
+    already gives).
 
     With `rtt_norm_ms`, every value is drawn normalized by those bounds.
     """
     def y(v):
         return v if rtt_norm_ms is None else R.to_norm(np.asarray(v, dtype=float), rtt_norm_ms)
 
-    stats = stats[stats.run_id != ALL_RUNS]
+    stats = stats[stats.run_id.isin(run_ids)]
     pos = positions(run_ids)
-    names = panel_names(run_ids)
+    # The pooled panel (`run_ids == [ALL_RUNS]`) has one pair and needs no name above it.
+    names = {ALL_RUNS: ""} if run_ids == [ALL_RUNS] else panel_names(run_ids)
     fig, ax = plt.subplots(figsize=(GROUP_WIDTH_IN * len(run_ids) + 0.5, HEIGHT_IN))
     ticks, labels = [], []
     extremes = [y(stats.min_ms.to_numpy(float)), y(stats.max_ms.to_numpy(float))]
@@ -322,9 +332,9 @@ def plot(
         x = pos[(r.run_id, flag)]
         tick = next(t for f, t, _ in GROUPS if f == flag)
         ticks.append(x)
-        # The share of the network's sites; the caption names the unit, which
-        # would not fit under a box at this width.
-        labels.append(f"{tick}\n{r.sites_pct:.0f}%")
+        # The side's share (of sites, or of TGs); the caption names the unit,
+        # which would not fit under a box at this width.
+        labels.append(tick if share_col is None else f"{tick}\n{r[share_col]:.0f}%")
         if not r.n_tgs:
             continue
         box = {**bxp_stats({k: float(y(r[f"{k}_ms"])) for k in STAT_KEYS}),
@@ -342,7 +352,8 @@ def plot(
         ax.text(mid, 1.0, names[rid], transform=ax.get_xaxis_transform(),
                 ha="center", va="bottom", fontsize=6.5, color=INK)
     split = float(y(SPLIT_MS))
-    ax.axhline(split, color=INK_2, lw=0.4, ls=":", zorder=0)
+    if draw_split:  # a reading aid; the pooled paper figure goes without it
+        ax.axhline(split, color=INK_2, lw=0.4, ls=":", zorder=0)
     ax.set_yscale("log")
     y_ticks = Y_TICKS_MS if rtt_norm_ms is None else Y_TICKS_NORM
     lo, hi = _y_limits(np.concatenate(extremes), split, y_ticks)
@@ -374,6 +385,7 @@ def _manifest(meta: dict, tgs: pd.DataFrame, stats: pd.DataFrame,
     return json.dumps(
         {
             "figure": PNG_NAME,
+            "figure_pooled": PNG_ALL_NAME if len(meta["run_ids"]) > 1 else None,
             "csv": CSV_NAME,
             "exceptions_csv": EXCEPTIONS_NAME,
             "layout": meta.get("layout"),
@@ -397,7 +409,7 @@ def _manifest(meta: dict, tgs: pd.DataFrame, stats: pd.DataFrame,
                     "split_norm": float(R.to_norm(SPLIT_MS, rtt_norm_ms)),
                 }
             ),
-            "tick_labels": "side's share of its network's sites (sites_pct); counts in the CSV",
+            "tick_labels": "side's share of its network's sites (sites_pct); the pooled figure: none (Table 1 gives the shares); counts in the CSV",
             "split_note": "a reading aid drawn as a dotted line and counted in n_le_split; not fitted",
             "boxes": (
                 "whiskers p5/p95, hinges p25/p75, line = median, log y axis; every TG "
@@ -428,8 +440,12 @@ def _write(tgs: pd.DataFrame, meta: dict, out_dir: Path,
     table.to_csv(out_dir / CSV_NAME, index=False)
     exceptions_table(tgs, rtt_norm_ms).to_csv(out_dir / EXCEPTIONS_NAME, index=False)
     (out_dir / MANIFEST_NAME).write_text(_manifest(meta, tgs, stats, rtt_norm_ms) + "\n")
-    return plot(stats, run_ids=run_ids, out_png=out_dir / PNG_NAME, fliers=outliers(tgs, stats),
-                rtt_norm_ms=rtt_norm_ms)
+    fliers = outliers(tgs, stats)
+    if len(run_ids) > 1:
+        # The pooled view: one has-X and one no-X box over every run's TGs.
+        plot(stats, run_ids=[ALL_RUNS], out_png=out_dir / PNG_ALL_NAME, fliers=fliers, rtt_norm_ms=rtt_norm_ms,
+             share_col=None, draw_split=False)  # shares are in Table 1; no reading line
+    return plot(stats, run_ids=run_ids, out_png=out_dir / PNG_NAME, fliers=fliers, rtt_norm_ms=rtt_norm_ms)
 
 
 def build_for_runs(

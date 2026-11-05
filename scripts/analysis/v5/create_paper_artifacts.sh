@@ -149,7 +149,8 @@ section "§5.1 unbounded accuracy and the interconnect"
 # compare layout's .gaps.csv; own-pixel shares, the share of each method's
 # correct TGs beyond 2 pixels and bounded accuracy in the pooled CSV.
 grun plot-outcome-bars
-# Fig. has-X / no-X min-RTT boxes; the exception sites in x_cell_rtt.exceptions.csv.
+# Fig. has-X / no-X min-RTT boxes, per network and pooled (x_cell_rtt.all.png, §5);
+# the exception sites in x_cell_rtt.exceptions.csv.
 grun plot-x-cell-rtt
 # S-P on each side of the split, where its wrong answers land, and why it
 # misses (sides in sp_pni_cells.report.json).
@@ -235,6 +236,8 @@ FIGS=(
   "sp_rtt_error_has_x|_cross/pni-gap/$X3/sp_rtt_error_has_x.png"
   "outcome_bars.unbounded.pooled|_cross/classify/$X3/outcome_bars.unbounded.pooled.healpix-128.png"
   "x_cell_rtt|_cross/pni-gap/$X3/x_cell_rtt.png"
+  "x_cell_rtt.all|_cross/pni-gap/$X3/x_cell_rtt.all.png"
+  "sp_rho_by_side|_cross/pni-gap/$X3/sp_rho_by_side.png"
   "correct_upset.pooled.cell|_cross/classify/$X3/correct_upset.pooled.cell.png"
   "spo_vs_octh_exclusive_pixel_cdf|_cross/exclusive-error/$X3/exclusive_error_cdf.spo_vs_octh.png"
   "spo_vs_octh_replica_spread|_cross/stability/$X3/paired_std_grid_offset.spo_vs_octh.png"

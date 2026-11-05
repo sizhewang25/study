@@ -66,6 +66,10 @@ from scripts.analysis.v5.modules.paths import RunPaths
 
 CSV_NAME = "sp_taxonomy_tgs.csv"
 REPORT_NAME = "sp_taxonomy.report.json"
+#: The CDF of per-TG rho, has-X and no-X (pooled layouts only): §5's Fig. 9b, drawn in
+#: the hues and height of `figure_x_cell_rtt`'s pooled min-RTT boxes it sits beside.
+RHO_PNG_NAME = "sp_rho_by_side.png"
+RHO_CDF_WIDTH_IN = 1.45  # with HEIGHT_IN, prints at the height of the min-RTT boxes
 
 CAUSES = {
     "0": "correct",
@@ -137,6 +141,9 @@ def edge_features(edges: pd.DataFrame, tgs: pd.DataFrame, seeds: pd.DataFrame,
             "best_fit_is_x": best == xi,
             "best_fit_seed_id": pni_seed[best],
             "nearest_over_lowest_rtt": float(rtt[at_nearest].min() / lo) if lo > 0 else np.nan,
+            # For the routing block of the report only (km / ms are never written).
+            "rtt_nearest_ms": float(rtt[at_nearest].min()),
+            "d_nearest_km": float(d.min()),
         })
     return pd.DataFrame(rows)
 
@@ -216,6 +223,21 @@ def report(tgs: pd.DataFrame, meta: dict) -> dict:
             "nearest_vp_is_lowest_pct": _pct(int((g.nearest_over_lowest_rtt <= 1.0).sum()), len(g)),
         }
 
+    # Direct vs indirect routing, per side: how well each TG's RTTs track VP distance
+    # (percentiles of the per-TG rho), and whether the nearest VP's RTT follows the path
+    # through X or its own distance to the TG (Spearman across TGs; `d_tg_x_km` is
+    # `sp_pni_cells`' distance from the TG to its nearest interconnect).
+    from scipy.stats import spearmanr
+
+    routing = {}
+    for flag, name in SIDES:
+        g = tgs[tgs.tg_cell_holds_x == flag]
+        routing[name] = {
+            "per_tg_rho_p10": float(g.rho.quantile(0.1)), "per_tg_rho_p50": float(g.rho.median()),
+            "nearest_vp_rho_rtt_vs_path_via_x": float(spearmanr(g.rtt_nearest_ms, g.d_nearest_km + g.d_tg_x_km).statistic),
+            "nearest_vp_rho_rtt_vs_own_distance": float(spearmanr(g.rtt_nearest_ms, g.d_nearest_km).statistic),
+        }
+
     # Where S-P misses the cell of X (the TG's nearest interconnect), by cause:
     # the deviations from "S-P answers X's cell" that §4.2 accounts for.
     miss = tgs[~tgs.pred_in_x_cell.astype(bool)]
@@ -242,6 +264,9 @@ def report(tgs: pd.DataFrame, meta: dict) -> dict:
         "by_run": by_run,
         "rho_band": band,
         "rtt_signal": {"unit": "TG; RTT of the VP nearest the TG over the TG's lowest RTT", **signal},
+        "routing": {"unit": "TG; per-TG Spearman rho(RTT, VP distance) percentiles, and Spearman across "
+                            "TGs of the nearest VP's RTT against d(VP,X)+d(X,TG) and against d(VP,TG)",
+                    **routing},
         "no_interconnect_fits": {
             "unit": "TG", "n_tgs": int(tgs.no_interconnect_fits.sum()),
             "pct": _pct(int(tgs.no_interconnect_fits.sum()), n),
@@ -285,8 +310,45 @@ CSV_COLUMNS = ("run_id", "tg_id", P.POINT_COL, P.CLUSTER_COL, "side", "correct",
                "pred_in_x_cell", "nearest_over_lowest_rtt", "no_interconnect_fits", "n_vps")
 
 
+def plot_rho_by_side(tgs: pd.DataFrame, out_png: Path) -> Path:
+    """CDF over TGs of the per-TG Spearman rho(RTT, VP distance), one curve per side.
+
+    §5's Fig. 9b, beside `figure_x_cell_rtt`'s pooled min-RTT boxes: same height and
+    hues. The legend sits top left; the sides' shares are in Table 1. Every percentile
+    the text quotes (median, p10) reads straight off the curves.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from scripts.analysis.v5.modules import figure_x_cell_rtt as XR
+
+    fig, ax = plt.subplots(figsize=(RHO_CDF_WIDTH_IN, XR.HEIGHT_IN))
+    for flag, tick, _ in XR.GROUPS:
+        v = np.sort(tgs.loc[tgs.tg_cell_holds_x == flag, "rho"].dropna().to_numpy(float))
+        ax.step(v, np.arange(1, len(v) + 1) / len(v), where="post", color=XR.HUES[flag], lw=1.1, label=tick)
+    ax.set_xlim(min(-0.05, float(np.nanmin(tgs.rho)) - 0.05), 1.0)
+    ax.set_ylim(0, 1.0)
+    ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+    ax.set_xlabel(r"per-TG Spearman's $\rho$", fontsize=6.5)
+    ax.set_ylabel("CDF over TGs", fontsize=6.5)
+    ax.legend(loc="upper left", fontsize=6, frameon=False, handlelength=1.2, borderaxespad=0.2)
+    ax.tick_params(axis="both", labelsize=6, length=2, pad=1.5)
+    ax.grid(alpha=0.25, lw=0.3)
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+    fig.tight_layout(pad=0.2)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=300, bbox_inches="tight", pad_inches=0.02)
+    plt.close(fig)
+    return out_png
+
+
 def _write(tgs: pd.DataFrame, meta: dict, out_dir: Path) -> Path:
     tgs.sort_values(["run_id", "tg_id"])[list(CSV_COLUMNS)].to_csv(out_dir / CSV_NAME, index=False)
+    if len(meta["run_ids"]) > 1:
+        plot_rho_by_side(tgs, out_dir / RHO_PNG_NAME)
     path = out_dir / REPORT_NAME
     path.write_text(json.dumps(report(tgs, meta), indent=2) + "\n")
     return path

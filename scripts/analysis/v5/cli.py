@@ -47,6 +47,7 @@ answer space; `plot-bipartite-graph` needs `build-bipartite-graph`; `plot-outcom
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import typer
@@ -73,6 +74,7 @@ from scripts.analysis.v5.modules import (
     figure_pni_gap,
     figure_sp_baseline,
     figure_sp_interconnect,
+    figure_step_heading,
     figure_rtt_cdf,
     figure_stability,
     figure_vp_dist_gap,
@@ -81,6 +83,7 @@ from scripts.analysis.v5.modules import (
     figure_vp_proximity,
     figure_x_cell_rtt,
     bounds,
+    cell_margin,
     dataset_summary,
     icd_assumption,
     loso_delta,
@@ -88,6 +91,7 @@ from scripts.analysis.v5.modules import (
     map_bipartite,
     map_mtl,
     mapping,
+    mtl_replay,
     octant_finetuning,
     pni_gap,
     ripe_vs_databases,
@@ -2018,6 +2022,157 @@ def report_sp_taxonomy_cmd(
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     for path in reports:
+        typer.echo(f"wrote {path}")
+
+
+@app.command("report-mtl-replay")
+def report_mtl_replay_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Seen-site (mesh) run (repeatable)."),
+    pair: list[str] = typer.Option(
+        None, "--pair", help="BASE:LOSO -- also replay BASE's unseen-site twin (repeatable).",
+    ),
+    variant: list[str] = typer.Option(
+        None, "--variant",
+        help=f"Variant (repeatable; default {', '.join(mtl_replay.PAPER_VARIANTS)}). "
+             f"Also: {mtl_replay.SPO_1SIGMA_FILTERED} (the filter-on sensitivity arm).",
+    ),
+    workers: int = typer.Option(max(1, (os.cpu_count() or 2) - 1), "--workers", help="Replay processes."),
+    limit: int = typer.Option(0, "--limit", help="Only the first N scored TGs per run (timing probe)."),
+    sample_frac: float = typer.Option(1.0, "--sample-frac", help="Site-stratified share of TGs on every run."),
+    unseen_sample_frac: float = typer.Option(
+        1.0, "--unseen-sample-frac", help="Site-stratified share of TGs on the LOSO twins only.",
+    ),
+    report_only: bool = typer.Option(False, "--report-only", help="Pool existing per-run outputs only."),
+    spo_density: float = typer.Option(
+        0.0, "--spo-density",
+        help="Site-stratified share of seen TGs for the SPO density-vs-1σ-region check (0 = skip).",
+    ),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """Replay each method's own MTL on its stored participants and measure the region.
+
+    Per TG: whether the replay reproduces the recorded outcome, the region's
+    area over D^2, whether it holds the TG, TG- and point-to-region distance
+    over D, participant counts, and the share of rings excluding the TG (great
+    circle vs the MTL's own planar polygon). `spotter_1sigma` is SPO's 1σ
+    region: its stored mu +/- sigma bands from every VP through OCT-H's MTL
+    with the circle filter off.
+
+    Writes `<run>/mtl-replay/mtl_replay_tgs.parquet` (per-TG cache under
+    `cache/`) and the pooled `_cross/mtl-replay/.../mtl_replay.report.json`.
+    Needs `classify` on every run and `report-sp-pni-cells` on every base run.
+    """
+    if not run_id:
+        raise typer.BadParameter("pass at least one --run-id")
+    variants = tuple(variant or mtl_replay.PAPER_VARIANTS) if not spo_density or variant else ()
+    unknown = [v for v in variants if v not in mtl_replay.VARIANTS]
+    if unknown:
+        raise typer.BadParameter(f"unknown --variant {unknown}; one of {sorted(mtl_replay.VARIANTS)}")
+    try:
+        from scripts.analysis.v5.modules.labels import declared_dist_norm_km
+
+        seen = [resolve_run(r, outputs_root) for r in run_id]
+        pairs = {}
+        for spec in pair or []:
+            base, loso = loso_delta.parse_pair(spec)
+            pairs[base] = resolve_run(loso, outputs_root)
+        if not report_only and variants:
+            for run, frac in [(r, sample_frac) for r in seen] + [
+                (r, sample_frac * unseen_sample_frac) for r in pairs.values()
+            ]:
+                bounds = declared_dist_norm_km(run.run_id, outputs_root)
+                if bounds is None:
+                    raise ValueError(f"{run.run_id} declares no analysis.common.dist_norm_km (D)")
+                path = mtl_replay.replay_run(
+                    run, variants, D_km=bounds[1], workers=workers, limit=limit or None, frac=frac,
+                    analysis_root=analysis_root, progress=typer.echo,
+                )
+                typer.echo(f"wrote {path}")
+        if spo_density > 0:
+            for run in seen:
+                bounds = declared_dist_norm_km(run.run_id, outputs_root)
+                path = mtl_replay.density_check(run, D_km=bounds[1], frac=spo_density, workers=workers,
+                                                analysis_root=analysis_root, progress=typer.echo)
+                typer.echo(f"wrote {path}")
+        path = mtl_replay.report(seen, pairs, analysis_root=analysis_root)
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"wrote {path}")
+
+
+@app.command("plot-step-heading")
+def plot_step_heading_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Run (repeatable); pooled."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """Step and heading of each CBG method's no-X answers off the ingress point (S-P's answer).
+
+    Frame per TG: X_in at 0, TG at (1, 0), unit d(X_in, TG); step = distance
+    off X_in, heading = unsigned angle at X_in from the TG's direction. One
+    text-free PNG per method (half circle, X_in, TG, every answer, 95% site-
+    bootstrap CIs of the median step and heading) on a shared window, plus
+    `step_heading.json` with every number. Needs `classify` and
+    `report-sp-pni-cells` on every run.
+    """
+    if not run_id:
+        raise typer.BadParameter("pass at least one --run-id")
+    try:
+        written = figure_step_heading.build([resolve_run(r, outputs_root) for r in run_id],
+                                            analysis_root=analysis_root)
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for path in written.values():
+        typer.echo(f"wrote {path}")
+
+
+@app.command("report-cell-margin")
+def report_cell_margin_cmd(
+    run_id: list[str] = typer.Option(None, "--run-id", help="Seen-site (mesh) run (repeatable)."),
+    pair: list[str] = typer.Option(
+        None, "--pair", help="BASE:LOSO -- also score BASE's unseen-site twin's error directions (repeatable).",
+    ),
+    step_deg: float = typer.Option(cell_margin.STEP_DEG, "--step-deg", help="Bearing step of the rays."),
+    out_dir: Path = typer.Option(None, "--out-dir", help="Write here instead (e.g. a convergence check)."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
+) -> None:
+    """How much room each TG's cell leaves around it: ray-cast margins over D.
+
+    Per distinct TG location, the direction-averaged margin m̄ = mean over
+    bearings of min{m(θ), D}, where m(θ) is the great-circle distance to the
+    cell boundary along bearing θ: the expected distance an answer can stray in
+    a random direction before it leaves the cell. Per (method, TG), the margin
+    along the method's own error direction, with the check that correct <=>
+    error < margin (cells are convex).
+
+    Writes `<run>/cell-margin/cell_margin_{locations,tgs}.csv` and the pooled
+    `cell_margin.report.json` + `cell_margin_box.png` under `_cross/cell-margin/`.
+    Needs `build-answer-space` and `classify` on every run, and
+    `report-sp-pni-cells` on every base run.
+    """
+    if not run_id:
+        raise typer.BadParameter("pass at least one --run-id")
+    try:
+        from scripts.analysis.v5.modules.labels import declared_dist_norm_km
+
+        seen = [resolve_run(r, outputs_root) for r in run_id]
+        pairs = {}
+        for spec in pair or []:
+            base, loso = loso_delta.parse_pair(spec)
+            pairs[base] = resolve_run(loso, outputs_root)
+        D_km = {}
+        for run in seen + list(pairs.values()):
+            bounds = declared_dist_norm_km(run.run_id, outputs_root)
+            if bounds is None:
+                raise ValueError(f"{run.run_id} declares no analysis.common.dist_norm_km (D)")
+            D_km[run.run_id] = bounds[1]
+        written = cell_margin.build(seen, pairs, D_km=D_km, analysis_root=analysis_root,
+                                    step_deg=step_deg, out_dir=out_dir)
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for path in written.values():
         typer.echo(f"wrote {path}")
 
 

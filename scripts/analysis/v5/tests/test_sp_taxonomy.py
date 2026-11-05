@@ -167,3 +167,11 @@ class TestTheRealPaperNumbers:
         assert round(s["all"]["nearest_vp_is_lowest_pct"], 1) == 19.0
         assert round(s["no-X"]["nearest_over_lowest_rtt_median"], 2) == 1.76
         assert round(s["has-X"]["nearest_over_lowest_rtt_median"], 2) == 1.37
+
+    def test_routing_by_side(self, rep):
+        # §5: RTT tracks VP distance on has-X; on no-X even the nearest VP's RTT follows the path through X.
+        r = rep["routing"]
+        assert (round(r["has-X"]["per_tg_rho_p50"], 2), round(r["has-X"]["per_tg_rho_p10"], 2)) == (0.95, 0.89)
+        assert (round(r["no-X"]["per_tg_rho_p50"], 2), round(r["no-X"]["per_tg_rho_p10"], 2)) == (0.86, 0.42)
+        assert round(r["no-X"]["nearest_vp_rho_rtt_vs_path_via_x"], 2) == 0.77
+        assert round(r["no-X"]["nearest_vp_rho_rtt_vs_own_distance"], 2) == 0.43
