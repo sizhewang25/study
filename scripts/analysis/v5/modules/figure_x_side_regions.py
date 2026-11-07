@@ -56,7 +56,7 @@ ERROR_SCALE = 1e3
 ERROR_FLOOR = 1e-2
 AREA_FLOOR = 1e-10
 #: Panel sizes, inches: (a) spans a column, (b) and (c) share the row below.
-SIZE_IN = {"error": (3.3, 1.25), "area": (1.62, 1.15), "inside": (1.62, 1.15)}
+SIZE_IN = {"error": (3.3, 0.95), "area": (1.62, 0.95), "inside": (1.62, 0.95)}
 #: (b) and (c) form their own figure, each with the legend, and smaller method ticks so OCT-H/OCT-S do not touch.
 REGION_XFONT = 5.2
 BOX_W = 0.34
@@ -216,7 +216,7 @@ def render_inside(stats: dict, terms: list[str], *, size: tuple[float, float], o
                    edgecolor=HUES[side == "has-X"], linewidth=0.6)
     ax.set_ylim(0, 100)
     ax.set_yticks([0, 25, 50, 75, 100])
-    _style(ax, terms, "TG inside\nintersection (%)", xfont=xfont)
+    _style(ax, terms, "TG inside (%)", xfont=xfont)
     if legend:
         _legend(fig)
     return _save(fig, out_png)
@@ -243,10 +243,10 @@ def build(runs: list[RunPaths], D_km: dict[str, float], *, analysis_root: Path |
     r_terms = [method_label(c) for c in REGION_COMBOS]
     written = {
         "error": render_boxes(stats["error_over_D"], e_terms, scale=ERROR_SCALE, floor=ERROR_FLOOR,
-                              ylabel=r"Norm. error ($10^{-3}$)", size=SIZE_IN["error"],
+                              ylabel="Norm. error\n" + r"($10^{-3}$)", size=SIZE_IN["error"],
                               out_png=out_dir / PNG["error"]),
         "area": render_boxes(stats["area_over_D2"], r_terms, scale=1.0, floor=AREA_FLOOR,
-                             ylabel="Norm. intersection area", size=SIZE_IN["area"],
+                             ylabel="Norm. area", size=SIZE_IN["area"],
                              out_png=out_dir / PNG["area"], decade_step=2, xfont=REGION_XFONT),
         "inside": render_inside(stats["tg_inside_pct"], r_terms, size=SIZE_IN["inside"],
                                 out_png=out_dir / PNG["inside"], xfont=REGION_XFONT),

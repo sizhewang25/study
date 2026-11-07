@@ -69,7 +69,6 @@ REPORT_NAME = "sp_taxonomy.report.json"
 #: The CDF of per-TG rho, has-X and no-X (pooled layouts only): §5's Fig. 9b, drawn in
 #: the hues and height of `figure_x_cell_rtt`'s pooled min-RTT boxes it sits beside.
 RHO_PNG_NAME = "sp_rho_by_side.png"
-RHO_CDF_WIDTH_IN = 1.45  # with HEIGHT_IN, prints at the height of the min-RTT boxes
 
 CAUSES = {
     "0": "correct",
@@ -313,8 +312,8 @@ CSV_COLUMNS = ("run_id", "tg_id", P.POINT_COL, P.CLUSTER_COL, "side", "correct",
 def plot_rho_by_side(tgs: pd.DataFrame, out_png: Path) -> Path:
     """CDF over TGs of the per-TG Spearman rho(RTT, VP distance), one curve per side.
 
-    §5's Fig. 9b, beside `figure_x_cell_rtt`'s pooled min-RTT boxes: same height and
-    hues. The legend sits top left; the sides' shares are in Table 1. Every percentile
+    §5's Fig. 9b, beside `figure_x_cell_rtt`'s pooled min-RTT boxes: same size
+    (`POOLED_SIZE_IN`) and hues. The legend sits top left; the sides' shares are in Table 1. Every percentile
     the text quotes (median, p10) reads straight off the curves.
     """
     import matplotlib
@@ -324,7 +323,7 @@ def plot_rho_by_side(tgs: pd.DataFrame, out_png: Path) -> Path:
 
     from scripts.analysis.v5.modules import figure_x_cell_rtt as XR
 
-    fig, ax = plt.subplots(figsize=(RHO_CDF_WIDTH_IN, XR.HEIGHT_IN))
+    fig, ax = plt.subplots(figsize=XR.POOLED_SIZE_IN)
     for flag, tick, _ in XR.GROUPS:
         v = np.sort(tgs.loc[tgs.tg_cell_holds_x == flag, "rho"].dropna().to_numpy(float))
         ax.step(v, np.arange(1, len(v) + 1) / len(v), where="post", color=XR.HUES[flag], lw=1.1, label=tick)

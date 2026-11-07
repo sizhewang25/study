@@ -127,6 +127,9 @@ Y_PAD = 1.5
 #: table leaves free.
 GROUP_WIDTH_IN = 0.8
 HEIGHT_IN = 1.6
+#: The pooled panel's size (Fig. 9a): half a column wide and short, printed at
+#: its own size beside sp_taxonomy's rho CDF (Fig. 9b), which shares it.
+POOLED_SIZE_IN = (1.6, 1.1)
 #: Box centres within a group, and the gap between groups, in x units.
 SLOT = 1.0
 GROUP_GAP = 0.6
@@ -324,7 +327,8 @@ def plot(
     pos = positions(run_ids)
     # The pooled panel (`run_ids == [ALL_RUNS]`) has one pair and needs no name above it.
     names = {ALL_RUNS: ""} if run_ids == [ALL_RUNS] else panel_names(run_ids)
-    fig, ax = plt.subplots(figsize=(GROUP_WIDTH_IN * len(run_ids) + 0.5, HEIGHT_IN))
+    size = POOLED_SIZE_IN if run_ids == [ALL_RUNS] else (GROUP_WIDTH_IN * len(run_ids) + 0.5, HEIGHT_IN)
+    fig, ax = plt.subplots(figsize=size)
     ticks, labels = [], []
     extremes = [y(stats.min_ms.to_numpy(float)), y(stats.max_ms.to_numpy(float))]
     for _, r in stats.iterrows():
