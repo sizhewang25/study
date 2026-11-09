@@ -64,7 +64,9 @@ else
 fi
 
 echo "cli.sh: [2/2] benchmark ($BENCH_SMK)"
+# CBG_CORES caps concurrent combos (default: all). run_finals.sh sets it to 1 so
+# timed stages never share the machine with another combo.
 python -m snakemake \
     -s "$BENCH_SMK" \
-    --cores all \
+    --cores "${CBG_CORES:-all}" \
     "$@"

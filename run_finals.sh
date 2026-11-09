@@ -8,7 +8,8 @@
 #      then run against it (precomputed mode)
 #   2. mesh arms     -- run directly
 #
-# Each config runs to completion before the next; a failure is logged and the
+# Each config runs to completion before the next, and within a config one
+# combo runs at a time (CBG_CORES=1, see below); a failure is logged and the
 # batch continues. Per-config logs + a rollup live under logs/finals/.
 #
 # Analysis is NOT run here. Build the figures separately over the run ids that
@@ -47,6 +48,15 @@
 set -uo pipefail            # no -e: keep going if one config fails
 cd "$(dirname "$0")"
 export PATH="$PWD/.venv/bin:$PATH"   # cli.sh calls `python`; resolve to the venv
+
+# Fully serial: one combo at a time, single-threaded. The runtime/memory numbers
+# are per-TG costs, so no two timed stages may share the CPU -- concurrent jobs
+# (earlier runs: up to 20 on 16 threads) inflated them on top of tracemalloc.
+# CBG_CORES=1 makes cli.sh run Snakemake with --cores 1; the BLAS caps keep a
+# single job from fanning NumPy out over the other cores (which would make
+# timings depend on the machine's core count).
+export CBG_CORES=1
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 
 DRY_RUN=0
 FORCE_ARGS=()
