@@ -108,7 +108,7 @@ REGIME_TITLES = {SEEN: "Seen sites", UNSEEN: "Unseen sites"}
 
 #: `(metric, per-TG column, axis label)`, top row first.
 METRICS = (
-    ("cell", "correct", "Unbounded accuracy (%)"),
+    ("cell", "correct", "Accuracy (%)"),
     ("bounded", "bounded", "Bounded accuracy (%)"),
 )
 
