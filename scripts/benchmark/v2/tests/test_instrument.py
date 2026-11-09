@@ -1,6 +1,7 @@
-"""TimingMemoryInstrument records per-stage timing plus two memory channels:
-tracemalloc (`alloc_peak_bytes`) and sampled libc heap-in-use
-(`heap_peak_bytes`). peak_rss_bytes() returns the kernel-tracked lifetime
+"""TimingMemoryInstrument records per-stage timing plus sampled libc heap-in-use
+(`heap_peak_bytes`). The tracemalloc channel (`alloc_peak_bytes`) is DEPRECATED:
+it is no longer measured and always reads None, and the instrument must never
+start a tracemalloc session (it slowed the timed stages 3-7x). peak_rss_bytes() returns the kernel-tracked lifetime
 maxrss. `rss_peak_bytes` is the legacy fallback channel, written only when
 mallinfo2 is unavailable.
 """
@@ -43,15 +44,26 @@ class TestTimingMemoryInstrument(unittest.TestCase):
         self.assertEqual([r.stage for r in instr.records], ["ltd", "mtl"])
         self.assertTrue(all(r.duration_ns > 0 for r in instr.records))
 
-    def test_alloc_peak_bytes_reflects_allocation_inside_stage(self) -> None:
+    def test_alloc_peak_bytes_is_deprecated_and_none(self) -> None:
+        """The deprecated tracemalloc channel stays in the record but is NULL,
+        never 0: a 0 would read like a stage that allocated nothing."""
         instr = TimingMemoryInstrument()
         with instr("ltd"):
-            # Allocate ~1 MB inside the stage; tracemalloc should see it.
             big = bytearray(1024 * 1024)
             big[0] = 1  # ensure it's actually used
         rec = instr.get("ltd")
         self.assertIsNotNone(rec)
-        self.assertGreater(rec.alloc_peak_bytes, 500_000)
+        self.assertIsNone(rec.alloc_peak_bytes)
+
+    def test_never_starts_tracemalloc(self) -> None:
+        """tracemalloc hooks every allocation, so a session inside the timed
+        window inflates the runtime it is timing. No stage may start one."""
+        self.assertFalse(tracemalloc.is_tracing(), "precondition: no session")
+        instr = TimingMemoryInstrument(sample_interval_s=0.001)
+        with instr("mtl"):
+            during = tracemalloc.is_tracing()
+        self.assertFalse(during, "the stage started a tracemalloc session")
+        self.assertFalse(tracemalloc.is_tracing())
 
     def test_sampled_peak_reflects_large_alloc_inside_stage(self) -> None:
         instr = TimingMemoryInstrument(sample_interval_s=0.001)
@@ -101,9 +113,10 @@ class TestTimingMemoryInstrument(unittest.TestCase):
             )
 
     @requires_heap
-    def test_heap_peak_catches_c_allocation_tracemalloc_misses(self) -> None:
+    def test_heap_peak_catches_geos_allocation(self) -> None:
         """Shapely/GEOS allocates through raw libc malloc, which tracemalloc
-        cannot see. This is the entire justification for a second channel."""
+        cannot see (~64x under-read when it was measured). The heap channel
+        must see it: this is why it is the one channel kept."""
         try:
             import numpy as np
             from shapely.geometry import Point
@@ -128,12 +141,12 @@ class TestTimingMemoryInstrument(unittest.TestCase):
             geos_work()
         rec = instr.get("mtl")
         self.assertGreater(rec.heap_peak_bytes, 200_000)
-        self.assertLess(rec.alloc_peak_bytes, 100_000)
 
     @requires_heap
-    def test_heap_peak_agrees_with_tracemalloc_on_numpy(self) -> None:
-        """Cross-validation: on a NumPy-dominated stage the two independent
-        channels must agree, or the mallinfo2 reader is wrong."""
+    def test_heap_peak_matches_a_known_numpy_buffer(self) -> None:
+        """Cross-validation against a known size: a 32 MB NumPy buffer held
+        across the stage must read ~32 MB, or the mallinfo2 reader is wrong.
+        (This used to compare against tracemalloc, which is no longer run.)"""
         try:
             import numpy as np
         except ImportError:  # pragma: no cover
@@ -144,9 +157,9 @@ class TestTimingMemoryInstrument(unittest.TestCase):
             arr[0] = 1.0
             time.sleep(0.005)
         rec = instr.get("ctr")
-        ratio = rec.heap_peak_bytes / rec.alloc_peak_bytes
-        self.assertGreater(ratio, 0.9, f"channels disagree: {rec}")
-        self.assertLess(ratio, 1.1, f"channels disagree: {rec}")
+        ratio = rec.heap_peak_bytes / arr.nbytes
+        self.assertGreater(ratio, 0.9, f"heap channel misreads 32 MB: {rec}")
+        self.assertLess(ratio, 1.1, f"heap channel misreads 32 MB: {rec}")
 
     def test_falls_back_to_rss_when_probe_missing(self) -> None:
         """On a platform without mallinfo2 the heap column must be NULL, never
@@ -168,8 +181,8 @@ class TestTimingMemoryInstrument(unittest.TestCase):
 
     def test_outer_tracemalloc_session_survives_a_stage(self) -> None:
         """CPython's tracemalloc.start() is NOT refcounted: it does not stack,
-        and one stop() tears tracing down entirely. The instrument must only
-        stop a session it started."""
+        and one stop() tears tracing down entirely. A caller's own session must
+        survive a stage untouched, and the deprecated channel stays None."""
         tracemalloc.start()
         try:
             tracemalloc.reset_peak()
@@ -185,27 +198,7 @@ class TestTimingMemoryInstrument(unittest.TestCase):
             )
             _current, peak = tracemalloc.get_traced_memory()
             self.assertGreater(peak, 900_000, "outer peak was destroyed")
-        finally:
-            tracemalloc.stop()
-
-    def test_stage_alloc_peak_is_stage_local_under_an_outer_session(self) -> None:
-        """With an outer session running, reset_peak() sets peak := current,
-        which includes the caller's live set. Subtracting the entry reading is
-        what keeps the number stage-local."""
-        tracemalloc.start()
-        try:
-            live = bytearray(4 * 1024 * 1024)  # 4 MB held across the stage
-            live[0] = 1
-            instr = TimingMemoryInstrument(sample_interval_s=0.001)
-            with instr("ltd"):
-                inner = bytearray(1024 * 1024)  # 1 MB allocated inside
-                inner[0] = 1
-            rec = instr.get("ltd")
-            self.assertGreater(rec.alloc_peak_bytes, 900_000)
-            self.assertLess(
-                rec.alloc_peak_bytes, 2_000_000,
-                "stage peak absorbed the caller's 4 MB live set",
-            )
+            self.assertIsNone(instr.get("ltd").alloc_peak_bytes)
         finally:
             tracemalloc.stop()
 
@@ -218,12 +211,12 @@ class TestTimingMemoryInstrument(unittest.TestCase):
     def test_record_named_appends(self) -> None:
         instr = TimingMemoryInstrument()
         instr.record_named(
-            "fit", duration_ns=12345, alloc_peak_bytes=678, rss_peak_bytes=910
+            "fit", duration_ns=12345, alloc_peak_bytes=None, rss_peak_bytes=910
         )
         rec = instr.get("fit")
         self.assertIsNotNone(rec)
         self.assertEqual(rec.duration_ns, 12345)
-        self.assertEqual(rec.alloc_peak_bytes, 678)
+        self.assertIsNone(rec.alloc_peak_bytes)
         self.assertEqual(rec.rss_peak_bytes, 910)
 
 
@@ -236,7 +229,7 @@ class TestMeasureBlock(unittest.TestCase):
         self.assertIn("alloc_peak_bytes", out)
         self.assertIn("rss_peak_bytes", out)
         self.assertGreater(out["duration_ns"], 0)
-        self.assertGreater(out["alloc_peak_bytes"], 200_000)
+        self.assertIsNone(out["alloc_peak_bytes"])  # DEPRECATED channel
         # Exactly one sampler runs; the inactive channel is NULL, never 0.
         active = out["heap_peak_bytes"] if heap_probe_available() else out["rss_peak_bytes"]
         inactive = out["rss_peak_bytes"] if heap_probe_available() else out["heap_peak_bytes"]

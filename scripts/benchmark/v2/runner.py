@@ -165,7 +165,7 @@ def run_one_combo(
         "fit_success": fit_result.success,
         "fit_error": fit_result.error.name if fit_result.error else None,
         "fit_ms": fit_meas["duration_ns"] / 1e6,
-        "fit_alloc_peak_bytes": fit_meas["alloc_peak_bytes"],
+        "fit_alloc_peak_bytes": fit_meas["alloc_peak_bytes"],  # DEPRECATED: always None
         "fit_rss_peak_bytes": fit_meas["rss_peak_bytes"],
         "fit_heap_peak_bytes": fit_meas.get("heap_peak_bytes"),
         "run_baseline_rss_bytes": rss_start,
@@ -294,7 +294,8 @@ def _build_target_row(
         "error": geo_result.error.name if geo_result.error else None,
         "error_km": error_km,
         "ltd_ms": (ltd_rec.duration_ns / 1e6) if ltd_rec else 0.0,
-        "ltd_alloc_peak_bytes": ltd_rec.alloc_peak_bytes if ltd_rec else 0,
+        # DEPRECATED channel, always None now; NULL rather than 0 when LTD is absent too.
+        "ltd_alloc_peak_bytes": ltd_rec.alloc_peak_bytes if ltd_rec else None,
         "ltd_heap_peak_bytes": ltd_rec.heap_peak_bytes if ltd_rec else None,
         "ltd_rss_peak_bytes": ltd_rec.rss_peak_bytes if ltd_rec else None,
         "mtl_ms": (mtl_rec.duration_ns / 1e6) if mtl_rec else None,

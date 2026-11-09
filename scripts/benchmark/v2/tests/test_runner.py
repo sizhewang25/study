@@ -69,7 +69,8 @@ class TestRunOneCombo(unittest.TestCase):
         self.assertEqual(run_meta["combo_id"], "combo1")
         self.assertEqual(run_meta["n_targets"], 1)
         self.assertGreater(run_meta["fit_ms"], 0.0)
-        self.assertGreaterEqual(run_meta["fit_alloc_peak_bytes"], 0)
+        # DEPRECATED tracemalloc channel: kept in run.json, always NULL.
+        self.assertIsNone(run_meta["fit_alloc_peak_bytes"])
         # Exactly one sampler runs, so one of the two fit channels is NULL.
         fit_channels = [run_meta["fit_heap_peak_bytes"], run_meta["fit_rss_peak_bytes"]]
         self.assertEqual(
@@ -119,13 +120,14 @@ class TestRunOneCombo(unittest.TestCase):
         self.assertGreater(row["ltd_ms"], 0.0)
         self.assertIsNotNone(row["mtl_ms"])
         self.assertIsNotNone(row["ctr_ms"])
-        # All three memory channels present on every stage. alloc_peak is
-        # tracemalloc (always >= 0); the sampled channels may be 0 for very
-        # short stages — assert presence, not magnitude. heap_peak is NULL
-        # (never 0) when the platform lacks mallinfo2.
+        # Every memory column is present on every stage. alloc_peak is the
+        # DEPRECATED tracemalloc channel and always NULL; the sampled channels
+        # may be 0 for very short stages — assert presence, not magnitude.
+        # heap_peak is NULL (never 0) when the platform lacks mallinfo2.
         from scripts.benchmark.v2.instrument import heap_probe_available
         for stage in ("ltd", "mtl", "ctr"):
-            self.assertGreaterEqual(row[f"{stage}_alloc_peak_bytes"], 0)
+            self.assertIn(f"{stage}_alloc_peak_bytes", row)
+            self.assertIsNone(row[f"{stage}_alloc_peak_bytes"])
             heap = row[f"{stage}_heap_peak_bytes"]
             rss = row[f"{stage}_rss_peak_bytes"]
             if heap_probe_available():

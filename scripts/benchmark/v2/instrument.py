@@ -1,25 +1,28 @@
-"""Per-stage timing + dual-channel memory profiler for CBGModel.geolocate.
+"""Per-stage timing + libc-heap memory profiler for CBGModel.geolocate.
 
-Two complementary memory signals per stage. NEITHER DOMINATES THE OTHER —
-they have disjoint blind spots, so both are recorded and they are never
-combined (summing double-counts malloc-backed NumPy; taking the max discards
-the pymalloc side):
-
-  * `alloc_peak_bytes` — Python-allocator peak via `tracemalloc`. Sees Python
-    objects and NumPy/SciPy buffers, but is BLIND to C-library allocations
-    like Shapely/GEOS polygon intersections, which go through raw libc malloc.
+One active memory signal per stage:
 
   * `heap_peak_bytes` — sampled peak of libc heap-in-use, from
     `mallinfo2().uordblks + .hblkhd`. Sees GEOS/C and large NumPy buffers,
     but is BLIND to pymalloc: CPython satisfies small objects out of 1 MB
     obmalloc arenas taken via raw mmap, which `uordblks` never sees.
 
-Measured on glibc/py3.12 (see notes/ and the test suite):
+DEPRECATED: `alloc_peak_bytes` (tracemalloc). It used to be recorded beside
+the heap channel, but tracemalloc hooks every Python allocation, and running it
+inside the timed window distorted both of the numbers we report:
 
-    workload                          alloc        heap
-    pure-Python 1 MB list           1028 KB       6.9 KB
-    numpy 32 MB np.ones             32.14 MB     32.16 MB
-    Shapely/GEOS intersection        15.6 KB     1015 KB   (~64x)
+  * runtime — measured on the pro-as0X-mesh runs (2026-11-07), turning it off
+    made per-TG runtime 3.9-7x faster at the median (OCT-H 4.9 s -> 1.3 s,
+    SOI 23 -> 3.8 ms; a same-annuli replay of Octant's MTL alone: ~3.2x);
+  * heap — its trace tables live in the libc heap, so it inflated
+    `heap_peak_bytes` for the lightest methods (SOI p50 0.067 -> 0.002 MB).
+
+It is also blind to Shapely/GEOS, where most CBG memory lives (measured on
+glibc/py3.12: a GEOS intersection reads 15.6 KB alloc vs 1015 KB heap, ~64x).
+So tracemalloc is no longer started: `alloc_peak_bytes` is always None (NULL
+in the parquet, never 0 — a silent 0 reads like a real measurement). The field
+is kept so historical runs and their readers keep the same shape; drop it once
+nothing reads it.
 
 WHY NOT RSS. This module previously sampled `psutil.Process().memory_info().rss`
 and described it as the honest "how much did this stage need" number. It is not.
@@ -49,7 +52,6 @@ import resource
 import sys
 import threading
 import time
-import tracemalloc
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable, Iterator, Optional
@@ -152,7 +154,8 @@ def heap_probe_available() -> bool:
 class StageRecord:
     """One stage-execution measurement. Memory fields are in bytes.
 
-    `alloc_peak_bytes` is tracemalloc's stage-local peak delta.
+    `alloc_peak_bytes` is DEPRECATED and always None (tracemalloc is no
+    longer run; see the module docstring). Kept so the record shape is stable.
     `heap_peak_bytes` is the libc heap-in-use high-water mark observed by the
     background sampler over the stage's context window (clipped at 0), or None
     when the platform has no `mallinfo2` — NEVER 0 in that case, because a
@@ -163,7 +166,7 @@ class StageRecord:
     """
     stage: str         # "ltd" | "mtl" | "ctr" | "fit"
     duration_ns: int
-    alloc_peak_bytes: int
+    alloc_peak_bytes: Optional[int]  # DEPRECATED: always None
     rss_peak_bytes: Optional[int]
     heap_peak_bytes: Optional[int] = None
 
@@ -281,28 +284,15 @@ def make_sampler(
 def _measure(stage_interval_s: float) -> Iterator[dict]:
     """Shared measurement body for `TimingMemoryInstrument` and `measure_block`.
 
-    Yields a dict populated on exit with `duration_ns`, `alloc_peak_bytes`,
-    `heap_peak_bytes`, `rss_peak_bytes`, `memory_channel`.
+    Yields a dict populated on exit with `duration_ns`, `heap_peak_bytes`,
+    `rss_peak_bytes`, `memory_channel`, and the deprecated `alloc_peak_bytes`
+    (always None).
 
-    On tracemalloc: `start()` is NOT refcounted in CPython — it does not stack,
-    and a single `stop()` tears tracing down completely, after which an outer
-    session's `get_traced_memory()` returns (0, 0). So we only start/stop a
-    session we ourselves own.
-
-    That guard forces the delta fix to land with it. The old code read the
-    ABSOLUTE peak, which was delta-equivalent only because a fresh `start()`
-    begins with `current ~= 0`. Under an outer session `reset_peak()` sets
-    `peak := current`, which includes the caller's live set — a 1 MB stage
-    under a 4 MB live set would report 5 MB. Subtracting `entry_current` makes
-    the number stage-local in both cases.
+    tracemalloc is never touched here: it is not started, and a session the
+    caller already runs is left alone (its overhead then lands in the timing,
+    which is the caller's choice, not ours).
     """
     out: dict = {}
-    owns_tracing = not tracemalloc.is_tracing()
-    if owns_tracing:
-        tracemalloc.start()
-    tracemalloc.reset_peak()
-    entry_current, _entry_peak = tracemalloc.get_traced_memory()
-
     sampler, channel = make_sampler(interval_s=stage_interval_s)
     sampler.start()
     t0 = time.perf_counter_ns()
@@ -311,11 +301,8 @@ def _measure(stage_interval_s: float) -> Iterator[dict]:
     finally:
         out["duration_ns"] = time.perf_counter_ns() - t0
         sampled = sampler.stop()
-        _current, peak = tracemalloc.get_traced_memory()
-        if owns_tracing:
-            tracemalloc.stop()
-        # Defensive: reset_peak() makes peak >= entry_current by construction.
-        out["alloc_peak_bytes"] = max(0, peak - entry_current)
+        # DEPRECATED channel (tracemalloc): kept in the output, never measured.
+        out["alloc_peak_bytes"] = None
         out["memory_channel"] = channel
         # Exactly one sampler runs per stage, so the inactive channel is
         # NULL — never 0. A 0 would be indistinguishable from "this stage
@@ -331,7 +318,7 @@ def _measure(stage_interval_s: float) -> Iterator[dict]:
 
 
 class TimingMemoryInstrument:
-    """Per-stage timing + dual-channel memory collector.
+    """Per-stage timing + libc-heap memory collector.
 
     Reusable across stages within one geolocate call (records appended in
     order). Construct a fresh instance per target so peaks aren't conflated
@@ -369,12 +356,13 @@ class TimingMemoryInstrument:
         self,
         stage: str,
         duration_ns: int,
-        alloc_peak_bytes: int,
-        rss_peak_bytes: int,
+        alloc_peak_bytes: Optional[int],
+        rss_peak_bytes: Optional[int],
         heap_peak_bytes: Optional[int] = None,
     ) -> None:
         """Append a record from out-of-band measurement (e.g. the fit stage,
-        which is timed via `measure_block` outside CBGModel.geolocate)."""
+        which is timed via `measure_block` outside CBGModel.geolocate).
+        `alloc_peak_bytes` is DEPRECATED; pass None."""
         self.records.append(StageRecord(
             stage=stage,
             duration_ns=duration_ns,
@@ -400,8 +388,9 @@ def measure_block(
     """Standalone helper for one-shot measurements (used to wrap LTD.fit).
 
     Yields a dict populated on context exit with `duration_ns`,
-    `alloc_peak_bytes`, `heap_peak_bytes`, `rss_peak_bytes` and
-    `memory_channel`. The label is just for debugging; it's not stored.
+    `heap_peak_bytes`, `rss_peak_bytes`, `memory_channel` and the deprecated
+    `alloc_peak_bytes` (always None). The label is just for debugging; it's
+    not stored.
     """
     if rss_sample_interval_s is not None:
         sample_interval_s = rss_sample_interval_s

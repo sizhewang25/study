@@ -121,12 +121,14 @@ TARGETS_SCHEMA = pa.schema([
     pa.field("error", pa.string(), nullable=True),           # Error.name or None
     pa.field("error_km", pa.float64(), nullable=True),       # haversine(true, pred)
 
-    # Per-stage timing + memory (ms, bytes). Two ACTIVE memory channels per
-    # stage, with disjoint blind spots — see instrument.py. Neither dominates,
-    # and they must never be combined (summing double-counts malloc-backed
-    # NumPy; max discards the pymalloc side):
-    #   `*_alloc_peak_bytes` = tracemalloc stage-local peak delta. Sees Python
-    #       objects + NumPy; blind to Shapely/GEOS C allocations.
+    # Per-stage timing + memory (ms, bytes). One ACTIVE memory channel per
+    # stage, the libc heap — see instrument.py:
+    #   `*_alloc_peak_bytes` = DEPRECATED tracemalloc stage-local peak delta.
+    #       No longer measured (tracemalloc slowed the timed stages 3-7x and
+    #       inflated the heap channel): NULL in every run written after
+    #       2026-11-07; historical runs keep their values. Retained only so
+    #       old and new runs share one shape. Nullable for that reason —
+    #       `ltd_alloc_peak_bytes` was non-null while it was measured.
     #   `*_heap_peak_bytes`  = sampled peak of libc heap in use (mallinfo2).
     #       Sees GEOS/C + large NumPy buffers; blind to pymalloc-satisfied
     #       small Python objects. NULL on non-glibc platforms (never 0 — a
@@ -143,15 +145,15 @@ TARGETS_SCHEMA = pa.schema([
     # `ltd_heap_peak_bytes` is nullable even though LTD always runs, because
     # the platform — not the pipeline — decides whether it has a value.
     pa.field("ltd_ms", pa.float64(), nullable=False),
-    pa.field("ltd_alloc_peak_bytes", pa.int64(), nullable=False),
+    pa.field("ltd_alloc_peak_bytes", pa.int64(), nullable=True),   # DEPRECATED
     pa.field("ltd_heap_peak_bytes", pa.int64(), nullable=True),
     pa.field("ltd_rss_peak_bytes", pa.int64(), nullable=True),
     pa.field("mtl_ms", pa.float64(), nullable=True),
-    pa.field("mtl_alloc_peak_bytes", pa.int64(), nullable=True),
+    pa.field("mtl_alloc_peak_bytes", pa.int64(), nullable=True),   # DEPRECATED
     pa.field("mtl_heap_peak_bytes", pa.int64(), nullable=True),
     pa.field("mtl_rss_peak_bytes", pa.int64(), nullable=True),
     pa.field("ctr_ms", pa.float64(), nullable=True),
-    pa.field("ctr_alloc_peak_bytes", pa.int64(), nullable=True),
+    pa.field("ctr_alloc_peak_bytes", pa.int64(), nullable=True),   # DEPRECATED
     pa.field("ctr_heap_peak_bytes", pa.int64(), nullable=True),
     pa.field("ctr_rss_peak_bytes", pa.int64(), nullable=True),
 
@@ -180,7 +182,7 @@ SUMMARY_STATS = ("p5", "p25", "p50", "p75", "p95", "mean", "std")
 SUMMARY_METRICS = (
     "error_km",
     "ltd_ms",
-    "ltd_alloc_peak_bytes",
+    "ltd_alloc_peak_bytes",   # DEPRECATED: all-NULL stats for runs since 2026-11-07
     "ltd_heap_peak_bytes",
     "ltd_rss_peak_bytes",
     "mtl_ms",
@@ -241,7 +243,7 @@ SUMMARY_SCHEMA = pa.schema(
         # run's numbers ("heap" on glibc, "rss" on the fallback), without
         # which a macOS-collected run is silently incomparable with a Linux one.
         pa.field("fit_ms", pa.float64(), nullable=True),
-        pa.field("fit_alloc_peak_bytes", pa.int64(), nullable=True),
+        pa.field("fit_alloc_peak_bytes", pa.int64(), nullable=True),   # DEPRECATED: NULL since 2026-11-07
         pa.field("fit_heap_peak_bytes", pa.int64(), nullable=True),
         pa.field("fit_rss_peak_bytes", pa.int64(), nullable=True),
         pa.field("run_baseline_rss_bytes", pa.int64(), nullable=True),
