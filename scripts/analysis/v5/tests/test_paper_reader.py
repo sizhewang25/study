@@ -27,6 +27,7 @@ def test_percent_points_and_ratios():
     assert fmt.rng(1.63, 6.78, fmt.num1, fmt.TIMES) == "1.6–6.8×"
     assert fmt.rng(6.70, 6.74, fmt.num1, fmt.TIMES) == "6.7×"   # equal ends collapse
     assert fmt.runtime(179.29) == "179 ms" and fmt.runtime(5244) == "5.2 s"
+    assert fmt.runtime(3.829) == "3.8 ms" and fmt.runtime(9.96) == "10 ms"
     assert fmt.e3(float("nan")) == fmt.UNDEFINED
 
 
@@ -68,8 +69,9 @@ def test_section_5_tables():
 def test_sections_3_6_7_and_appendix():
     assert "| All | 134 | 1269 | 65 |" in _cells(_section("s3_methodology"), "datasets")
     six = _section("s6_overhead")
-    assert "| OCT-H | All | 13.4 s | 3710 | 4.8 days |" in _cells(six, "batch budget")
-    assert "| OCT-H | 20 ms | 4.2 s | 447 ms |" in _cells(six, "fig:boxplot-speed-memory (phases)")
+    # Untraced timings (benchmark without tracemalloc, 2026-11-07).
+    assert "| OCT-H | All | 4.7 s | 1292 | 40.4 h |" in _cells(six, "batch budget")
+    assert "| OCT-H | 4.2 ms | 1.0 s | 144 ms |" in _cells(six, "fig:boxplot-speed-memory (phases)")
     assert "| OCT-H | 74 (64–82)† | 61 (52–72)† | 58 (46–74)† | 49 (43–62) | 4.9 s | 2.3 s |" in _cells(
         _section("s7_comprehensive"), "tab:sota")
     appx = _section("sB_appendix")

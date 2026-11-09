@@ -195,3 +195,39 @@ def test_overlapping_folds_are_refused(run, tmp_path):
     _write_combo(tmp_path, "r", "vanilla_cbg", 2, _bench_frame(["a"], ["SUCCESS"], [3.0]))
     with pytest.raises(ValueError, match="more than one fold"):
         C.load_cost_frame(run, "vanilla_cbg", (C.COST_SPECS["runtime"],))
+
+
+# ---- runs timed with tracemalloc on (before 2026-11-07) ---------------------
+
+
+def _with_alloc(frame, value):
+    """The deprecated tracemalloc column: set (traced run) or all NULL (current)."""
+    return frame.assign(ltd_alloc_peak_bytes=pd.array([value] * len(frame), dtype="Int64"))
+
+
+def test_a_traced_run_warns_on_a_runtime_read(tmp_path):
+    _write_combo(tmp_path, "r", "vanilla_cbg", 0,
+                 _with_alloc(_bench_frame(["a"], ["SUCCESS"], [3.0]), 4096))
+    run = RunPaths("r", tmp_path, "generic_csv", "setup")
+    with pytest.warns(C.TracedTimingWarning, match="tracemalloc"):
+        df = C.load_cost_frame(run, "vanilla_cbg", (C.COST_SPECS["runtime"],))
+    assert C.TRACED_TIMING_MARK not in df.columns          # the marker never leaks out
+    assert C.traced_timing_combos(run) == ["fold_0/vanilla_cbg"]
+
+
+def test_a_current_run_is_quiet_with_or_without_the_column(tmp_path, recwarn):
+    _write_combo(tmp_path, "r", "vanilla_cbg", 0,
+                 _with_alloc(_bench_frame(["a"], ["SUCCESS"], [3.0]), None))   # NULL: untraced
+    _write_combo(tmp_path, "r", "vanilla_cbg", 1, _bench_frame(["b"], ["SUCCESS"], [3.0]))  # field dropped
+    run = RunPaths("r", tmp_path, "generic_csv", "setup")
+    C.load_cost_frame(run, "vanilla_cbg", (C.COST_SPECS["runtime"],))
+    assert not [w for w in recwarn if issubclass(w.category, C.TracedTimingWarning)]
+    assert C.traced_timing_combos(run) == []
+
+
+def test_a_memory_only_read_does_not_check_timing(tmp_path, recwarn):
+    _write_combo(tmp_path, "r", "vanilla_cbg", 0,
+                 _with_alloc(_bench_frame(["a"], ["SUCCESS"], [3.0]), 4096))
+    run = RunPaths("r", tmp_path, "generic_csv", "setup")
+    C.load_cost_frame(run, "vanilla_cbg", (C.COST_SPECS["memory_heap"],))
+    assert not [w for w in recwarn if issubclass(w.category, C.TracedTimingWarning)]

@@ -7,7 +7,8 @@ geolocated TG to get there. One x slot per method, two boxes in it:
   **summed** (`cost.COST_SPECS["runtime"]`);
 * **right box, hatched, right y axis** -- peak memory per TG in MB, the three
   stages **max-reduced** (`--memory`: `memory_heap` by default, which sees
-  Shapely/GEOS; `memory_alloc` is tracemalloc). The two channels are never
+  Shapely/GEOS; `memory_alloc` is tracemalloc, deprecated and NULL in runs since
+  2026-11-07). The two channels are never
   combined -- see `cost`.
 
 Both are reduced per TG *before* any percentile (`cost.per_target_cost`).
@@ -147,8 +148,8 @@ OVERLAY_DASH = (0, (2.4, 1.4))
 #: Key text for an overlay variant. Its `methods.METHOD_LABELS` term
 #: (OCT-H-GEO) is not one the paper defines, so the key spells out the change.
 OVERLAY_LABELS: dict[str, str] = {
-    "octant_cbg_hull_geo": "OCT-H with GEO CTR",
-    "octant_cbg_spl_geo": "OCT-S with GEO CTR",
+    "octant_cbg_hull_geo": "OCT-H with GEO EST",
+    "octant_cbg_spl_geo": "OCT-S with GEO EST",
 }
 
 #: The axis labels. "per TG" is the title's job (the paper's caption); on a

@@ -23,6 +23,15 @@
 # meshes) and `unseen` (their LOSO twins), plus the RIPE Atlas mesh of the
 # discussion, which is a different dataset and not a group member.
 #
+# Prerequisite: the benchmark runs themselves (this script only reads them).
+# Runtimes are quotable only from runs benchmarked after 2026-11-07, when the
+# benchmark stopped timing under tracemalloc (3-7x slower); the `preflight`
+# section's `check-timing` fails on older runs. Snakemake skips cells already
+# on disk, so re-time an existing run with
+#   snakemake -s scripts/benchmark/v2/Snakefile --configfile configs/<run>.yaml \
+#       --forcerun run_combo -j <cores>
+# Predictions are unchanged by the re-run; only the timing and heap columns are.
+#
 # Deliberately NOT `set -e`, as in create_analysis_artifacts.sh: failures are
 # collected and summarised, and the script exits non-zero if any occurred.
 
@@ -92,6 +101,14 @@ section() { R=$1; printf '\n==================== %s ====================\n' "$1"
 # --group (its blocks are the pooled calls). The PNI clusters and S-P cell
 # report are built per run as well as pooled: report-loso-delta and
 # report-variant-delta take each mesh's has-X flags from its per-run one.
+# ---- preflight: runtimes must be timed without tracemalloc ---------------------------
+# The cost boxes (§6) and the Pareto x axis (§7) quote runtimes. Runs benchmarked
+# before 2026-11-07 timed every stage under tracemalloc, inflated 3-7x; this
+# fails (and is listed in the summary) until those runs are re-run. Everything
+# else still builds: accuracy does not depend on it.
+section "preflight"
+run check-timing $V5 check-timing $(printf -- '--run-id %s ' "${MESH[@]}" "${LOSO[@]}")
+
 section "prerequisites"
 for r in "${MESH[@]}" "${LOSO[@]}" "$RIPE"; do
   if run "build-answer-space $r" $V5 build-answer-space --run-id "$r"; then
@@ -223,6 +240,10 @@ section "data report"
 # unrounded artifact (paper_numbers.s<N>.md and paper_numbers.md under
 # _cross/paper/<group>/). Reads only what the sections above built.
 grun report-paper
+# The text's numbers report-paper does not print (ratios, §6.4-6.5 replay and
+# step/heading shares, §7 budget words, §8 ratios, App. D), by paper section:
+# _cross/paper/<group>/paper_stats.json. A one-off for the current draft.
+run paper-stats python -m scripts.analysis.v5.paper_stats --group "$GROUP"
 
 # ---- the paper's figures --------------------------------------------------------------------
 # paper name -> artifact under the analysis root. The one place the mapping lives.

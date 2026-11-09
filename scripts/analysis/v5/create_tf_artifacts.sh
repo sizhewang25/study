@@ -18,6 +18,15 @@
 # build-answer-space needs the run's pre-filter mesh (`mesh_csv_path`): a TF
 # run's cells are its mesh's.
 #
+# Prerequisite: the benchmark runs themselves (this script only reads them).
+# Runtimes are quotable only from runs benchmarked after 2026-11-07, when the
+# benchmark stopped timing under tracemalloc (3-7x slower); the `preflight`
+# section's `check-timing` fails on older runs. Snakemake skips cells already
+# on disk, so re-time an existing run with
+#   snakemake -s scripts/benchmark/v2/Snakefile --configfile configs/<run>.yaml \
+#       --forcerun run_combo -j <cores>
+# Predictions are unchanged by the re-run; only the timing and heap columns are.
+#
 # Deliberately NOT `set -e`, as in create_paper_artifacts.sh: failures are
 # collected and summarised, and the script exits non-zero if any occurred.
 
@@ -61,6 +70,12 @@ run() {
 grun() { run "$1" $V5 "$1" --group "$GROUP"; }
 section() { printf '\n==================== %s ====================\n' "$1"; }
 
+# The Pareto x axis quotes runtimes: runs benchmarked before 2026-11-07 timed
+# every stage under tracemalloc (inflated 3-7x). Fails until they are re-run;
+# the rest still builds.
+section "preflight"
+run check-timing $V5 check-timing $(printf -- '--run-id %s ' "${SEEN[@]}")
+
 # Per run, without --group: every figure below reads each run's labels.
 section "prerequisites"
 for r in "${SEEN[@]}"; do
@@ -80,6 +95,13 @@ grun plot-outcome-bars    # outcome_bars{,.unbounded,.vp}.pooled (bounded, unbou
 grun plot-pareto          # pareto.cell.seen (unbounded), pareto.bounded.seen
 grun plot-vp-obs-hist     # vp_obs_hist{,.pooled}
 grun plot-vp-obs-has-x    # vp_obs_has_x{,.pooled}
+
+# Every traffic-filtered number the paper quotes (App. E, §8's TF run-in and
+# tab:sota row, §1's key finding), by paper section, in
+# _cross/paper/<group>/paper_stats.json. Comparisons against the mesh read the
+# pro-paper artifacts when this machine has them, else say where to take them.
+section "data report"
+run paper-stats python -m scripts.analysis.v5.paper_stats --group "$GROUP"
 
 printf '\n==================== summary ====================\n'
 printf 'commands ok: %d   failed: %d\n' "$N_OK" "${#FAILED[@]}"

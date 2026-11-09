@@ -1410,7 +1410,7 @@ def plot_cost_box_cmd(
     memory: str = typer.Option(
         figure_cost_box.DEFAULT_MEMORY,
         "--memory",
-        help="Right-axis channel: memory_heap (libc heap, sees GEOS) or memory_alloc (tracemalloc).",
+        help="Right-axis channel: memory_heap (libc heap, sees GEOS) or memory_alloc (tracemalloc; deprecated, NULL in runs since 2026-11-07).",
     ),
     rows: str = typer.Option(
         figure_cost_box.DEFAULT_ROWS,
@@ -1506,6 +1506,37 @@ def plot_cost_box_cmd(
         raise typer.BadParameter(str(exc)) from exc
     for written in sets:
         typer.echo(f"wrote {written['png']}")
+
+
+@app.command("check-timing")
+def check_timing_cmd(
+    run_id: list[str] = typer.Option(..., "--run-id", help="Run whose runtimes to check; repeatable."),
+    outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
+    analysis_root: Path = typer.Option(
+        DEFAULT_ANALYSIS_ROOT, help="Unused; accepted so the artifact scripts can pass it."),
+) -> None:
+    """Refuse runs whose runtimes were measured with tracemalloc on.
+
+    Until 2026-11-07 the benchmark ran tracemalloc inside every timed stage,
+    which slowed them 3-7x at the median (scripts/benchmark/v2/instrument.py).
+    The deprecated `*_alloc_peak_bytes` columns mark such a run: the benchmark
+    wrote them non-NULL only then. Exits 1 naming every traced combo; re-run
+    those with the current benchmark before quoting a runtime (cost boxes,
+    Pareto x axis). Accuracy is unaffected: the predictions are identical.
+    """
+    from scripts.analysis.v5.modules import cost as C
+
+    traced = {r: C.traced_timing_combos(resolve_run(r, outputs_root)) for r in run_id}
+    traced = {r: combos for r, combos in traced.items() if combos}
+    if not traced:
+        typer.echo(f"timing ok: no run of {len(run_id)} was timed with tracemalloc on")
+        return
+    for r, combos in traced.items():
+        typer.echo(
+            f"{r}: {len(combos)} combos timed with tracemalloc on (before "
+            f"{C.TRACEMALLOC_REMOVED}), e.g. {', '.join(combos[:3])}", err=True)
+    typer.echo("re-run these with the current benchmark; their runtimes are inflated 3-7x.", err=True)
+    raise typer.Exit(1)
 
 
 @app.command("plot-pareto")

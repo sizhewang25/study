@@ -47,10 +47,13 @@ legacy v2 `plot_phase_*` scripts shipped.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 from scripts.analysis.v5.modules import coverage as COV
 from scripts.analysis.v5.modules.classify import load_method_frame
@@ -109,8 +112,11 @@ COST_SPECS: dict[str, CostSpec] = {
         reduce="max",
         scale=1.0 / _BYTES_PER_MB,
         unit="MB",
-        axis_label="Peak memory per TG (MB, tracemalloc)",
-        title_noun="peak memory (tracemalloc)",
+        # DEPRECATED: the benchmark stopped recording tracemalloc on 2026-11-07
+        # (it slowed the timed stages 3-7x); runs since hold NULL here, which
+        # `require_measured` refuses. Kept to read historical runs.
+        axis_label="Peak memory per TG (MB, tracemalloc, deprecated)",
+        title_noun="peak memory (tracemalloc, deprecated)",
     ),
     "memory_heap": CostSpec(
         key="memory_heap",
@@ -242,7 +248,45 @@ def require_measured(stats: dict[str, float], spec: CostSpec, *, run_id: str, me
     raise MissingArtifactError(
         f"{run_id}/{method}: cost channel {spec.key!r} has no measurements -- "
         f"{list(spec.stage_cols)} are present but entirely NULL. Try {alt}."
+        + (" (memory_alloc is deprecated: runs written since 2026-11-07 no longer"
+           " record tracemalloc.)" if spec.key == "memory_alloc" else "")
     )
+
+
+#: The day the benchmark stopped running tracemalloc inside the timed stages
+#: (`scripts/benchmark/v2/instrument.py`). Runs written before it timed every
+#: stage under tracemalloc, which slowed them 3-7x at the median.
+TRACEMALLOC_REMOVED = "2026-11-07"
+#: The marker of such a run: the deprecated tracemalloc column, which the
+#: benchmark wrote non-NULL only while tracemalloc ran (LTD always runs, so
+#: its column is set on every row of a traced run).
+TRACED_TIMING_MARK = "ltd_alloc_peak_bytes"
+
+
+class TracedTimingWarning(UserWarning):
+    """A runtime read from a run timed with tracemalloc on (inflated 3-7x)."""
+
+
+def _is_traced(path: Path) -> bool:
+    """True when this `targets.parquet` was timed with tracemalloc on."""
+    if TRACED_TIMING_MARK not in pq.read_schema(path).names:
+        return False
+    col = pq.read_table(path, columns=[TRACED_TIMING_MARK]).column(0)
+    return col.null_count < len(col)
+
+
+def traced_timing_combos(run: RunPaths) -> list[str]:
+    """`fold/combo` of every `targets.parquet` in `run` timed with tracemalloc on.
+
+    Empty means every runtime in the run is quotable. Anything else must be
+    re-run with the current benchmark before its runtime reaches the paper.
+    """
+    return [
+        f"{fold}/{path.parent.name}"
+        for fold in run.fold_ids
+        for path in sorted((run.setup_dir / fold).glob("*/targets.parquet"))
+        if _is_traced(path)
+    ]
 
 
 def load_cost_frame(
@@ -266,9 +310,23 @@ def load_cost_frame(
             f"targets.parquet), so there is nothing measured to draw."
         )
     cols = tuple(dict.fromkeys(c for spec in specs for c in spec.stage_cols))
+    # A runtime read also reads the tracemalloc marker, so a run timed with
+    # tracemalloc on cannot reach a figure unnoticed. `load_method_frame` skips
+    # a column the file lacks, so runs that drop the field later still load.
+    timed = COST_SPECS["runtime"].stage_cols[0] in cols
+    read = cols + ((TRACED_TIMING_MARK,) if timed and TRACED_TIMING_MARK not in cols else ())
     # The TGs `classify` scored: a run declaring a coverage floor leaves the
     # low-coverage TGs out of cost too, so accuracy and cost share one roster.
-    df = COV.drop(load_method_frame(run, method, columns=cols), COV.declared_low_coverage(run))
+    df = COV.drop(load_method_frame(run, method, columns=read), COV.declared_low_coverage(run))
+    if timed and TRACED_TIMING_MARK in df.columns and df[TRACED_TIMING_MARK].notna().any():
+        warnings.warn(
+            f"{run.run_id}/{method}: runtime measured with tracemalloc on (a run "
+            f"written before {TRACEMALLOC_REMOVED}), inflated 3-7x; re-run the "
+            f"benchmark before quoting it.",
+            TracedTimingWarning, stacklevel=2,
+        )
+    if TRACED_TIMING_MARK not in cols:
+        df = df.drop(columns=TRACED_TIMING_MARK, errors="ignore")
     dup = df["tg_id"].duplicated()
     if dup.any():
         raise ValueError(

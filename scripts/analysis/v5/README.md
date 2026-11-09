@@ -324,7 +324,9 @@ The hatched box on the right is peak memory and reads on the right y axis
 (MB, log). Whiskers are **p5/p95**, hinges p25/p75, and no fliers are drawn.
 The CSV twin carries min/max and every stage's own stats beside `pipeline`.
 `--memory` picks `memory_heap` (default, libc heap, sees GEOS) or
-`memory_alloc` (tracemalloc). The two are never combined. `memory_rss` was
+`memory_alloc` (tracemalloc, **deprecated**: the benchmark stopped recording
+it on 2026-11-07 because it slowed the timed stages 3-7×, so newer runs refuse
+it). The two are never combined. `memory_rss` was
 not ported: it is NULL on every v5 run. `--rows all` (default) keeps
 FALLBACK rows, because a method pays for a TG it gave up on. `--rows solved`
 applies `solved_mask`. S-P is not a combo, so no stage was timed and it is not

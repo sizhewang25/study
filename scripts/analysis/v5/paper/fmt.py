@@ -11,7 +11,7 @@ slip (0.8147 -> 0.815 -> 0.82) this module exists to prevent.
 | `pct` | whole percent; above 0 and below 1 shown as `<1%` | 74%, <1% |
 | `pp` | 1 decimal below 10 pp, whole at 10 pp and above | 0.2 pp, 1.6 pp, 16 pp |
 | `times` | 1 decimal | 6.8x |
-| `runtime` | whole ms below 1 s, 1 decimal s at or above | 179 ms, 5.2 s |
+| `runtime` | 1 decimal ms below 10 ms, whole ms below 1 s, 1 decimal s at or above | 3.8 ms, 179 ms, 5.2 s |
 | `rng` | lo-hi in one format, the unit once | 1.6-6.8x |
 """
 
@@ -105,9 +105,14 @@ def times(value: float, *, unit: bool = True) -> str:
 
 
 def runtime(ms: float) -> str:
-    """179 ms below one second, 5.2 s at or above."""
+    """3.8 ms below 10 ms, 179 ms below one second, 5.2 s at or above.
+
+    The decimal below 10 ms: untraced runs put SOI at ~4 ms per TG, where a
+    whole ms would lose a quarter of the value."""
     if not defined(ms):
         return UNDEFINED
+    if ms < 9.95:
+        return f"{_q(ms, 1)} ms"
     return f"{_q(ms, 0)} ms" if ms < 1000 else f"{_q(ms / 1000, 1)} s"
 
 
