@@ -343,6 +343,13 @@ def _slot_methods(pipe: pd.DataFrame) -> list[str]:
     return list(pipe.loc[pipe["overlay_on"].fillna("") == "", "method"].unique())
 
 
+#: The runtime median: light grey, so it still reads as a highlight on the
+#: filled box, but dark enough to show on the white page -- a box whose
+#: quartiles coincide (SPO's runtime) is drawn as its median line alone, and
+#: the old white line vanished there.
+RUNTIME_MEDIAN_INK = "#a9a8a1"
+
+
 def cost_order(table: pd.DataFrame, *, memory: str) -> list[str]:
     """Slot methods cheapest first: p50 runtime, then p50 memory, ascending.
 
@@ -426,7 +433,7 @@ def plot_boxes(
             [_box(block[(method, RUNTIME)])], positions=[xs[i] - BOX_OFFSET],
             widths=BOX_WIDTH, showfliers=False, patch_artist=True, manage_ticks=False,
             boxprops={"facecolor": hue, "edgecolor": hue, "linewidth": 0.9},
-            medianprops={"color": E._SURFACE, "linewidth": 1.4},
+            medianprops={"color": RUNTIME_MEDIAN_INK, "linewidth": 1.4},
             whiskerprops={"color": hue, "linewidth": 0.9},
             capprops={"color": hue, "linewidth": 0.9},
         )
