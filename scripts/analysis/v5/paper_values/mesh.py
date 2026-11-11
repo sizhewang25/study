@@ -72,14 +72,16 @@ def _rank(c: Ctx, value) -> list[str]:
 
 # ---- §3: the location filter -----------------------------------------------------------
 
-def _filter(c: Ctx, run: str) -> float:
-    d = c.csv("dataset", "dataset.csv", pool="all").set_index("run_id")
-    return float(d.loc[run, "est_removed_tgs"] / d.loc[run, "est_tgs_before_filter"] * 100)
+def _filter(c: Ctx, net: str) -> float:
+    """Share removed by the location filter in one network (`AS-B`, by its dataset label) or `All`."""
+    d = c.csv("dataset", "dataset.csv", pool="all")
+    d = d.assign(net=["All" if r == "all" else network(lbl) for r, lbl in zip(d.run_id, d.dataset)]).set_index("net")
+    return float(d.loc[net, "est_removed_tgs"] / d.loc[net, "est_tgs_before_filter"] * 100)
 
 
 put("data.filter.removed.all", "pct", "dataset/<all>/dataset.csv (est_removed_tgs / est_tgs_before_filter)",
-    lambda c: _filter(c, "all"), section=S3)
-put("data.filter.removed.as-b", "pct", "dataset/<all>/dataset.csv", lambda c: _filter(c, "pro-as02-mesh"),
+    lambda c: _filter(c, "All"), section=S3)
+put("data.filter.removed.as-b", "pct", "dataset/<all>/dataset.csv", lambda c: _filter(c, "AS-B"),
     section=S3)
 
 
