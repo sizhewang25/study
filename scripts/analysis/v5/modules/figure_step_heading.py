@@ -41,6 +41,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from matplotlib.patches import Arc  # noqa: E402
 
+from scripts.analysis.v5.modules.figure_io import save_figure
 from scripts.analysis.v5.modules import cross  # noqa: E402
 from scripts.analysis.v5.modules.cell_margin import initial_bearing  # noqa: E402
 from scripts.analysis.v5.modules.geodesy import haversine_km  # noqa: E402
@@ -231,7 +232,7 @@ def render(g: pd.DataFrame, stats: dict, color: str, out_png: Path) -> Path:
     # The y spine runs through X_in; its label sits at the frame's left edge, clear of the answers.
     ax.yaxis.set_label_coords(-0.035, 0.5)
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=300)
+    save_figure(fig, out_png, dpi=300)
     plt.close(fig)
     return out_png
 

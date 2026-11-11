@@ -79,6 +79,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.ticker import LogFormatterSciNotation, LogLocator, NullFormatter  # noqa: E402
 
+from scripts.analysis.v5.modules.figure_io import save_figure
 from scripts.analysis.v5.modules import classify as C  # noqa: E402
 from scripts.analysis.v5.modules import cost as K  # noqa: E402
 from scripts.analysis.v5.modules import cross  # noqa: E402
@@ -411,7 +412,7 @@ def plot_panel(t: pd.DataFrame, out_png: Path, *, metric: str,
     ax.set_ylabel(_Y_LABELS[metric], fontsize=_LABEL_PT, color=E._INK_2, labelpad=1)
     fig.tight_layout(pad=0.2)
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=300, bbox_inches="tight", pad_inches=0.02, facecolor=E._SURFACE)
+    save_figure(fig, out_png, dpi=300, bbox_inches="tight", pad_inches=0.02, facecolor=E._SURFACE)
     plt.close(fig)
     return out_png
 

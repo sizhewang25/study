@@ -71,6 +71,7 @@ import matplotlib.ticker as ticker  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
+from scripts.analysis.v5.modules.figure_io import save_figure
 from scripts.analysis.v5.modules import dist_norm as DN  # noqa: E402
 from scripts.analysis.v5.modules import figure_pni_cluster_rtt as R  # noqa: E402
 from scripts.analysis.v5.modules import pni_gap as P  # noqa: E402
@@ -253,7 +254,7 @@ def _axes_style(ax) -> None:
 def _save(fig, out_png: Path) -> Path:
     fig.tight_layout(pad=0.3)
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=300, bbox_inches="tight", pad_inches=0.02)
+    save_figure(fig, out_png, dpi=300, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     return out_png
 

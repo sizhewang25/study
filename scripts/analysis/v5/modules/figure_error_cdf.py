@@ -119,6 +119,7 @@ import pandas as pd
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
+from scripts.analysis.v5.modules.figure_io import save_figure
 from scripts.analysis.v5.modules import classify as C  # noqa: E402
 from scripts.analysis.v5.modules import cross
 from scripts.analysis.v5.modules import dist_norm as DN
@@ -862,7 +863,7 @@ def plot_cdf(
         )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0.02, facecolor=_SURFACE)
+    save_figure(fig, out_path, dpi=dpi, bbox_inches="tight", pad_inches=0.02, facecolor=_SURFACE)
     plt.close(fig)
     return out_path
 

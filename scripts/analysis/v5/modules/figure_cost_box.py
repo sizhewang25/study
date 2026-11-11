@@ -102,6 +102,7 @@ import pandas as pd
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
+from scripts.analysis.v5.modules.figure_io import save_figure
 from scripts.analysis.v5.modules import cost as C  # noqa: E402
 from scripts.analysis.v5.modules import cross  # noqa: E402
 from scripts.analysis.v5.modules import figure_error_cdf as E  # noqa: E402
@@ -486,7 +487,7 @@ def plot_boxes(
     for text in fig.findobj(mpl_text.Text):
         text.set_fontweight("bold")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=dpi, bbox_inches="tight", facecolor=E._SURFACE)
+    save_figure(fig, out_path, dpi=dpi, bbox_inches="tight", facecolor=E._SURFACE)
     plt.close(fig)
     return out_path
 

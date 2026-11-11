@@ -313,7 +313,10 @@ class TestSentinel:
         out = run.analysis_dir(CLASSIFY_KIND, root=tmp_path)
         names = [*E.artifact_names(E.PER_RUN), *E.artifact_names(E.PER_RUN, E.SENTINEL)]
         ratios = [E.ratios_name(n) for n in names if n.endswith(".csv")]
-        assert {p.name for p in out.glob("error_cdf*")} == {*names, *ratios}
+        # save_figure writes a PDF and a state JSON beside every PNG.
+        twins = [t for n in names if n.endswith(".png")
+                 for t in (n[:-4] + ".pdf", n[:-4] + ".state.json")]
+        assert {p.name for p in out.glob("error_cdf*")} == {*names, *ratios, *twins}
 
     def test_the_sentinel_csv_declares_its_policy(self, tmp_path):
         run = _write_run(tmp_path, "as01", {"m": _tgs(solved=3, failed=3)})

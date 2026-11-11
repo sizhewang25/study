@@ -3274,6 +3274,41 @@ def report_octant_finetuning_cmd(
                     typer.echo(f"{label} {v} vs {b} [{lay}] · wrote {path}")
 
 
+@app.command("publish-paper-figs")
+def publish_paper_figs_cmd(
+    analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 wrote the artifacts."),
+    out_root: Path = typer.Option(None, "--out-root", help="Default: <repo>/outputs/paper."),
+    copy_to: Path = typer.Option(None, "--copy-to", help="Also copy each PDF here (the paper's figs/)."),
+    check: Path = typer.Option(None, "--check", help="Compare each PDF to <DIR>/<name>.pdf; write nothing."),
+) -> None:
+    """The group's paper figures, under the paper's names: `<out-root>/pdf/<name>.pdf`
+    and `<out-root>/json/<name>.json` (provenance + the module's data manifest).
+
+    The registry is `paper_figures.PAPER_FIGURES`. Reads only what the plot
+    commands built; exits non-zero naming every figure missing or differing.
+    """
+    from scripts.analysis.v5.modules import cross, paper_figures
+
+    group = cross.active_group()
+    if group is None:
+        raise typer.BadParameter("publish-paper-figs publishes a group's figures; run it with --group <id>")
+    try:
+        done, problems = paper_figures.publish(
+            group["group_id"], analysis_root=analysis_root,
+            out_root=out_root or paper_figures.DEFAULT_OUT_ROOT, copy_to=copy_to, check=check,
+        )
+    except (ValueError, MissingArtifactError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for line in done:
+        typer.echo(line)
+    if check is None and done:
+        typer.echo(f"into {out_root or paper_figures.DEFAULT_OUT_ROOT}/{{pdf,json}}")
+    if problems:
+        for line in problems:
+            typer.echo(f"problem: {line}", err=True)
+        raise typer.Exit(1)
+
+
 # ---- group files: a pooled command's flags, declared once -----------------------
 
 #: A group-file value that names a role's runs (`@seen`), or zips two roles

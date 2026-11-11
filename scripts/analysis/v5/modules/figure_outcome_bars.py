@@ -97,6 +97,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from scripts.analysis.v5.modules.figure_io import save_figure
 from scripts.analysis.v5.modules import classify as C
 from scripts.analysis.v5.modules import cross
 from scripts.analysis.v5.modules import grid as G
@@ -967,8 +968,8 @@ def render(
             png_name
             or NAMES[COMPARE][0].format(slug=grid_slug(nside), mode=mode_token(mode))
         )
-        fig.savefig(
-            png, dpi=dpi, facecolor=_SURFACE,
+        save_figure(
+            fig, png, dpi=dpi, facecolor=_SURFACE,
             **({"bbox_inches": "tight", "pad_inches": 0.02} if trim else {}),
         )
         plt.close(fig)

@@ -32,6 +32,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
+from scripts.analysis.v5.modules.figure_io import save_figure
 from scripts.analysis.v5.modules import cross  # noqa: E402
 from scripts.analysis.v5.modules import mtl_replay  # noqa: E402
 from scripts.analysis.v5.modules.figure_x_cell_rtt import HUES  # noqa: E402
@@ -225,7 +226,7 @@ def render_inside(stats: dict, terms: list[str], *, size: tuple[float, float], o
 def _save(fig, out_png: Path) -> Path:
     fig.tight_layout(pad=0.2)
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=300, bbox_inches="tight", pad_inches=0.02)
+    save_figure(fig, out_png, dpi=300, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     return out_png
 

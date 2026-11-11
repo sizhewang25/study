@@ -52,6 +52,7 @@ import pandas as pd  # noqa: E402
 from matplotlib.patches import PathPatch  # noqa: E402
 from matplotlib.path import Path as MplPath  # noqa: E402
 
+from scripts.analysis.v5.modules.figure_io import save_figure
 from scripts.analysis.v5.modules import cross  # noqa: E402
 from scripts.analysis.v5.modules import map_mtl as MM  # noqa: E402
 from scripts.analysis.v5.modules import mtl_replay as R  # noqa: E402
@@ -701,7 +702,7 @@ def draw_ltd(ax, combo: str, data: LtdData, p: dict, d_true_km: float, *, D_km: 
 
 def _save(fig, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=400)
+    save_figure(fig, path, dpi=400)
     plt.close(fig)
     return path
 

@@ -7,6 +7,11 @@
 #   ./create_tf_artifacts.sh                         # build into outputs/analysis/v5
 #   ./create_tf_artifacts.sh --group ID              # another group file (default pro-tf)
 #   ./create_tf_artifacts.sh --analysis-root DIR     # build somewhere else (a sandbox)
+#   ./create_tf_artifacts.sh --copy-figs DIR         # ...then copy the TF PDFs in, paper names
+#
+# The last step, publish-paper-figs, writes the paper's three TF figures
+# (error_cdf.pooled.tf, outcome_bars.unbounded.pooled.tf, pareto.cell.seen.tf)
+# to outputs/paper/pdf/, with provenance and data in outputs/paper/json/.
 #
 # Run on the TF machine: the pro-as0X-weighted runs and their source CSVs are
 # there, and the committed configs carry placeholder paths. Flags live in
@@ -38,13 +43,15 @@ V5="python -m scripts.analysis.v5.cli"
 GROUP=pro-tf
 
 ROOT_ARGS=()
+COPY_DIR=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --group)         GROUP=$2; shift 2 ;;
     --analysis-root) ROOT_ARGS=(--analysis-root "$2"); shift 2 ;;
+    --copy-figs)     COPY_DIR=$2; shift 2 ;;
     *)
       echo "create_tf_artifacts.sh: unknown argument: $1" >&2
-      echo "usage: $0 [--group ID] [--analysis-root DIR]" >&2
+      echo "usage: $0 [--group ID] [--analysis-root DIR] [--copy-figs DIR]" >&2
       exit 2 ;;
   esac
 done
@@ -102,6 +109,12 @@ grun plot-vp-obs-has-x    # vp_obs_has_x{,.pooled}
 # pro-paper artifacts when this machine has them, else say where to take them.
 section "data report"
 run paper-stats python -m scripts.analysis.v5.paper_stats --group "$GROUP"
+
+# The paper's TF figures under their paper names (registry: modules/paper_figures.py).
+section "paper figures"
+PUB_ARGS=()
+[ -n "$COPY_DIR" ] && PUB_ARGS+=(--copy-to "$COPY_DIR")
+run publish-paper-figs $V5 publish-paper-figs --group "$GROUP" ${PUB_ARGS[@]+"${PUB_ARGS[@]}"}
 
 printf '\n==================== summary ====================\n'
 printf 'commands ok: %d   failed: %d\n' "$N_OK" "${#FAILED[@]}"

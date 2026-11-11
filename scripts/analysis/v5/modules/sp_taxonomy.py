@@ -56,6 +56,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from scripts.analysis.v5.modules.figure_io import save_figure
 from scripts.analysis.v5.modules import pni_gap as P
 from scripts.analysis.v5.modules import sites as S
 from scripts.analysis.v5.modules import sp_pni_cells as SPC
@@ -339,7 +340,7 @@ def plot_rho_by_side(tgs: pd.DataFrame, out_png: Path) -> Path:
         ax.spines[spine].set_visible(False)
     fig.tight_layout(pad=0.2)
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=300, bbox_inches="tight", pad_inches=0.02)
+    save_figure(fig, out_png, dpi=300, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     return out_png
 

@@ -6,8 +6,12 @@
 #   ./create_paper_artifacts.sh                         # build into outputs/analysis/v5
 #   ./create_paper_artifacts.sh --group ID              # another group file (default pro-paper)
 #   ./create_paper_artifacts.sh --analysis-root DIR     # build somewhere else (a sandbox)
-#   ./create_paper_artifacts.sh --check-figs DIR        # ...then compare to the paper's figs/
-#   ./create_paper_artifacts.sh --copy-figs DIR         # ...then copy them in, paper names
+#   ./create_paper_artifacts.sh --check-figs DIR        # ...then compare the PDFs to the paper's figs/
+#   ./create_paper_artifacts.sh --copy-figs DIR         # ...then copy the PDFs in, paper names
+#
+# The last step, publish-paper-figs, writes every paper figure under its paper
+# name to outputs/paper/pdf/<name>.pdf, with its provenance and data manifest in
+# outputs/paper/json/<name>.json (registry: modules/paper_figures.py).
 #
 # `create_analysis_artifacts.sh` builds the exploratory set for a group of
 # runs; this script builds the paper's set and nothing else. Each section below
@@ -182,6 +186,9 @@ grun report-sp-taxonomy
 # region (numbers in x_side_regions.json).
 grun report-mtl-replay
 grun plot-x-side-regions
+# §6.5: step and heading of each CBG method's no-X predictions off the ingress
+# point (step_heading.<method>.png, numbers in step_heading.json).
+grun plot-step-heading
 # Appendix: each CBG method's three phases on one TG and VP (cbg_mech.<method>.<phase>.png),
 # after checking that the all-VP rebuild reproduces the recorded predictions.
 grun plot-cbg-mechanism
@@ -246,71 +253,14 @@ grun report-paper
 run paper-stats python -m scripts.analysis.v5.paper_stats --group "$GROUP"
 
 # ---- the paper's figures --------------------------------------------------------------------
-# paper name -> artifact under the analysis root. The one place the mapping lives.
-# The pooled directories' names, as `--group` names them (pro-paper.seen, pro-paper).
-pool_name() {
-  python -c 'import sys
-from scripts.analysis.v5.modules import cross
-from scripts.analysis.v5.modules.labels import load_group
-cross.use_group(load_group(sys.argv[1]))
-print(cross.cross_name(sys.argv[2:]))' "$GROUP" "$@"
-}
-X3=$(pool_name "${MESH[@]}")
-X6=$(pool_name "${MESH[@]}" "${LOSO[@]}")
-FIGS=(
-  "error_cdf.pooled.norm.cut|_cross/classify/$X3/error_cdf.pooled.norm.cut.png"
-  "sp_vp_scatter|_cross/pni-gap/$X3/sp_vp_scatter.png"
-  "sp_x_scatter|_cross/pni-gap/$X3/sp_x_scatter.png"
-  "sp_accuracy_by_x|_cross/pni-gap/$X3/sp_accuracy_by_x.png"
-  "sp_rtt_error_has_x|_cross/pni-gap/$X3/sp_rtt_error_has_x.png"
-  "outcome_bars.unbounded.pooled|_cross/classify/$X3/outcome_bars.unbounded.pooled.healpix-128.png"
-  "x_cell_rtt|_cross/pni-gap/$X3/x_cell_rtt.png"
-  "x_cell_rtt.all|_cross/pni-gap/$X3/x_cell_rtt.all.png"
-  "sp_rho_by_side|_cross/pni-gap/$X3/sp_rho_by_side.png"
-  "x_side_error|_cross/x-side-regions/$X3/x_side_error.png"
-  "x_side_area|_cross/x-side-regions/$X3/x_side_area.png"
-  "x_side_inside|_cross/x-side-regions/$X3/x_side_inside.png"
-  "correct_upset.pooled.cell|_cross/classify/$X3/correct_upset.pooled.cell.png"
-  "spo_vs_octh_exclusive_pixel_cdf|_cross/exclusive-error/$X3/exclusive_error_cdf.spo_vs_octh.png"
-  "spo_vs_octh_replica_spread|_cross/stability/$X3/paired_std_grid_offset.spo_vs_octh.png"
-  "spo_vs_octh_peripherality|_cross/peripherality/$X3/peripherality.SPO-vs-OCT-H.png"
-  "outcome_bars.bounded.pooled|_cross/classify/$X3/outcome_bars.pooled.healpix-128.png"
-  "cost_box.pooled.heap|_cross/cost/$X3/cost_box.pooled.heap.png"
-  "pareto.cell.seen|_cross/pareto/$X6/pareto.cell.seen.png"
-  "pareto.bounded.seen|_cross/pareto/$X6/pareto.bounded.seen.png"
-  "pareto.cell.unseen|_cross/pareto/$X6/pareto.cell.unseen.png"
-  "pareto.bounded.unseen|_cross/pareto/$X6/pareto.bounded.unseen.png"
-  "ripe_vs_databases.cut|$RIPE/ripe-vs-databases/ripe_vs_databases.cut.png"
-)
-MECH_RUN=pro-as03-mesh   # configs/groups/pro-paper.yaml plot-cbg-mechanism.run-id
-for t in SOI VAN OCT-H OCT-S SPO; do
-  for ph in ltd mtl est; do
-    FIGS+=("cbg_mech.$t.$ph|$MECH_RUN/cbg-mechanism/cbg_mech.$t.$ph.png")
-  done
-done
-
-if [ -n "$CHECK_DIR" ] || [ -n "$COPY_DIR" ]; then
-  section "figures"
-  for entry in "${FIGS[@]}"; do
-    name=${entry%%|*}
-    src="$ROOT/${entry#*|}"
-    if [ ! -f "$src" ]; then
-      FAILED+=("figures :: $name (not built: $src)")
-      continue
-    fi
-    if [ -n "$COPY_DIR" ]; then
-      cp "$src" "$COPY_DIR/$name.png" && echo "copied  $name"
-    else
-      if [ ! -f "$CHECK_DIR/$name.png" ]; then
-        FAILED+=("figures :: $name (absent from $CHECK_DIR)")
-      elif cmp -s "$src" "$CHECK_DIR/$name.png"; then
-        echo "same    $name"
-      else
-        FAILED+=("figures :: $name differs from $CHECK_DIR/$name.png")
-      fi
-    fi
-  done
-fi
+# paper name -> artifact lives in modules/paper_figures.py (PAPER_FIGURES), the one
+# place the mapping is kept. Writes outputs/paper/{pdf,json}/<name>.*; with
+# --copy-figs also copies the PDFs into DIR, with --check-figs only compares.
+section "figures"
+PUB_ARGS=()
+[ -n "$COPY_DIR" ] && PUB_ARGS+=(--copy-to "$COPY_DIR")
+[ -n "$CHECK_DIR" ] && PUB_ARGS+=(--check "$CHECK_DIR")
+run publish-paper-figs $V5 publish-paper-figs --group "$GROUP" ${PUB_ARGS[@]+"${PUB_ARGS[@]}"}
 
 printf '\n==================== summary ====================\n'
 printf 'commands ok: %d   failed: %d\n' "$N_OK" "${#FAILED[@]}"
