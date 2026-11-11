@@ -92,6 +92,8 @@ Command: `plot-outcome-bars`. Needs `classify` on every run.
 from __future__ import annotations
 
 import json
+import math
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 import numpy as np
@@ -395,6 +397,70 @@ def segment_ink(tier: str | None, label: str | None, mode: str) -> str:
     return TIER_INK[tier]
 
 
+#: The group that absorbs the rounding residue so a bar's labels sum to 100%.
+#: The paper's prose cites the correct-cell and no-answer shares, each rounded
+#: half-up on its own; the wrong share is never quoted, so it is the label free
+#: to move. It still lands on the floor or ceiling of its exact value.
+RESIDUAL_GROUP = "wrong"
+
+
+def _units(share: float, nd: int) -> int:
+    """`share` in units of 10^-nd, rounded half-up -- as the prose rounds."""
+    return int(Decimal(repr(float(share))).scaleb(nd).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def _largest_remainder(exact: list[float], target: int) -> list[int]:
+    """Integers summing to `target`, each the floor or ceiling of its `exact`
+    value: floors first, then the shortfall to the largest remainders (ties to
+    the earlier entry)."""
+    out = [math.floor(v) for v in exact]
+    short = target - sum(out)
+    by_rem = sorted(range(len(exact)), key=lambda i: (-(exact[i] - out[i]), i))
+    for i in (by_rem if short > 0 else by_rem[::-1])[: abs(short)]:
+        out[i] += 1 if short > 0 else -1
+    return out
+
+
+def label_units(row: pd.Series, mode: str, nd: int) -> tuple[dict, dict]:
+    """Every label of one bar, in units of 10^-nd (whole percent at nd=2).
+
+    Returns `(units by segment (tier, label), units by group)`. The groups sum
+    to the whole: each is rounded half-up except `RESIDUAL_GROUP`, which takes
+    what remains (largest remainder instead when it is absent, or when the
+    residue would push it past its floor/ceiling). Inside a group the
+    sub-segments are apportioned to the group's label by largest remainder,
+    so the in-bar labels add up to the rail beside them.
+    """
+    segs = segments(mode)
+    share = {seg: float(row[f"share_{segment_col(*seg)}"]) for seg in segs}
+    g_share = {g: sum(v for (_, lab), v in share.items() if lab == g) for g in GROUPS}
+    present = [g for g in GROUPS if g_share[g] > 0]
+    total = _units(sum(g_share.values()), nd)
+    g_units = dict.fromkeys(GROUPS, 0)
+    ok = False
+    if RESIDUAL_GROUP in present:
+        for g in present:
+            if g != RESIDUAL_GROUP:
+                g_units[g] = _units(g_share[g], nd)
+        rest = total - sum(g_units.values())
+        exact = g_share[RESIDUAL_GROUP] * 10 ** nd
+        ok = math.floor(exact) <= rest <= math.ceil(exact)
+        g_units[RESIDUAL_GROUP] = rest
+    if not ok:
+        g_units = dict.fromkeys(GROUPS, 0)
+        g_units.update(zip(present, _largest_remainder([g_share[g] * 10 ** nd for g in present], total)))
+    s_units: dict = {}
+    for g in GROUPS:
+        parts = [seg for seg in segs if seg[1] == g]
+        s_units.update(zip(parts, _largest_remainder([share[seg] * 10 ** nd for seg in parts], g_units[g])))
+    return s_units, g_units
+
+
+def _pct_text(units: int, nd: int) -> str:
+    """Label units of 10^-nd as a percent: 36 -> "36%" at nd=2, 362 -> "36.2%" at nd=3."""
+    return f"{units / 10 ** (nd - 2):.{max(nd - 2, 0)}f}%"
+
+
 def _add_shares(table: pd.DataFrame) -> pd.DataFrame:
     """Exact shares -- the drawn geometry. Rounding lives in labels and sort keys.
 
@@ -666,7 +732,8 @@ def _draw_bar(
     bar already *is* the cell-label breakdown, so a rail would repeat it."""
     validate_mode(mode)
     half = bar_frac / 2
-    groups: list[tuple[str, float, float]] = []
+    seg_units, group_units = label_units(row, mode, nd)
+    groups: list[tuple[str, float, float, int]] = []
     bottom = 0.0
     by_group: dict[str, list[tuple[str | None, str | None]]] = {}
     for tier, lab in segments(mode):
@@ -674,7 +741,7 @@ def _draw_bar(
     for group in GROUPS:
         group_bottom = bottom
         parts = by_group.get(group, [])
-        drawn: list[tuple[float, float, str]] = []
+        drawn: list[tuple[float, float, str, int]] = []
         for tier, lab in parts:
             v = float(row[f"share_{segment_col(tier, lab)}"])
             face = segment_ink(tier, lab, mode)
@@ -688,11 +755,11 @@ def _draw_bar(
                     # as their own marks, so no segment gains apparent width.
                     edgecolor=_contrast_ink(face), linewidth=0, zorder=3,
                 )
-                drawn.append((bottom, v, face))
+                drawn.append((bottom, v, face, seg_units[(tier, lab)]))
             bottom += v
         # White separators between ring tiers: interior boundaries only, as
         # lines across the bar rather than strokes around each sub-segment.
-        for seg_bottom, _, _ in drawn[1:]:
+        for seg_bottom, *_ in drawn[1:]:
             ax.hlines(
                 seg_bottom, x - half, x + half, colors=_SURFACE,
                 linewidth=SEPARATOR_PT, zorder=3.5,
@@ -703,15 +770,15 @@ def _draw_bar(
                 x, height, bottom=group_bottom, width=bar_frac,
                 facecolor="none", edgecolor=GROUP_EDGE, linewidth=GROUP_EDGE_PT, zorder=4,
             )
-        for seg_bottom, v, face in drawn:
+        for seg_bottom, v, face, units in drawn:
             if v >= _LABEL_FLOOR:
                 ax.text(
-                    x, seg_bottom + v / 2, f"{round(v, nd) * 100:.0f}%",
+                    x, seg_bottom + v / 2, _pct_text(units, nd),
                     ha="center", va="center", fontsize=label_pt, color=_contrast_ink(face), zorder=5,
                     bbox=dict(boxstyle="square,pad=0.12", facecolor=face, edgecolor="none"),
                 )
         if group != UNANSWERED:
-            groups.append((group, group_bottom, height))
+            groups.append((group, group_bottom, height, group_units[group]))
     if mode != UNBOUNDED:
         _draw_rail(ax, x, groups, nd, label_pt, bar_frac, rail_gap)
 
@@ -737,7 +804,7 @@ def _spread(ys: list[float], gap: float) -> list[float]:
 
 
 def _draw_rail(
-    ax, x: float, groups: list[tuple[str, float, float]], nd: int, label_pt: float = FONTS["label"],
+    ax, x: float, groups: list[tuple[str, float, float, int]], nd: int, label_pt: float = FONTS["label"],
     bar_frac: float = _BAR_FRAC,
     rail_gap: float = _RAIL_GAP,
 ) -> None:
@@ -748,31 +815,32 @@ def _draw_rail(
     already is its total.
     """
     rail_x = x + bar_frac / 2 + rail_gap + _RAIL_W / 2
-    shown = [(g, b, h) for g, b, h in groups if h > 0]
-    for group, bottom, height in shown:
+    shown = [(g, b, h, u) for g, b, h, u in groups if h > 0]
+    for group, bottom, height, _ in shown:
         trim = min(_RAIL_SEG_GAP / 2, height / 4)
         ax.bar(
             rail_x, height - 2 * trim, bottom=bottom + trim, width=_RAIL_W,
             facecolor=_SURFACE, hatch=CELL_HATCH[group],
             edgecolor=_RAIL_HATCH_INK, linewidth=0.8, zorder=3,
         )
-    rail_labels(ax, rail_x, [(b, h) for _, b, h in shown], nd, label_pt)
+    rail_labels(ax, rail_x, [(b, h, u) for _, b, h, u in shown], nd, label_pt)
 
 
 def rail_labels(
-    ax, rail_x: float, spans: list[tuple[float, float]], nd: int, label_pt: float = FONTS["label"],
+    ax, rail_x: float, spans: list[tuple[float, float, int]], nd: int, label_pt: float = FONTS["label"],
 ) -> None:
     """Each span's total beside the rail, set **vertically** to save width.
 
-    `spans` are `(bottom, height)` in stack order. Rotated 90 degrees, a label
+    `spans` are `(bottom, height, label units)` in stack order, the units
+    from `label_units`, so the totals sum to 100%. Rotated 90 degrees, a label
     is taller than it is wide, so thin neighbours are nudged apart by
     `_RAIL_LABEL_GAP` -- which is sized for the rotated text -- never reordered.
     """
-    labelled = [(b, h) for b, h in spans if round(h, nd) > 0]
-    ys = _spread([b + h / 2 for b, h in labelled], _RAIL_LABEL_GAP)
-    for (_, height), y in zip(labelled, ys):
+    labelled = [(b, h, u) for b, h, u in spans if u > 0]
+    ys = _spread([b + h / 2 for b, h, _ in labelled], _RAIL_LABEL_GAP)
+    for (*_, units), y in zip(labelled, ys):
         ax.text(
-            rail_x + _RAIL_W / 2 + _RAIL_TEXT_PAD, y, f"{round(height, nd) * 100:.0f}%",
+            rail_x + _RAIL_W / 2 + _RAIL_TEXT_PAD, y, _pct_text(units, nd),
             ha="center", va="top", rotation=90, rotation_mode="anchor",
             fontsize=label_pt, fontweight="bold", color=_INK, zorder=5,
         )
@@ -1077,7 +1145,11 @@ def _manifest(
             "group_border": (
                 f"{GROUP_EDGE} {GROUP_EDGE_PT} pt around every cell-label group, 'no answer' included"
             ),
-            "labels": "each cell-label x tier share at whole percent, above the label floor",
+            "labels": (
+                "each cell-label x tier share at whole percent, above the label floor; a bar's "
+                f"group labels sum to 100%: half-up, except '{RESIDUAL_GROUP}' takes the residue; "
+                "tiers apportioned to their group's label by largest remainder"
+            ),
             "separator": f"white {SEPARATOR_PT} pt between ring tiers inside a group",
             "rail": (
                 "per-group strip right of each bar, white with the group's stripe; "

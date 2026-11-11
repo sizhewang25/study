@@ -387,3 +387,45 @@ def test_row_major_reads_left_to_right_under_column_major_fill(n, ncol):
         cols.append(placed[i:i + size]); i += size
     read = [col[r] for r in range(rows) for col in cols if r < len(col)]
     assert read == items
+
+
+def _label_row(mode, shares_by_group, split=None):
+    """A row of `share_*` columns: each group's share split evenly over its
+    segments, or by `split[group]` (fractions of the group, in stack order)."""
+    row = {}
+    for g in F.GROUPS:
+        parts = [seg for seg in F.segments(mode) if seg[1] == g]
+        fr = (split or {}).get(g) or [1 / len(parts)] * len(parts)
+        for seg, f in zip(parts, fr):
+            row[f"share_{F.segment_col(*seg)}"] = shares_by_group.get(g, 0.0) * f
+    return pd.Series(row)
+
+
+@pytest.mark.parametrize("shares, want", [
+    # Rounded alone: 36 + 43 + 22 = 101. The prose's two shares hold; wrong absorbs.
+    ({"correct": 0.3555, "wrong": 0.4294, "unanswered": 0.2151}, {"correct": 36, "wrong": 42, "unanswered": 22}),
+    # Rounded alone: 33 + 33 + 33 = 99.
+    ({"correct": 0.334, "wrong": 0.333, "unanswered": 0.333}, {"correct": 33, "wrong": 34, "unanswered": 33}),
+    # No wrong share: largest remainder over what is there (tie to the earlier group).
+    ({"correct": 0.505, "unanswered": 0.495}, {"correct": 51, "wrong": 0, "unanswered": 49}),
+    ({"correct": 0.7356, "wrong": 0.2644}, {"correct": 74, "wrong": 26, "unanswered": 0}),
+])
+def test_bar_labels_sum_to_100(shares, want):
+    _, groups = F.label_units(_label_row(F.UNBOUNDED, shares), F.UNBOUNDED, F.ACCURACY_DECIMALS)
+    assert groups == want and sum(groups.values()) == 100
+
+
+def test_tier_labels_add_up_to_their_group():
+    shares = {"correct": 0.3555, "wrong": 0.4294, "unanswered": 0.2151}
+    n = len(F.MODE_TIERS[F.BOUNDED])
+    row = _label_row(F.BOUNDED, shares, {"correct": [1 / 3] * 3 + [0.0] * (n - 3), "wrong": [0.25] * 4})
+    segs, groups = F.label_units(row, F.BOUNDED, F.ACCURACY_DECIMALS)
+    for g in F.GROUPS:
+        assert sum(u for (_, lab), u in segs.items() if lab == g) == groups[g]
+    for seg, u in segs.items():  # each stays on the floor or ceiling of its exact share
+        exact = row[f"share_{F.segment_col(*seg)}"] * 100
+        assert np.floor(exact) <= u <= np.ceil(exact)
+
+
+def test_pct_text():
+    assert F._pct_text(36, 2) == "36%" and F._pct_text(362, 3) == "36.2%"
