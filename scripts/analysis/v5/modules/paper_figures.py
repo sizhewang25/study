@@ -81,6 +81,14 @@ PAPER_FIGURES: dict[str, list[Entry]] = {
           for n in ("pareto.cell.seen", "pareto.cell.unseen")],
         # Appendix: CBG mechanism figures
         *_MECH,
+        # Appendix: case study, SPO vs OCT-H (error distance / D, not pixels)
+        _seen("spo_vs_octh_exclusive_error_cdf", "exclusive-error",
+              "exclusive_error_cdf.spo_vs_octh.error",
+              "exclusive_error_cdf.spo_vs_octh.error.manifest.json", "plot-exclusive-error"),
+        _seen("spo_vs_octh_replica_spread_error", "stability", "paired_std_error.spo_vs_octh",
+              "paired_std_error.spo_vs_octh.manifest.json", "plot-stability"),
+        _seen("spo_vs_octh_peripherality", "peripherality", "peripherality.SPO-vs-OCT-H",
+              "peripherality.SPO-vs-OCT-H.manifest.json", "plot-peripherality"),
     ],
     # Built on the TF machine (create_tf_artifacts.sh): the TF runs are only there.
     "pro-tf": [

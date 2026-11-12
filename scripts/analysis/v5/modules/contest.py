@@ -56,6 +56,7 @@ import pandas as pd
 
 from scripts.analysis.v5.modules import classify as C
 from scripts.analysis.v5.modules import cross
+from scripts.analysis.v5.modules import dist_norm as DN
 from scripts.analysis.v5.modules import grid as G
 from scripts.analysis.v5.modules.map_answer_space import load_rung
 from scripts.analysis.v5.modules.geodesy import elementwise_km, spherical_centroid
@@ -106,6 +107,17 @@ TG_COLUMNS: tuple[str, ...] = (
     "tg_id", "tg_lat", "tg_lon", "site_id", "tg_seed_id", "cell_label", "status",
     C.GRID_OFFSET,
 )
+
+#: The error distance in km, read only when the normalized error is wanted.
+ERROR_KM_COL = "pred_dist_to_tg_km"
+
+#: The error distance normalized by the footprint span D (`dist_norm`), in
+#: units of 10^-3. `load` adds it when given the runs' declared bounds; it is
+#: the paper's unit, where the grid offset is not (the paper has no pixels).
+ERROR_COL = "err_norm"
+
+#: The per-target distance a figure can read: the grid offset or `ERROR_COL`.
+OFFSET_COLS: tuple[str, ...] = (C.GRID_OFFSET, ERROR_COL)
 
 #: The column `offset_spread` writes, in grid steps.
 OFFSET_SD = "offset_sd"
@@ -176,7 +188,9 @@ def categorize(k_a, k_b) -> np.ndarray:
     return out
 
 
-def _per_site(frame: pd.DataFrame, run_id: str, method: str) -> pd.DataFrame:
+def _per_site(
+    frame: pd.DataFrame, run_id: str, method: str, offset_col: str = C.GRID_OFFSET
+) -> pd.DataFrame:
     """One row per site: its coordinate, its seed, and the correct count."""
     missing = [c for c in TG_COLUMNS if c not in frame.columns]
     if missing:
@@ -190,7 +204,13 @@ def _per_site(frame: pd.DataFrame, run_id: str, method: str) -> pd.DataFrame:
             f"{method} in {run_id} repeats {int(dupes.sum())} tg_id(s), e.g. "
             f"{sorted(frame.loc[dupes, 'tg_id'])[:3]}; each would be counted twice"
         )
-    work = frame[list(TG_COLUMNS)].copy()
+    if offset_col not in frame.columns:
+        raise ValueError(
+            f"{method} in {run_id} has no {offset_col!r}; load the contest with "
+            f"the runs' declared dist_norm bounds"
+        )
+    keep = list(dict.fromkeys([*TG_COLUMNS, offset_col]))
+    work = frame[keep].copy()
     work["correct"] = correct_mask(frame)
     work["solved"] = solved_mask(frame).to_numpy()
     by_site = work.groupby("site_id", sort=True)
@@ -206,12 +226,13 @@ def _per_site(frame: pd.DataFrame, run_id: str, method: str) -> pd.DataFrame:
             "n_solved": by_site["solved"].sum().astype(int),
         }
     )
-    out[OFFSET_SD] = offset_spread(work[work["solved"]])
+    out[OFFSET_SD] = offset_spread(work[work["solved"]], col=offset_col)
     return out.rename_axis("site_id").reset_index()
 
 
-def offset_spread(solved: pd.DataFrame) -> pd.Series:
-    """Per site: the standard deviation of `pred_dist_to_tg_grid`, in grids.
+def offset_spread(solved: pd.DataFrame, col: str = C.GRID_OFFSET) -> pd.Series:
+    """Per site: the standard deviation of `col`, by default `pred_dist_to_tg_grid`
+    in grids; `ERROR_COL` gives it in units of 10^-3 D.
 
     How much a site's ~20 replicas disagree about *how far out* the answer is.
     Solved rows only -- a FALLBACK row carries the shortest-ping baseline's
@@ -241,7 +262,7 @@ def offset_spread(solved: pd.DataFrame) -> pd.Series:
     """
     if not len(solved):
         return pd.Series(dtype=float, name=OFFSET_SD)
-    out = solved.groupby("site_id")[C.GRID_OFFSET].std(ddof=OFFSET_SD_DDOF)
+    out = solved.groupby("site_id")[col].std(ddof=OFFSET_SD_DDOF)
     return out.rename(OFFSET_SD)
 
 
@@ -252,6 +273,7 @@ def site_contest(
     run_id: str,
     method_a: str,
     method_b: str,
+    offset_col: str = C.GRID_OFFSET,
 ) -> pd.DataFrame:
     """One row per site of `run_id`: both correct counts and the category.
 
@@ -268,8 +290,8 @@ def site_contest(
             f"{len(only_a)} only in {method_a} (e.g. {only_a[:3]}), "
             f"{len(only_b)} only in {method_b} (e.g. {only_b[:3]})"
         )
-    a = _per_site(frame_a, run_id, method_a)
-    b = _per_site(frame_b, run_id, method_b)
+    a = _per_site(frame_a, run_id, method_a, offset_col)
+    b = _per_site(frame_b, run_id, method_b, offset_col)
     out = a.merge(b, on="site_id", suffixes=("_a", "_b"), validate="one_to_one")
     for col in ("tg_lat", "tg_lon", "tg_seed_id"):
         if not out[f"{col}_a"].equals(out[f"{col}_b"]):
@@ -379,12 +401,24 @@ def seed_cloud_centroid_km(lats, lons, seed_lats, seed_lons) -> np.ndarray:
     )
 
 
-def paired_targets(data: "ContestData") -> pd.DataFrame:
+def _offset_col(data: "ContestData", offset_col: str) -> str:
+    if offset_col not in OFFSET_COLS:
+        raise ValueError(f"unknown offset column {offset_col!r}; pick from {list(OFFSET_COLS)}")
+    if offset_col == ERROR_COL and data.bounds is None:
+        raise ValueError(
+            "the normalized error needs the runs' declared "
+            "analysis.common.dist_norm_km; pass bounds to contest.load"
+        )
+    return offset_col
+
+
+def paired_targets(data: "ContestData", offset_col: str = C.GRID_OFFSET) -> pd.DataFrame:
     """Every evaluated target, with both methods' verdicts side by side.
 
     One row per target: whether each method placed it in the correct cell,
     which of the four `COHORTS` that puts it in, both grid offsets, and their
-    difference. The frame the per-target figures start from.
+    difference. The frame the per-target figures start from. `offset_col`
+    picks the distance: the grid offset, or `ERROR_COL` (10^-3 D).
 
     `diff = offset_a - offset_b`, in grid steps. **The sign is fixed**:
     positive means method `a` is further from the target, so on the paper's
@@ -396,6 +430,7 @@ def paired_targets(data: "ContestData") -> pd.DataFrame:
     only comparable inside `COHORT_BOTH`. Outside it, read the offset of the
     method that was right -- that is what `exclusive` cohorts are for.
     """
+    offset_col = _offset_col(data, offset_col)
     parts = []
     for run_id in data.run_ids:
         a = data.frames[(run_id, data.method_a)]
@@ -409,8 +444,8 @@ def paired_targets(data: "ContestData") -> pd.DataFrame:
         a = a.sort_values("tg_id").reset_index(drop=True)
         b = b.sort_values("tg_id").reset_index(drop=True)
         ca, cb = correct_mask(a), correct_mask(b)
-        offset_a = a[C.GRID_OFFSET].to_numpy()
-        offset_b = b[C.GRID_OFFSET].to_numpy()
+        offset_a = a[offset_col].to_numpy()
+        offset_b = b[offset_col].to_numpy()
         diff = offset_a - offset_b
         cohort = np.where(
             ca & cb, COHORT_BOTH,
@@ -471,6 +506,8 @@ class ContestData:
     frames: dict[tuple[str, str], pd.DataFrame]
     seeds: dict[str, pd.DataFrame]
     nside: int
+    #: The declared `(min, max)` km every run shares, when `ERROR_COL` is loaded.
+    bounds: tuple[float, float] | None = None
 
 
 def load(
@@ -480,8 +517,12 @@ def load(
     method_b: str,
     nside: int = SOURCE_NSIDE,
     analysis_root: Path | None = None,
+    bounds: tuple[float, float] | None = None,
 ) -> ContestData:
     """Both methods' `*_tgs.parquet` and each run's seeds.
+
+    With `bounds` (the runs' common declared `dist_norm_km`), every frame also
+    carries `ERROR_COL`, the error distance in units of 10^-3 D.
 
     Both methods must be scored in every run. A mesh carrying one of them
     would contribute a panel of half-contests, and the pooled counts the
@@ -502,7 +543,13 @@ def load(
                     f"({path} missing; have {have}). Run "
                     f"`classify --run-id {run.run_id}` first."
                 )
-            frames[(run.run_id, m)] = pd.read_parquet(path, columns=list(TG_COLUMNS))
+            cols = list(TG_COLUMNS) + ([ERROR_KM_COL] if bounds is not None else [])
+            frame = pd.read_parquet(path, columns=cols)
+            if bounds is not None:
+                frame[ERROR_COL] = DN.distance(
+                    frame.pop(ERROR_KM_COL), bounds, what=f"{m} in {run.run_id}"
+                )
+            frames[(run.run_id, m)] = frame
     return ContestData(
         run_ids=[r.run_id for r in runs],
         method_a=method_a,
@@ -510,6 +557,7 @@ def load(
         frames=frames,
         seeds=seeds,
         nside=int(nside),
+        bounds=None if bounds is None else DN.checked(bounds),
     )
 
 
@@ -525,7 +573,7 @@ def scored_methods(
     return sorted(p.name[: -len(suffix)] for p in d.glob("*" + suffix))
 
 
-def contest_table(data: ContestData) -> pd.DataFrame:
+def contest_table(data: ContestData, offset_col: str = C.GRID_OFFSET) -> pd.DataFrame:
     """One row per `(run_id, site_id)` over every run, with `centroid_km`.
 
     `centroid_km` is the site's **seed** against the spherical centroid of all
@@ -544,6 +592,7 @@ def contest_table(data: ContestData) -> pd.DataFrame:
             run_id=run_id,
             method_a=data.method_a,
             method_b=data.method_b,
+            offset_col=_offset_col(data, offset_col),
         )
         seeds = data.seeds[run_id]
         # The site's *seed* against the centroid of all seeds, not the site

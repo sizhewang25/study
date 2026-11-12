@@ -60,10 +60,13 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from scripts.analysis.v5.modules import contest as CT  # noqa: E402
+from scripts.analysis.v5.modules import classify as C  # noqa: E402
 from scripts.analysis.v5.modules import cross  # noqa: E402
+from scripts.analysis.v5.modules import dist_norm as DN  # noqa: E402
 from scripts.analysis.v5.modules import grid as G  # noqa: E402
 from scripts.analysis.v5.modules import methods  # noqa: E402
 from scripts.analysis.v5.modules.methods import method_colors, method_label  # noqa: E402
+from scripts.analysis.v5.modules.figure_io import save_figure  # noqa: E402
 from scripts.analysis.v5.modules.paths import RunPaths  # noqa: E402
 
 #: `_cross/<KIND>/<datasets>[@<arm>]/`.
@@ -80,9 +83,18 @@ DEFAULT_METHOD_B = CT.DEFAULT_METHOD_B
 DRAWN: tuple[str, str] = (CT.COHORT_ONLY_A, CT.COHORT_ONLY_B)
 OFFSET_OF = {CT.COHORT_ONLY_A: "offset_a", CT.COHORT_ONLY_B: "offset_b"}
 
-PNG_NAME = "exclusive_error_cdf.{pair}.png"
-CSV_NAME = "exclusive_error_cdf.{pair}.csv"
-MANIFEST_NAME = "exclusive_error_cdf.{pair}.manifest.json"
+PNG_NAME = "exclusive_error_cdf.{pair}{suffix}.png"
+CSV_NAME = "exclusive_error_cdf.{pair}{suffix}.csv"
+MANIFEST_NAME = "exclusive_error_cdf.{pair}{suffix}.manifest.json"
+
+#: What the x axis measures. `grid` is the pixel offset (the original figure,
+#: its files unsuffixed); `error` is the error distance normalized by the
+#: footprint span D, in units of 10^-3 -- the paper's unit, files `.error.*`.
+GRID = "grid"
+ERROR = "error"
+METRICS: tuple[str, ...] = (GRID, ERROR)
+OFFSET_COL = {GRID: C.GRID_OFFSET, ERROR: CT.ERROR_COL}
+SUFFIX = {GRID: "", ERROR: ".error"}
 
 #: Printed at its own size as one of three equal, short panels in a
 #: two-column row (~1/3 of the text width) beside the peripherality and
@@ -113,6 +125,9 @@ _TICKS = (0, 1, 2, 5, 10, 20, 50, 100)
 #: as a share of every evaluated target, because "a small portion" is only
 #: meaningful against a stated denominator.
 TAIL_GRIDS: tuple[int, ...] = (2, 5, 10, 20)
+#: The same, in units of 10^-3 D, for the `error` metric.
+TAIL_ERROR: tuple[int, ...] = (10, 50, 100, 200)
+TAILS = {GRID: TAIL_GRIDS, ERROR: TAIL_ERROR}
 
 QUANTILES = (0.5, 0.9, 0.99)
 
@@ -130,6 +145,14 @@ _END_LABEL_Y = 1.02
 #: The paper's terms: the offset is the pixel distance (\S answer space).
 _X_LABEL = "Pixel distance"
 _Y_LABEL = "CDF"
+_X_LABEL_ERROR = f"Normalized error distance {DN.UNIT}"
+X_LABEL = {GRID: _X_LABEL, ERROR: _X_LABEL_ERROR}
+
+
+def validate_metric(metric: str) -> str:
+    if metric not in METRICS:
+        raise ValueError(f"unknown metric {metric!r}; pick from {list(METRICS)}")
+    return metric
 
 
 def output_dir(run_ids: list[str], *, analysis_root: Path | None = None) -> Path:
@@ -179,7 +202,7 @@ def csv_columns() -> list[str]:
     return list(CT.TARGET_COLUMNS)
 
 
-def cohort_stats(targets: pd.DataFrame, cohort: str) -> dict:
+def cohort_stats(targets: pd.DataFrame, cohort: str, tails: tuple[int, ...] = TAIL_GRIDS) -> dict:
     """One cohort's size, shape and tail.
 
     The tail is reported twice on purpose. As a share of the cohort it says
@@ -197,11 +220,11 @@ def cohort_stats(targets: pd.DataFrame, cohort: str) -> dict:
     }
     if not v.size:
         return out
-    out["offset_min"] = int(v.min())
+    out["offset_min"] = float(v.min())
     for q in QUANTILES:
         out[f"offset_p{int(q * 100)}"] = float(np.quantile(v, q))
-    out["offset_max"] = int(v.max())
-    for g in TAIL_GRIDS:
+    out["offset_max"] = float(v.max())
+    for g in tails:
         beyond = int((v > g).sum())
         out[f"n_beyond_{g}"] = beyond
         out[f"share_of_cohort_beyond_{g}"] = round(beyond / v.size, 4)
@@ -242,13 +265,20 @@ def render(
     method_b: str,
     out_png: Path,
     *,
+    metric: str = GRID,
     fig_size: tuple[float, float] = (_FIG_W, _FIG_H),
     dpi: int = 300,
 ) -> Path:
-    """One step curve per exclusive cohort, each against its own denominator."""
+    """One step curve per exclusive cohort, each against its own denominator.
+
+    `grid`: symlog about zero, so an offset of 0 is drawn. `error`: a log axis
+    in units of 10^-3 D, values below `DN.X_MIN` drawn at it."""
+    validate_metric(metric)
     ink = cohort_ink(method_a, method_b)
     names = cohort_labels(method_a, method_b)
     series = {c: cohort_offsets(targets, c) for c in DRAWN}
+    if metric == ERROR:
+        series = {c: np.maximum(v.astype(float), DN.X_MIN) for c, v in series.items()}
     drawn = [v for v in series.values() if v.size]
     if not drawn:
         raise ValueError(
@@ -259,7 +289,10 @@ def render(
     fig, ax = plt.subplots(figsize=fig_size)
     fig.patch.set_facecolor(_SURFACE)
     ax.set_facecolor(_SURFACE)
-    ax.set_xscale("symlog", linthresh=_LINTHRESH)
+    if metric == GRID:
+        ax.set_xscale("symlog", linthresh=_LINTHRESH)
+    else:
+        ax.set_xscale("log")
 
     for cohort in DRAWN:
         v = series[cohort]
@@ -278,20 +311,27 @@ def render(
             linestyle=_END_DASH, zorder=2,
         )
         ax.annotate(
-            f"{int(end)}", xy=(end, _END_LABEL_Y), ha="center", va="bottom",
+            f"{end:.0f}", xy=(end, _END_LABEL_Y), ha="center", va="bottom",
             fontsize=_TICK_PT, color=ink[cohort],
         )
 
-    everything = np.concatenate(drawn)
-    ticks = visible_ticks(everything)
+    everything = np.concatenate([v for v in series.values() if v.size])
     # A little past the longest offset, not a lot: the far tail is the
     # subject, and dead space to the right of it reads as though the data
     # stopped earlier than it did.
-    ax.set_xlim(-_LINTHRESH * 0.35, float(everything.max()) * 1.35)
+    if metric == GRID:
+        ticks = visible_ticks(everything)
+        ax.set_xlim(-_LINTHRESH * 0.35, float(everything.max()) * 1.35)
+        ax.set_xticks(ticks, [str(t) for t in ticks])
+    else:
+        lo = 10.0 ** np.floor(np.log10(float(everything.min())))
+        hi = 10.0 ** np.ceil(np.log10(float(everything.max()) * 1.35))
+        ax.set_xlim(lo, hi)
+        ticks = [10.0 ** k for k in range(int(np.log10(lo)), int(np.log10(hi)) + 1)]
+        ax.set_xticks(ticks, [DN.power_label(t) for t in ticks])
     ax.set_ylim(-0.02, 1.0 + _HEADROOM)
     ax.set_yticks(np.linspace(0.0, 1.0, 6))
-    ax.set_xticks(ticks, [str(t) for t in ticks])
-    ax.set_xlabel(_X_LABEL, fontsize=_LABEL_PT, color=_INK)
+    ax.set_xlabel(X_LABEL[metric], fontsize=_LABEL_PT, color=_INK)
     ax.set_ylabel(_Y_LABEL, fontsize=_LABEL_PT, color=_INK)
     ax.tick_params(labelsize=_TICK_PT, colors=_INK, length=2, width=0.6)
     ax.grid(True, color=_GRID, linewidth=0.5)
@@ -307,14 +347,14 @@ def render(
         ax.spines[side].set_linewidth(0.7)
 
     fig.tight_layout()
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=dpi, facecolor=_SURFACE, bbox_inches="tight", pad_inches=0.02)
+    save_figure(fig, out_png, dpi=dpi, facecolor=_SURFACE, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     return out_png
 
 
 def _manifest(
-    data: CT.ContestData, targets: pd.DataFrame, *, png_name: str, csv_name: str
+    data: CT.ContestData, targets: pd.DataFrame, *, png_name: str, csv_name: str,
+    metric: str = GRID,
 ) -> str:
     a, b = method_label(data.method_a), method_label(data.method_b)
     body = {
@@ -339,8 +379,14 @@ def _manifest(
             for m in (data.method_a, data.method_b)
         },
         "partition": partition(targets),
+        "metric": metric,
+        "offset_unit": (
+            "grid steps" if metric == GRID
+            else "normalized error distance, 10^-3 of the footprint span D"
+        ),
+        "dist_norm": DN.manifest_entry(data.bounds) if metric == ERROR else None,
         "drawn": list(DRAWN),
-        "stats": [cohort_stats(targets, c) for c in DRAWN],
+        "stats": [cohort_stats(targets, c, TAILS[metric]) for c in DRAWN],
         "encoding": {
             "curve": "step, the empirical CDF of the offset; exact, no bins",
             "axes": (
@@ -395,21 +441,28 @@ def build_for_runs(
     method_b: str = DEFAULT_METHOD_B,
     nside: int = SOURCE_NSIDE,
     analysis_root: Path | None = None,
+    metric: str = GRID,
+    bounds: tuple[float, float] | None = None,
 ) -> Path:
-    """PNG, CSV twin and manifest for one method pair. Returns the PNG."""
+    """PNG, CSV twin and manifest for one method pair. Returns the PNG.
+
+    `metric="error"` needs `bounds`, the runs' common declared dist_norm_km."""
     nside = G.validate_nside(nside)
+    validate_metric(metric)
+    if metric == ERROR and bounds is None:
+        raise ValueError("--metric error needs analysis.common.dist_norm_km declared on every run")
     data = CT.load(
         runs, method_a=method_a, method_b=method_b, nside=nside,
-        analysis_root=analysis_root,
+        analysis_root=analysis_root, bounds=bounds if metric == ERROR else None,
     )
-    targets = CT.paired_targets(data)
+    targets = CT.paired_targets(data, OFFSET_COL[metric])
     pair = pair_slug(method_a, method_b)
-    names = {k: v.format(pair=pair) for k, v in
+    names = {k: v.format(pair=pair, suffix=SUFFIX[metric]) for k, v in
              zip(("png", "csv", "man"), (PNG_NAME, CSV_NAME, MANIFEST_NAME))}
     out_dir = output_dir(data.run_ids, analysis_root=analysis_root)
-    png = render(targets, method_a, method_b, out_dir / names["png"])
+    png = render(targets, method_a, method_b, out_dir / names["png"], metric=metric)
     targets.reindex(columns=csv_columns()).to_csv(out_dir / names["csv"], index=False)
     (out_dir / names["man"]).write_text(
-        _manifest(data, targets, png_name=names["png"], csv_name=names["csv"])
+        _manifest(data, targets, png_name=names["png"], csv_name=names["csv"], metric=metric)
     )
     return png

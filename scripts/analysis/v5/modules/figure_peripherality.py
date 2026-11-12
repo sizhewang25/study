@@ -87,6 +87,7 @@ from scripts.analysis.v5.modules import cross  # noqa: E402
 from scripts.analysis.v5.modules import grid as G  # noqa: E402
 from scripts.analysis.v5.modules import methods  # noqa: E402
 from scripts.analysis.v5.modules.methods import method_colors, method_label  # noqa: E402
+from scripts.analysis.v5.modules.figure_io import save_figure  # noqa: E402
 from scripts.analysis.v5.modules.paths import RunPaths  # noqa: E402
 
 #: `_cross/<KIND>/<datasets>[@<arm>]/`.
@@ -292,8 +293,7 @@ def render(
         ax.spines[side].set_linewidth(0.7)
 
     fig.tight_layout()
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=dpi, facecolor=_SURFACE, bbox_inches="tight", pad_inches=0.02)
+    save_figure(fig, out_png, dpi=dpi, facecolor=_SURFACE, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     return out_png
 

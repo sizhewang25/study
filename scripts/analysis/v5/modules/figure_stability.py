@@ -93,9 +93,11 @@ import pandas as pd  # noqa: E402
 
 from scripts.analysis.v5.modules import contest as CT  # noqa: E402
 from scripts.analysis.v5.modules import cross  # noqa: E402
+from scripts.analysis.v5.modules import dist_norm as DN  # noqa: E402
 from scripts.analysis.v5.modules import grid as G  # noqa: E402
 from scripts.analysis.v5.modules import methods  # noqa: E402
 from scripts.analysis.v5.modules.methods import method_colors, method_label  # noqa: E402
+from scripts.analysis.v5.modules.figure_io import save_figure  # noqa: E402
 from scripts.analysis.v5.modules.paths import RunPaths  # noqa: E402
 
 #: `_cross/<KIND>/<datasets>[@<arm>]/`.
@@ -113,7 +115,13 @@ SPREAD_COL = CT.OFFSET_SD
 #: apart. They share a substrate and a claim, not a canvas.
 RATIO = "ratio_of_success"
 SPREAD = "std_grid_offset"
-FIGURES: tuple[str, ...] = (RATIO, SPREAD)
+#: The spread again, of the error distance normalized by D (10^-3): the
+#: paper's unit. Opt-in (`--figure std_error`), since it needs the runs'
+#: declared dist_norm_km.
+SPREAD_ERROR = "std_error"
+FIGURES: tuple[str, ...] = (RATIO, SPREAD, SPREAD_ERROR)
+DEFAULT_FIGURES: tuple[str, ...] = (RATIO, SPREAD)
+SPREADS: tuple[str, ...] = (SPREAD, SPREAD_ERROR)
 
 #: What each figure counts, and they differ on purpose.
 #:
@@ -127,8 +135,8 @@ FIGURES: tuple[str, ...] = (RATIO, SPREAD)
 #: answers *identical coordinates* identically. Two sites in one cell are up
 #: to ~51 km apart, so pooling them would score a legitimate difference of
 #: input as inconsistency.
-UNIT = {RATIO: "cell", SPREAD: "site"}
-UNIT_KEY = {RATIO: "tg_seed_id", SPREAD: "site_id"}
+UNIT = {RATIO: "cell", SPREAD: "site", SPREAD_ERROR: "site"}
+UNIT_KEY = {RATIO: "tg_seed_id", SPREAD: "site_id", SPREAD_ERROR: "site_id"}
 
 PNG_NAME = "paired_{figure}.{pair}.png"
 CSV_NAME = "paired_{figure}.{pair}.csv"
@@ -181,6 +189,8 @@ _TICK_PT = 6.0
 _RATIO_LABEL = "Fraction of Correct Predictions per Cell"
 _RATIO_Y_LABEL = "Fraction of Cells"
 _SPREAD_LABEL = "Replica std. dev.\n(pixel distance)"
+_SPREAD_ERROR_LABEL = "Replica std. dev.\n" + rf"(norm. error, $\times 10^{{-3}}$)"
+SPREAD_LABEL = {SPREAD: _SPREAD_LABEL, SPREAD_ERROR: _SPREAD_ERROR_LABEL}
 
 
 def output_dir(run_ids: list[str], *, analysis_root: Path | None = None) -> Path:
@@ -383,7 +393,7 @@ def draw_ratio(ax, series: list, inks: list[str], labels: list[str]) -> None:
     ax.legend(fontsize=_LABEL_PT, frameon=False, loc="upper left")
 
 
-def draw_spread(ax, series: list, inks: list[str]) -> None:
+def draw_spread(ax, series: list, inks: list[str], figure: str = SPREAD) -> None:
     """A box per method; whiskers at `SPREAD_WHIS`, no outliers.
 
     The whisker ends are the 5th and 95th percentiles, not the extremes and
@@ -403,10 +413,11 @@ def draw_spread(ax, series: list, inks: list[str]) -> None:
         box.set_edgecolor(_INK_2)
         box.set_linewidth(_EDGE_PT)
     ax.set_ylim(bottom=0.0)
-    # A tick per pixel: the spread is in pixels, and the reader compares the
-    # boxes against whole steps.
-    ax.yaxis.set_major_locator(MultipleLocator(1.0))
-    ax.set_ylabel(_SPREAD_LABEL, fontsize=_LABEL_PT, color=_INK)
+    if figure == SPREAD:
+        # A tick per pixel: the spread is in pixels, and the reader compares
+        # the boxes against whole steps.
+        ax.yaxis.set_major_locator(MultipleLocator(1.0))
+    ax.set_ylabel(SPREAD_LABEL[figure], fontsize=_LABEL_PT, color=_INK)
 
 
 def _finish(ax, labels: list[str] | None) -> None:
@@ -448,12 +459,11 @@ def render(
         draw_ratio(ax, _series(rows, methods_, RATIO_COL, dropna=False), inks, labels)
         _finish(ax, None)
     else:
-        draw_spread(ax, _series(rows, methods_, SPREAD_COL, dropna=True), inks)
+        draw_spread(ax, _series(rows, methods_, SPREAD_COL, dropna=True), inks, figure)
         _finish(ax, labels)
 
     fig.tight_layout()
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=dpi, facecolor=_SURFACE, bbox_inches="tight", pad_inches=0.02)
+    save_figure(fig, out_png, dpi=dpi, facecolor=_SURFACE, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     return out_png
 
@@ -468,6 +478,11 @@ SUBJECTS = {
     SPREAD: (
         "The spread of each method's grid error distance across the ~20 "
         "replicas of one site, in grid steps, over the pooled sites"
+    ),
+    SPREAD_ERROR: (
+        "The spread of each method's error distance across the ~20 replicas "
+        "of one site, normalized by the footprint span D (10^-3), over the "
+        "pooled sites"
     ),
 }
 
@@ -531,7 +546,12 @@ def _manifest(
             if figure == RATIO
             else {
                 "quantity": SPREAD_COL,
-                "axis": _SPREAD_LABEL,
+                "axis": SPREAD_LABEL[figure],
+                "offset_unit": (
+                    "grid steps" if figure == SPREAD
+                    else "normalized error distance, 10^-3 of the footprint span D"
+                ),
+                "dist_norm": DN.manifest_entry(data.bounds) if figure == SPREAD_ERROR else None,
                 "mark": "boxplot, one per method",
                 "definition": (
                     f"Sample standard deviation (ddof={CT.OFFSET_SD_DDOF}) of "
@@ -613,21 +633,30 @@ def build_for_runs(
     figures: list[str] | None = None,
     nside: int = SOURCE_NSIDE,
     analysis_root: Path | None = None,
+    bounds: tuple[float, float] | None = None,
 ) -> list[Path]:
-    """PNG, CSV twin and manifest per figure. Returns the PNGs."""
-    for figure in figures or FIGURES:
+    """PNG, CSV twin and manifest per figure. Returns the PNGs.
+
+    `std_error` needs `bounds`, the runs' common declared dist_norm_km."""
+    wanted = list(figures or DEFAULT_FIGURES)
+    for figure in wanted:
         validate_figure(figure)
+    if SPREAD_ERROR in wanted and bounds is None:
+        raise ValueError(f"{SPREAD_ERROR} needs analysis.common.dist_norm_km declared on every run")
     nside = G.validate_nside(nside)
     data = CT.load(
         runs, method_a=method_a, method_b=method_b, nside=nside,
-        analysis_root=analysis_root,
+        analysis_root=analysis_root, bounds=bounds if SPREAD_ERROR in wanted else None,
     )
-    wanted = list(figures or FIGURES)
     rows = {}
     if RATIO in wanted:
         rows[RATIO] = ratio_rows(CT.paired_targets(data), method_a, method_b)
     if SPREAD in wanted:
         rows[SPREAD] = spread_rows(CT.contest_table(data), method_a, method_b)
+    if SPREAD_ERROR in wanted:
+        rows[SPREAD_ERROR] = spread_rows(
+            CT.contest_table(data, CT.ERROR_COL), method_a, method_b
+        )
     out_dir = output_dir(data.run_ids, analysis_root=analysis_root)
     written: list[Path] = []
     for figure in wanted:

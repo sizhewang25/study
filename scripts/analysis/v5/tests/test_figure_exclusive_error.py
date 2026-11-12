@@ -229,12 +229,12 @@ def test_build_writes_the_triple(run, monkeypatch):
     out = png.parent
     assert out.parent.name == F.KIND
     for template in (F.PNG_NAME, F.CSV_NAME, F.MANIFEST_NAME):
-        assert (out / template.format(pair=pair)).exists()
-    body = json.loads((out / F.MANIFEST_NAME.format(pair=pair)).read_text())
+        assert (out / template.format(pair=pair, suffix="")).exists()
+    body = json.loads((out / F.MANIFEST_NAME.format(pair=pair, suffix="")).read_text())
     assert body["source_nside"] == NSIDE
     assert body["drawn"] == list(F.DRAWN)
     assert "stated denominator" in body["policy"]["tail"]
-    twin = pd.read_csv(out / F.CSV_NAME.format(pair=pair))
+    twin = pd.read_csv(out / F.CSV_NAME.format(pair=pair, suffix=""))
     assert list(twin.columns) == F.csv_columns()
     # the twin is every target, so the partition is checkable from it alone
     assert len(twin) == body["partition"]["n_targets"]
@@ -243,3 +243,32 @@ def test_build_writes_the_triple(run, monkeypatch):
         for c in CT.COHORTS
         if body["partition"][f"n_{c}"]
     }
+
+
+def test_the_error_metric_reads_the_normalized_distance(run, monkeypatch):
+    """`metric="error"`: the offsets are km / D x 10^3, in `.error` files."""
+    import matplotlib.pyplot as plt
+
+    with pytest.raises(ValueError, match="dist_norm_km"):
+        F.build_for_runs([run], method_a="alpha", method_b="beta",
+                         analysis_root=run.root, metric=F.ERROR)
+    captured = []
+    real_close = plt.close
+    monkeypatch.setattr(plt, "close", captured.append)
+    png = F.build_for_runs([run], method_a="alpha", method_b="beta",
+                           analysis_root=run.root, metric=F.ERROR, bounds=(0.0, 20_000.0))
+    for fig in captured:
+        real_close(fig)
+    pair = F.pair_slug("alpha", "beta")
+    assert png.name == F.PNG_NAME.format(pair=pair, suffix=".error")
+    body = json.loads((png.parent / F.MANIFEST_NAME.format(pair=pair, suffix=".error")).read_text())
+    assert body["metric"] == F.ERROR and body["dist_norm"]["max"] == 20_000.0
+    twin = pd.read_csv(png.parent / F.CSV_NAME.format(pair=pair, suffix=".error"))
+    data = CT.load([run], method_a="alpha", method_b="beta", analysis_root=run.root,
+                   bounds=(0.0, 20_000.0))
+    km = pd.read_parquet(
+        run.classify_dir(data.nside, root=run.root) / "alpha_tgs.parquet",
+        columns=["tg_id", "pred_dist_to_tg_km"],
+    ).set_index("tg_id")["pred_dist_to_tg_km"]
+    got = twin.set_index("tg_id")["offset_a"]
+    assert np.allclose(got.to_numpy(), km.loc[got.index].to_numpy() / 20_000.0 * 1_000.0)

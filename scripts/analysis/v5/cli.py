@@ -829,8 +829,10 @@ def plot_stability_cmd(
         "--figure",
         "-f",
         help=(
-            f"Which to draw: {figure_stability.FIGURES[0]} or "
-            f"{figure_stability.FIGURES[1]}. Repeatable; default both."
+            f"Which to draw: {', '.join(figure_stability.FIGURES)}. Repeatable; "
+            f"default {' and '.join(figure_stability.DEFAULT_FIGURES)}. "
+            f"{figure_stability.SPREAD_ERROR} is the spread of the error "
+            f"normalized by D and needs analysis.common.dist_norm_km."
         ),
     ),
     nside: int = typer.Option(
@@ -863,6 +865,14 @@ def plot_stability_cmd(
         raise typer.BadParameter("pass at least one --run-id; this figure pools named datasets")
     _refuse_combo_ids("plot-stability", run_id, outputs_root)
     try:
+        from scripts.analysis.v5.modules import dist_norm as DN
+        from scripts.analysis.v5.modules.labels import declared_dist_norm_km
+
+        bounds = None
+        if figure and figure_stability.SPREAD_ERROR in figure:
+            bounds = DN.common_bounds(
+                list(run_id), {r: declared_dist_norm_km(r, outputs_root) for r in run_id}
+            )
         pngs = figure_stability.build_for_runs(
             [resolve_run(r, outputs_root) for r in run_id],
             method_a=method_a,
@@ -870,6 +880,7 @@ def plot_stability_cmd(
             figures=list(figure) if figure else None,
             nside=nside,
             analysis_root=analysis_root,
+            bounds=bounds,
         )
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -942,6 +953,15 @@ def plot_exclusive_error_cmd(
         "-n",
         help="Which rung's answer space and *_tgs.parquet to read.",
     ),
+    metric: str = typer.Option(
+        figure_exclusive_error.GRID,
+        "--metric",
+        help=(
+            "x axis: `grid` (pixel offset, symlog) or `error` (error distance "
+            "normalized by D, 10^-3, log; needs analysis.common.dist_norm_km; "
+            "files suffixed `.error`)."
+        ),
+    ),
     outputs_root: Path = typer.Option(DEFAULT_OUTPUTS_ROOT, help="Benchmark output root."),
     analysis_root: Path = typer.Option(DEFAULT_ANALYSIS_ROOT, help="Where v5 writes."),
 ) -> None:
@@ -964,12 +984,23 @@ def plot_exclusive_error_cmd(
         raise typer.BadParameter("pass at least one --run-id; this figure pools named datasets")
     _refuse_combo_ids("plot-exclusive-error", run_id, outputs_root)
     try:
+        from scripts.analysis.v5.modules import dist_norm as DN
+        from scripts.analysis.v5.modules.labels import declared_dist_norm_km
+
+        figure_exclusive_error.validate_metric(metric)
+        bounds = None
+        if metric == figure_exclusive_error.ERROR:
+            bounds = DN.common_bounds(
+                list(run_id), {r: declared_dist_norm_km(r, outputs_root) for r in run_id}
+            )
         png = figure_exclusive_error.build_for_runs(
             [resolve_run(r, outputs_root) for r in run_id],
             method_a=method_a,
             method_b=method_b,
             nside=nside,
             analysis_root=analysis_root,
+            metric=metric,
+            bounds=bounds,
         )
     except (ValueError, MissingArtifactError) as exc:
         raise typer.BadParameter(str(exc)) from exc

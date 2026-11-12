@@ -55,7 +55,7 @@ def test_the_two_figures_count_different_things(ratio, spread):
     """The ratio is per cell because `correct` is a cell verdict; the spread
     is per site because it asks whether identical coordinates get identical
     answers, and two sites in one cell are not identical coordinates."""
-    assert F.UNIT == {F.RATIO: "cell", F.SPREAD: "site"}
+    assert F.UNIT == {F.RATIO: "cell", F.SPREAD: "site", F.SPREAD_ERROR: "site"}
     assert list(ratio.columns) == F.csv_columns(F.RATIO)
     assert list(spread.columns) == F.csv_columns(F.SPREAD)
     assert ratio.groupby(["run_id", "tg_seed_id", "method"]).size().eq(1).all()
@@ -133,7 +133,7 @@ def test_each_twin_holds_only_its_own_figures_columns(rows):
     assert F.RATIO_COL in r and F.RATIO_COL not in s
     assert F.SPREAD_COL in s and F.SPREAD_COL not in r
     assert "site_id" in s and "site_id" not in r
-    for figure in F.FIGURES:
+    for figure in F.DEFAULT_FIGURES:
         assert list(rows[figure].columns) == F.csv_columns(figure)
 
 
@@ -242,7 +242,7 @@ def test_the_whiskers_are_percentiles_and_nothing_is_drawn_past_them():
     assert top == pytest.approx(np.percentile(tail, F.SPREAD_WHIS[1]), abs=6.0)
 
 
-@pytest.mark.parametrize("figure", F.FIGURES)
+@pytest.mark.parametrize("figure", F.DEFAULT_FIGURES)
 def test_a_figure_is_one_untitled_panel(rows, run, figure, monkeypatch):
     import matplotlib.pyplot as plt
 
@@ -280,10 +280,10 @@ def test_build_writes_a_triple_per_figure(run, monkeypatch):
     for fig in captured:
         real_close(fig)
 
-    assert len(pngs) == len(F.FIGURES)
+    assert len(pngs) == len(F.DEFAULT_FIGURES)
     out = pngs[0].parent
     assert out.parent.name == F.KIND
-    for figure in F.FIGURES:
+    for figure in F.DEFAULT_FIGURES:
         names = F.artifact_names(figure, "alpha", "beta")
         for key in ("png", "csv", "man"):
             assert (out / names[key]).exists()
@@ -323,7 +323,7 @@ def test_an_unknown_figure_is_refused_before_anything_is_read(run):
         )
 
 
-@pytest.mark.parametrize("figure", F.FIGURES)
+@pytest.mark.parametrize("figure", F.DEFAULT_FIGURES)
 def test_the_axis_labels_fit_inside_the_figure(rows, run, figure, monkeypatch):
     """The figure is saved at a fixed canvas, so a label that overruns is
     clipped without complaint rather than shrinking the axes. It happened on
@@ -352,3 +352,27 @@ def test_the_axis_labels_fit_inside_the_figure(rows, run, figure, monkeypatch):
         assert box.y0 >= canvas.y0 - 0.5 and box.y1 <= canvas.y1 + 0.5, (
             f"{figure} {axis}-label runs off the canvas vertically"
         )
+
+
+def test_the_error_spread_is_opt_in_and_normalized_by_d(run, monkeypatch):
+    """`std_error` needs the declared bounds and writes its own triple, in 10^-3 D."""
+    import matplotlib.pyplot as plt
+
+    with pytest.raises(ValueError, match="dist_norm_km"):
+        F.build_for_runs([run], method_a="alpha", method_b="beta",
+                         figures=[F.SPREAD_ERROR], analysis_root=run.root)
+    captured = []
+    real_close = plt.close
+    monkeypatch.setattr(plt, "close", captured.append)
+    pngs = F.build_for_runs([run], method_a="alpha", method_b="beta",
+                            figures=[F.SPREAD_ERROR], analysis_root=run.root,
+                            bounds=(0.0, 20_000.0))
+    for fig in captured:
+        real_close(fig)
+    names = F.artifact_names(F.SPREAD_ERROR, "alpha", "beta")
+    assert [p.name for p in pngs] == [names["png"]]
+    body = json.loads((pngs[0].parent / names["man"]).read_text())
+    assert body["encoding"]["dist_norm"]["max"] == 20_000.0
+    grid = pd.read_csv(pngs[0].parent / F.artifact_names(F.SPREAD, "alpha", "beta")["csv"])
+    err = pd.read_csv(pngs[0].parent / names["csv"])
+    assert list(err.columns) == list(grid.columns)

@@ -132,15 +132,17 @@ analysis:
     run-id: "@seen"
     method: [shortest_ping, million_scale_cbg, vanilla_cbg, octant_cbg_hull, octant_cbg_spl, spotter_cbg]
 
-  plot-exclusive-error:
+  plot-exclusive-error:           # appendix G: on error distance / D, not pixels
     run-id: "@seen"
     method-a: spotter_cbg
     method-b: octant_cbg_hull
+    metric: error
 
-  plot-stability:
+  plot-stability:                 # appendix G: replica spread of error distance / D
     run-id: "@seen"
     method-a: spotter_cbg
     method-b: octant_cbg_hull
+    figure: [std_error]
 
   plot-peripherality:
     run-id: "@seen"
