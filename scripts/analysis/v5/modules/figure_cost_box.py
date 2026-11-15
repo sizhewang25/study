@@ -161,7 +161,7 @@ MEMORY_AXIS_LABEL = "Peak memory (MB)"
 
 #: One paper column, drawn at its printed width so the text prints at its
 #: stated size; every piece of text is bold, and the key wraps to two rows.
-FIGSIZE: tuple[float, float] = (3.4, 1.7)
+FIGSIZE: tuple[float, float] = (3.4, 1.3)
 LEGEND_NCOL = 2
 
 CSV_COLUMNS: tuple[str, ...] = (
