@@ -225,7 +225,7 @@ _FIG_H = 4.0
 #: again (four tiers per bar, three key rows) and wraps its five-entry tier key
 #: at `COLUMN_LEGEND_NCOL`.
 POOLED_PANEL_W = 3.4
-POOLED_FIG_H = 1.9
+POOLED_FIG_H = 1.6
 POOLED_FIG_H_BOUNDED = 2.7
 COLUMN_LEGEND_NCOL = 3
 

@@ -170,7 +170,7 @@ _GUIDE_PT = 5.5
 #: sized for it. 3.4 in is the printed width (half of a two-column sigconf row,
 #: beside the percentile table), so the point sizes above print as stated; the
 #: short height keeps the row from eating the page.
-PAPER_FIGSIZE: tuple[float, float] = (3.4, 2.1)
+PAPER_FIGSIZE: tuple[float, float] = (3.75, 1.2)
 
 #: y at a quarter each, so the gridlines are the quartiles and the reader takes
 #: p25/p50/p75 off the panel without a table.
@@ -853,6 +853,7 @@ def plot_cdf(
     )
     for text in legend.get_texts():
         text.set_color(_INK_2)
+        text.set_fontweight("bold")
 
     if title:
         ax.set_title(title, fontsize=_TITLE_PT, fontweight="bold", color=_INK, pad=9)
