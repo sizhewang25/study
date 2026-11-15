@@ -63,7 +63,8 @@ PAPER_FIGURES: dict[str, list[Entry]] = {
               "outcome_bars.unbounded.pooled.healpix-128.manifest.json", "plot-outcome-bars"),
         # §6.2
         *[_seen(n, "pni-gap", n, "sp_baseline.manifest.json", "plot-sp-baseline")
-          for n in ("sp_vp_scatter", "sp_x_scatter", "sp_accuracy_by_x", "sp_rtt_error_has_x")],
+          # sp_accuracy_by_x left the paper 2026-11-15 (the text states its 93% / 0%).
+          for n in ("sp_vp_scatter", "sp_x_scatter", "sp_rtt_error_has_x")],
         # §6.3
         _seen("x_cell_rtt.all", "pni-gap", "x_cell_rtt.all", "x_cell_rtt.manifest.json", "plot-x-cell-rtt"),
         _seen("sp_rho_by_side", "pni-gap", "sp_rho_by_side", "sp_taxonomy.report.json", "report-sp-taxonomy"),

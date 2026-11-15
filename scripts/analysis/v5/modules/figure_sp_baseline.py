@@ -252,6 +252,14 @@ def _axes_style(ax) -> None:
 
 
 def _save(fig, out_png: Path) -> Path:
+    import matplotlib.text as mpl_text
+
+    # Text inside the panel bold (tick labels, legend, rho, notes): the panels print at a
+    # fifth of the page width. The axis names stay regular.
+    axis_names = {lab for ax in fig.axes for lab in (ax.xaxis.label, ax.yaxis.label)}
+    for text in fig.findobj(mpl_text.Text):
+        if text not in axis_names:
+            text.set_fontweight("bold")
     fig.tight_layout(pad=0.3)
     out_png.parent.mkdir(parents=True, exist_ok=True)
     save_figure(fig, out_png, dpi=300, bbox_inches="tight", pad_inches=0.02)
@@ -271,7 +279,8 @@ def plot_scatter(tgs: pd.DataFrame, figure: str, out_png: Path) -> Path:
                color=hue or method_colors([SHORTEST_PING])[SHORTEST_PING], alpha=0.55, linewidths=0,
                zorder=2, clip_on=False)
     # Below the diagonal on the right: d_sp >= d_geo leaves it empty of VP points.
-    ax.text(0.97, 0.05, rf"$\rho={rho:.2f}$", transform=ax.transAxes, ha="right", va="bottom",
+    # Plain-text rho (not mathtext), so it takes the bold weight `_save` gives the panel text.
+    ax.text(0.97, 0.05, f"\u03c1 = {rho:.2f}", transform=ax.transAxes, ha="right", va="bottom",
             fontsize=LEGEND_PT + 0.5, color=INK)
     ax.set_xscale("log")
     ax.set_yscale("log")
