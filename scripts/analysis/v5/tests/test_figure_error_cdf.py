@@ -516,7 +516,7 @@ class TestPanel:
     """Paper-column panel: curves, key, two axis names, nothing under them."""
 
     def test_it_is_a_single_paper_column(self):
-        assert E.PAPER_FIGSIZE == (4.0, 3.0)
+        assert E.PAPER_FIGSIZE == (3.75, 1.2)
 
     def test_the_axes_are_named_plainly(self):
         assert (E.X_LABEL, E.Y_LABEL) == ("Distance (km)", "CDF")
@@ -528,18 +528,19 @@ class TestPanel:
         """`bbox_inches="tight"` grows the file around anything hung below the
         axes, so the saved aspect is the check that nothing is: a footnote
         block used to take an 8.6x6.6 panel (0.77) out to 0.96.
+
+        Drawn as the paper draws it (no title). On the short paper panel the
+        axis labels alone move the tight aspect by ~0.08, so the tolerance is
+        0.1 -- a footnote block would add several times that.
         """
         from PIL import Image
 
         run = _write_run(tmp_path, "as01", {"m": _tgs(solved=4)})
         loaded = E.load_errors(run, analysis_root=tmp_path)
-        E.plot_cdf(
-            loaded, E.percentile_table(loaded), tmp_path / "p.png",
-            title="Error distance to the TG", subtitle="as01 · n=4 TGs",
-        )
+        E.plot_cdf(loaded, E.percentile_table(loaded), tmp_path / "p.png")
         w, h = Image.open(tmp_path / "p.png").size
         want = E.PAPER_FIGSIZE[1] / E.PAPER_FIGSIZE[0]
-        assert h / w == pytest.approx(want, abs=0.06), f"{w}x{h}"
+        assert h / w == pytest.approx(want, abs=0.1), f"{w}x{h}"
 
     def test_the_manifest_carries_what_the_panel_dropped(self, tmp_path):
         run = _write_run(tmp_path, "as01", {"octant_cbg_hull": _tgs(solved=4)})

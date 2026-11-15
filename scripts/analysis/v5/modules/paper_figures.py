@@ -68,8 +68,9 @@ PAPER_FIGURES: dict[str, list[Entry]] = {
         _seen("x_cell_rtt.all", "pni-gap", "x_cell_rtt.all", "x_cell_rtt.manifest.json", "plot-x-cell-rtt"),
         _seen("sp_rho_by_side", "pni-gap", "sp_rho_by_side", "sp_taxonomy.report.json", "report-sp-taxonomy"),
         # §6.4
+        # x_side_error left the paper 2026-11-15 (its medians are now rows of Table 1).
         *[_seen(n, "x-side-regions", n, "x_side_regions.json", "plot-x-side-regions")
-          for n in ("x_side_error", "x_side_area", "x_side_inside")],
+          for n in ("x_side_area", "x_side_inside")],
         # §6.5
         *[_seen(f"step_heading.{m}", "step-heading", f"step_heading.{m}", "step_heading.json",
                 "plot-step-heading")
