@@ -40,6 +40,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from matplotlib.patches import Arc  # noqa: E402
+from matplotlib.transforms import ScaledTranslation  # noqa: E402
 
 from scripts.analysis.v5.modules.figure_io import save_figure
 from scripts.analysis.v5.modules import cross  # noqa: E402
@@ -69,6 +70,9 @@ X_TICKS = (-1, 0, 1)
 Y_TICKS = (1,)
 FONT = 6.5
 TICK_FONT = 6
+#: The legend draws mathtext `X_in` about 1 pt above plain `TG` (measured on the glyph ink,
+#: though the layout reports equal baselines); this drops it back onto TG's baseline.
+XIN_LEGEND_DROP_PT = 1.0
 #: Axes margins (left, bottom, right, top), inches: fixed so every panel is identical.
 MARGIN_IN = (0.17, 0.29, 0.05, 0.17)
 #: Both axes are in units of d(X_in, TG); the caption names the unit.
@@ -216,8 +220,11 @@ def render(g: pd.DataFrame, stats: dict, color: str, out_png: Path) -> Path:
     ax.scatter([0], [0], marker="^", s=MARK_S, color="k", zorder=8, clip_on=False, label=r"$X_{\mathrm{in}}$")
     ax.scatter([1], [0], marker="*", s=MARK_S * 1.8, color="k", zorder=8, clip_on=False, label="TG")
     # Above the axes, in the fixed top margin: never over an answer, same in every panel.
-    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2, fontsize=FONT, frameon=False,
-              handletextpad=0.3, columnspacing=1.2, borderaxespad=0.1)
+    leg = ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2, fontsize=FONT, frameon=False,
+                    handletextpad=0.3, columnspacing=1.2, borderaxespad=0.1)
+    xin = leg.get_texts()[0]
+    xin.set_transform(xin.get_transform()
+                      + ScaledTranslation(0, -XIN_LEGEND_DROP_PT / 72, fig.dpi_scale_trans))
     ax.set_aspect("equal")
     ax.set_xlim(-CAP, CAP); ax.set_ylim(0, CAP)
     ax.spines["left"].set_position(("data", 0))
