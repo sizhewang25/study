@@ -104,6 +104,8 @@ CORRECT, ADJACENT, FARTHER = "correct", "wrong_adjacent", "wrong_farther"
 WHERE_ORDER = (CORRECT, ADJACENT, FARTHER)
 #: The bars' two outcomes, bottom to top: the outcome bars' correct and wrong cell.
 OUTCOMES = ("correct", "wrong")
+#: How the legends name them: the paper says "incorrect", the data label stays `wrong`.
+OUTCOME_LABEL = {"correct": "correct", "wrong": "incorrect"}
 #: Why a has-X TG is wrong, in the RTT scatter's outlines.
 INFLATED, NEAR_TIE = "inflated RTT", "near-tie"
 #: The labels Fig. 8 draws, as the paper names the two kinds (§4.2). The
@@ -361,7 +363,7 @@ def plot_rtt_scatter(tgs: pd.DataFrame, out_png: Path) -> Path:
     ax.set_ylabel("S-P error distance\n" + r"($\times10^{-3}$)", fontsize=LABEL_PT, color=INK)
     # One fixed marker per outcome: the drawn markers' areas vary with their TGs.
     handles = [plt.Line2D([], [], ls="", marker="o", ms=3.0, color=MODE_INK[o], alpha=0.6, mew=0,
-                          label=f"{o} cell") for o in OUTCOMES]
+                          label=f"{OUTCOME_LABEL[o]} cell") for o in OUTCOMES]
     # Lower right: no has-X TG has both a high min RTT and a small error. Framed,
     # so it reads apart from the nearby markers, and packed tight to stay small.
     leg = ax.legend(handles=handles, loc="lower right", fontsize=LEGEND_PT - 0.5, frameon=True,

@@ -176,7 +176,7 @@ TIER_INK = {
 CELL_HATCH = {"correct": "", "wrong": "//", UNANSWERED: ""}
 CELL_LEGEND = {
     "correct": "correct cell",
-    "wrong": "wrong cell (//)",
+    "wrong": "incorrect cell (//)",  # the paper's term; `wrong` stays the data label
     UNANSWERED: "no answer",
 }
 
