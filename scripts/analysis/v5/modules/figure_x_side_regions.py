@@ -244,7 +244,7 @@ def build(runs: list[RunPaths], D_km: dict[str, float], *, analysis_root: Path |
     r_terms = [method_label(c) for c in REGION_COMBOS]
     written = {
         "error": render_boxes(stats["error_over_D"], e_terms, scale=ERROR_SCALE, floor=ERROR_FLOOR,
-                              ylabel="Norm. error\n" + r"($10^{-3}$)", size=SIZE_IN["error"],
+                              ylabel="Norm. error dist.\n" + r"($10^{-3}$)", size=SIZE_IN["error"],
                               out_png=out_dir / PNG["error"]),
         "area": render_boxes(stats["area_over_D2"], r_terms, scale=1.0, floor=AREA_FLOOR,
                              ylabel="Norm. area", size=SIZE_IN["area"],

@@ -108,7 +108,11 @@ grun plot-vp-obs-has-x    # vp_obs_has_x{,.pooled}
 # _cross/paper/<group>/paper_stats.json. Comparisons against the mesh read the
 # pro-paper artifacts when this machine has them, else say where to take them.
 section "data report"
-run paper-stats python -m scripts.analysis.v5.paper_stats --group "$GROUP"
+if [ -f scripts/analysis/v5/paper_stats.py ]; then   # a one-off for the draft, not in git
+  run paper-stats python -m scripts.analysis.v5.paper_stats --group "$GROUP"
+else
+  echo "(paper_stats.py not checked out; skipped)"
+fi
 
 # The paper's TF figures under their paper names (registry: modules/paper_figures.py).
 section "paper figures"

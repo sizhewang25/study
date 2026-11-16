@@ -332,7 +332,7 @@ def plot_rho_by_side(tgs: pd.DataFrame, out_png: Path) -> Path:
     ax.set_ylim(0, 1.0)
     ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
     ax.set_xlabel(r"per-TG Spearman's $\rho$", fontsize=6.5)
-    ax.set_ylabel("CDF over TGs", fontsize=6.5)
+    ax.set_ylabel("CDF", fontsize=6.5)
     ax.legend(loc="upper left", fontsize=6, frameon=False, handlelength=1.2, borderaxespad=0.2)
     ax.tick_params(axis="both", labelsize=6, length=2, pad=1.5)
     ax.grid(alpha=0.25, lw=0.3)

@@ -8,7 +8,7 @@ panels per method:
     the VP's RTT to the TG yields (dashed crossing lines, red dots on the bounds). The
     TG's true (RTT, distance) is the orange square.
 (b) MTL: the TG's neighbourhood in a TG-centred equidistant projection over D, with no
-    ticks and a scale bar. Every participant's disk (solid) or annulus (solid outer,
+    ticks. Every participant's disk (solid) or annulus (solid outer,
     dotted inner) is dimmed except the representative VP's, and the region is filled.
     SPO draws each VP's ring density exp(-z^2/2) instead, black where it is high.
 (c) EST: the same map with nothing highlighted, plus the estimate as a red star.
@@ -476,22 +476,6 @@ def _style(ax, *, ticks: bool) -> None:
     ax.tick_params(labelsize=TICK_FONT, length=2, width=0.5, pad=1.5)
 
 
-def _nice(x: float) -> float:
-    e = math.floor(math.log10(x))
-    for m in (5, 2, 1):
-        if m * 10**e <= x:
-            return m * 10**e
-    return 10**e
-
-
-def _scale_bar(ax, ext) -> None:
-    side = ext[1] - ext[0]
-    L = _nice(side / 4)
-    x0, y0 = ext[0] + 0.06 * side, ext[2] + 0.06 * side
-    ax.plot([x0, x0 + L], [y0, y0], color=INK, lw=1.2, solid_capstyle="butt", zorder=9)
-    ax.text(x0 + L / 2, y0 + 0.025 * side, f"${L:g}D$", ha="center", va="bottom", fontsize=FONT - 0.5, zorder=9)
-
-
 def _poly_patch(g, **kw) -> PathPatch | None:
     polys = list(g.geoms) if g.geom_type in ("MultiPolygon", "GeometryCollection") else [g]
     verts, codes = [], []
@@ -566,7 +550,7 @@ def _draw_spo(ax, frame: Frame, ex: MethodExample, vp_id: str, ext, *, highlight
 
 
 def draw_map(ax, frame: Frame, ex: MethodExample, vp_id: str, ext, *, highlight: bool, star: bool) -> None:
-    """Panel (b) (highlight) or (c) (star): constraints, region, VPs, TG, scale bar."""
+    """Panel (b) (highlight) or (c) (star): constraints, region, VPs, TG."""
     ax.set_xlim(ext[0], ext[1]); ax.set_ylim(ext[2], ext[3]); ax.set_aspect("equal")
     if ex.combo == SPO:
         _draw_spo(ax, frame, ex, vp_id, ext, highlight=highlight)
@@ -590,7 +574,6 @@ def draw_map(ax, frame: Frame, ex: MethodExample, vp_id: str, ext, *, highlight:
     if star and ex.estimate is not None:
         x, y = frame.xy(*ex.estimate)
         ax.scatter([x], [y], s=34, marker=EST_MARKER, facecolor=STAR, edgecolor=EST_EDGE, linewidth=0.4, zorder=10)
-    _scale_bar(ax, ext)
     _style(ax, ticks=False)
 
 

@@ -110,7 +110,7 @@ GROUPS = ((True, "has-$X$", "has-X"), (False, "no-$X$", "no-X"))
 HUES = {True: CLUSTER_HUES[0], False: CLUSTER_HUES[1]}
 
 QUANTITY = "min RTT (ms), per TG"
-QUANTITY_NORM = "normalized min RTT"
+QUANTITY_NORM = "Norm. min RTT"
 
 #: The dotted line, in ms. A reading aid; see the module docstring.
 SPLIT_MS = 3.0
