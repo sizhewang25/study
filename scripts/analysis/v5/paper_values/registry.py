@@ -77,6 +77,8 @@ FORMATS: dict[str, Callable[[float], str]] = {
     "pp": lambda v: F._q(abs(v), 0),  # 12 (whole pp, unsigned)
     "pp1": lambda v: F.pp(abs(v), unit=False),  # 1.2, 12 (1 decimal below 10 pp, as fmt.pp)
     "pp1s": lambda v: f"${F.pp(v, signed=True, unit=False)}$",  # $+1.2$
+    "negpp": lambda v: str(int(F._q(-v, 0))),  # a drop printed as a change, whole pp: 15.7 -> -16, 0 -> 0
+    "e3w": lambda v: _sig(v, 2) if v < 9.95 else F._q(v, 0),  # 2 significant figures below 10, whole above: 0.93, 6.2, 137
     "e3": lambda v: F.e3(v),  # 3 significant figures
     "e3s2": lambda v: _sig(v, 2),  # 2 significant figures
     "x1": lambda v: _times(v, 1),  # 1.2$\times$

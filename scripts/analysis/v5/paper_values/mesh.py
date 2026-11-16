@@ -1,4 +1,4 @@
-"""Slugs and claims of the mesh group (pro-paper): §1, §3, §6, §7, §8 and App. D.
+"""Slugs and claims of the mesh group (pro-paper): §1, §3, §6, §7, §8 and Apps. E, G.
 
 Keys are topical, not sectional, so one number printed in several places (an
 accuracy in §1, §6.1, Table x-cell and §8) is one slug. Every getter returns
@@ -21,8 +21,8 @@ from scripts.analysis.v5.paper_values.common import (
 )
 from scripts.analysis.v5.paper_values.registry import put
 
-S1, S3, S61, S62, S63, S64, S65, S7, S8, SD = (
-    "§1", "§3", "§6.1", "§6.2", "§6.3", "§6.4", "§6.5", "§7", "§8", "App. D")
+S1, S3, S61, S62, S63, S64, S65, S7, S8, SD, SG = (
+    "§1", "§3", "§6.1", "§6.2", "§6.3", "§6.4", "§6.5", "§7", "§8", "App. E", "App. G")
 
 BARS = "classify/<seen>/outcome_bars.unbounded.pooled.healpix-128.csv"
 ECDF = "classify/<seen>/error_cdf.pooled.norm.cut.csv"
@@ -38,6 +38,10 @@ EXT = "cost/<seen>/cost_box.pooled.heap.extrapolation.csv (all)"
 PARETO = "pareto/<all>/pareto.csv"
 PAIRS = "pareto/<all>/pareto.pairs.csv"
 VDELTA = "variant-delta/<all>/variant_delta.csv (pooled)"
+LOSO = "loso-delta/<all>/loso_delta.csv (pooled)"
+EXCL = "exclusive-error/<seen>/exclusive_error_cdf.spo_vs_octh.error.manifest.json"
+STAB = "stability/<seen>/paired_std_error.spo_vs_octh.manifest.json"
+PERI = "peripherality/<seen>/peripherality.SPO-vs-OCT-H.manifest.json"
 
 
 def _ok(holds: bool, detail: str) -> tuple[bool, str]:
@@ -83,6 +87,8 @@ put("data.filter.removed.all", "pct", "dataset/<all>/dataset.csv (est_removed_tg
     lambda c: _filter(c, "All"), section=S3)
 put("data.filter.removed.as-b", "pct", "dataset/<all>/dataset.csv", lambda c: _filter(c, "AS-B"),
     section=S3)
+put("data.filter.retained.all", "pct", "dataset/<all>/dataset.csv (100 - est_removed_tgs / est_tgs_before_filter)",
+    lambda c: 100 - _filter(c, "All"), section=S3, note="the sanitization retains this share of the TGs")
 
 
 # ---- §6.2: S-P -----------------------------------------------------------------------
@@ -204,6 +210,11 @@ put("soi.hasx.single-disk", "pct", f"{REPLAY} (participant_bins_pct['1'])",
 for m in ("oct-h", "oct-s"):
     put(f"{m}.hasx.excludes-tg", "pct", f"{XSIDE} (100 - tg_inside_pct)",
         lambda c, m=m: 100 - _inside(c, m, "has-X"), section=S64)
+for m in METHODS:
+    for side, sk in (("has-X", "has-x"), ("no-X", "no-x")):
+        put(f"x.err.p50.{sk}.{m}", "e3w", f"{XSIDE} (error_over_D p50 x 1e3)",
+            lambda c, m=m, side=side: _xerr(c, m, side) * 1000, section=S63,
+            note=f"Table x-cell: {KEY_TO_TERM[m]} median error on {side} TGs (x1e-3)")
 put("oct-h.hasx.err-ratio", "x1", f"{XSIDE} (error_over_D p50, S-P / OCT-H, has-X)",
     lambda c: _xerr(c, "s-p", "has-X") / _xerr(c, "oct-h", "has-X"), section=S64)
 put("van.hasx.ge3-disks", "pct", f"{REPLAY} (participant_bins_pct['>=3'])",
@@ -317,7 +328,7 @@ def _ahead_every_net(c: Ctx, regime: str) -> list[str]:
 for m in METHODS:
     put(f"acc.unseen.{m}", "pct", f"{PARETO} (unseen, cell, acc)", lambda c, m=m: c.pa("unseen", m, "acc") * 100,
         section=S8)
-for m in CBG:
+for m in METHODS:
     put(f"loso.drop.{m}", "pp", f"{PARETO} (seen acc - unseen acc)",
         lambda c, m=m: (c.pa("seen", m, "acc") - c.pa("unseen", m, "acc")) * 100, section=S8)
 for regime in ("seen", "unseen"):
@@ -325,6 +336,8 @@ for regime in ("seen", "unseen"):
         fmt_ = "s" if m in ("oct-h", "oct-s") else "ms"
         put(f"pareto.{regime}.rt.{m}", fmt_, f"{PARETO} ({regime}, runtime_p50_ms)",
             lambda c, m=m, regime=regime: c.pa(regime, m, "runtime_p50_ms"), section=S8)
+put("acc.unseen.diff.soi-minus-s-p", "pp", f"{PARETO} (unseen acc, |SOI - S-P|)",
+    lambda c: abs(c.pa("unseen", "soi", "acc") - c.pa("unseen", "s-p", "acc")) * 100, section=S8)
 put("pareto.seen.rt-ratio.oct-h-over-spo", "x0", PARETO,
     lambda c: c.pa("seen", "oct-h", "runtime_p50_ms") / c.pa("seen", "spo", "runtime_p50_ms"), section=S8)
 put("pareto.unseen.spo.spread", "pp", f"{PARETO} (unseen, SPO, spread_pp)", lambda c: c.pa("unseen", "spo", "spread_pp"),
@@ -364,3 +377,86 @@ put("appd.drop-differs-sites.oct-h", "pct", "variant-delta/<all>/variant_delta.d
 put("appd.est-ratio.oct-h.seen", "xsig1", "variant-delta/<all>/variant_delta.timing.csv (ctr_p50_ratio)",
     lambda c: float(c.csv("variant-delta", "variant_delta.timing.csv", pool="all")
                     .set_index(["original", "regime"]).loc[(OCTH, "seen"), "ctr_p50_ratio"]), section=SD)
+
+
+# ---- Appendix G.1: Table seen-unseen -----------------------------------------------------------
+# Seen accuracy, its has-X / no-X split and the seen median error reuse acc.seen.*, x.acc.* and
+# err.p50.*; the change is loso.drop.* printed signed (negpp).
+
+def _loso(c: Ctx) -> pd.DataFrame:
+    d = c.csv("loso-delta", "loso_delta.csv", pool="all")
+    return d[d.scope == "pooled"].set_index("method")
+
+
+for m in METHODS:
+    for side, sk in (("has-X", "has-x"), ("no-X", "no-x")):
+        put(f"x.acc.unseen.{sk}.{m}", "pct", f"{HASX.replace('acc_base', 'acc_loso')}",
+            lambda c, m=m, side=side: float(_hx(c).loc[(combo(m), side), "acc_loso"] * 100), section=SG,
+            note=f"{KEY_TO_TERM[m]} accuracy on {side} TGs, unseen sites")
+    put(f"err.unseen.p50.{m}", "e3", f"{LOSO} (p50_loso_norm_e3)",
+        lambda c, m=m: float(_loso(c).loc[combo(m), "p50_loso_norm_e3"]), section=SG,
+        note=f"{KEY_TO_TERM[m]} median normalized error (x1e-3), unseen sites")
+def _printed_pct(v: float) -> float:
+    """A percent as the paper prints it (fmt.pct: whole, half-up)."""
+    from scripts.analysis.v5.paper import fmt as F
+    return float(F._q(v, 0))
+
+
+for m in ("oct-h", "oct-s"):
+    # From the printed ends, not the unrounded shares: the text prints "from 50% to 22%" next to
+    # "down 28 pp", and 50.0 - 21.5 = 28.5 would print 29.
+    put(f"x.drop.no-x.{m}", "pp", f"{HASX} (acc_base - acc_loso, no-X, each rounded as printed)",
+        lambda c, m=m: _printed_pct(float(_hx(c).loc[(combo(m), "no-X"), "acc_base"]) * 100)
+        - _printed_pct(float(_hx(c).loc[(combo(m), "no-X"), "acc_loso"]) * 100),
+        section=SG, note=f"{KEY_TO_TERM[m]}'s no-X accuracy drop from seen to unseen sites, between the printed percents")
+
+
+# ---- Appendix G.2: SPO vs OCT-H ------------------------------------------------------------------
+# a = SPO (spotter_cbg), b = OCT-H (octant_cbg_hull) in all three artifacts (pro-paper.yaml).
+AB = {"spo": "a", "oct-h": "b"}
+
+
+def _excl(c: Ctx, m: str) -> dict:
+    st = c.json("exclusive-error", "exclusive_error_cdf.spo_vs_octh.error.manifest.json")["stats"]
+    return next(r for r in st if r["cohort"] == f"only_{AB[m]}")
+
+
+def _stab(c: Ctx, m: str) -> dict:
+    st = c.json("stability", "paired_std_error.spo_vs_octh.manifest.json")["stats"]
+    return next(r for r in st if r["method"] == combo(m))
+
+
+def _peri(c: Ctx, cat: str) -> dict:
+    st = c.json("peripherality", "peripherality.SPO-vs-OCT-H.manifest.json")["stats"]
+    return next(r for r in st if r["category"] == cat)
+
+
+def _peri_share(c: Ctx, m: str) -> float:
+    st = c.json("peripherality", "peripherality.SPO-vs-OCT-H.manifest.json")["stats"]
+    return _peri(c, f"{AB[m]}_wins")["n_sites"] / sum(r["n_sites"] for r in st) * 100
+
+
+for m in AB:
+    t = KEY_TO_TERM[m]
+    put(f"appg.wins.{m}", "pct", f"{EXCL} (stats only_{AB[m]}.share_of_all)",
+        lambda c, m=m: _excl(c, m)["share_of_all"] * 100, section=SG,
+        note=f"{t} wins (correct where the other is not), share of all TGs")
+    put(f"appg.win-err.p50.{m}", "e3", f"{EXCL} (offset_p50)", lambda c, m=m: _excl(c, m)["offset_p50"],
+        section=SG, note=f"median normalized error (x1e-3) of {t} on the TGs it wins")
+    put(f"appg.win-err.max.{m}", "e3", f"{EXCL} (offset_max)", lambda c, m=m: _excl(c, m)["offset_max"],
+        section=SG, note=f"largest normalized error (x1e-3) of {t} on the TGs it wins")
+    for q in (50, 75):
+        put(f"appg.spread.p{q}.{m}", "sig2", f"{STAB} (spread_p{q})", lambda c, m=m, q=q: _stab(c, m)[f"spread_p{q}"],
+            section=SG, note=f"p{q} over sites of the std. dev. of {t}'s error across a site's replicas (x1e-3)")
+    put(f"appg.wins-sites.{m}", "pct", f"{PERI} (n_sites {AB[m]}_wins / all sites)",
+        lambda c, m=m: _peri_share(c, m), section=SG,
+        note=f"share of sites where {t} classifies more replicas correctly than the other")
+for q in ("p50", "max"):
+    put(f"appg.win-err.ratio.{q}", "x1", f"{EXCL} (offset_{q}, SPO / OCT-H)",
+        lambda c, q=q: _excl(c, "spo")[f"offset_{q}"] / _excl(c, "oct-h")[f"offset_{q}"], section=SG)
+put("appg.spread.zero.spo", "pct", f"{STAB} (n_units_zero_spread / n_units)",
+    lambda c: _stab(c, "spo")["n_units_zero_spread"] / _stab(c, "spo")["n_units"] * 100, section=SG,
+    note="sites at which SPO gives every replica the same error")
+put("appg.periph.p50.spo", "f2", f"{PERI} (a_wins p50_norm)", lambda c: _peri(c, "a_wins")["p50_norm"], section=SG,
+    note="median normalized distance to the footprint centre of the sites SPO wins")
+put("appg.periph.min.spo", "f2", f"{PERI} (a_wins min_norm)", lambda c: _peri(c, "a_wins")["min_norm"], section=SG)

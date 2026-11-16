@@ -13,7 +13,11 @@
 #      create_tf_artifacts.sh (otherwise); both end with publish-paper-figs,
 #      which writes outputs/paper/{pdf,json}/<paper name>.*. With
 #      --skip-artifacts, only publish-paper-figs runs.
-#   2. paper_values.generate -> outputs/paper/values/<group>.json.
+#   2. paper_values.generate -> outputs/paper/values/<group>.json: every slug
+#      the template prints (§1-§8 and Apps. E-G; registry in
+#      paper_values/{mesh,tf,derived}.py) and every claim of paper/claims.py.
+#      paper/ is not in git: without paper/claims.py on this machine the claims
+#      are not checked against its data (a warning, and MANIFEST says so).
 #   3. tar outputs/paper/{pdf,json}/<this group's figures> and values/<group>.json,
 #      plus MANIFEST.json (commit, failures), into
 #      outputs/paper/bundle.<group>.<utc>.tar.gz.
@@ -21,7 +25,10 @@
 # Bring the tarball back and unpack it where the template lives:
 #   tar -xzf bundle.<group>.<utc>.tar.gz -C outputs/paper
 # Bundles of different groups never share a file name, so both unpack into
-# one folder. Then render (see paper/template/README.md).
+# one folder. Then render (see paper/README.md):
+#   python -m scripts.analysis.v5.paper_values.render --build --zip
+# Every generated number prints inside \new{} (blue) so it stands out from the
+# hand-written text; add --no-mark for the plain submission copy.
 #
 # Not `set -e`: failures are collected, written to MANIFEST.json, and the
 # script exits non-zero after packing whatever was built.
@@ -65,6 +72,10 @@ else
 fi
 
 step "numbers ($GROUP)"
+CLAIMS_FILE=paper/claims.py
+if [ ! -f "$CLAIMS_FILE" ]; then
+  echo "warning: $CLAIMS_FILE is absent (paper/ is not in git): claims are not checked on this machine" >&2
+fi
 python -m scripts.analysis.v5.paper_values.generate --group "$GROUP" ${ROOT_ARGS[@]+"${ROOT_ARGS[@]}"} \
   || FAILED+=("paper_values.generate (missing slugs listed above)")
 
@@ -83,11 +94,13 @@ for n in "${NAMES[@]}"; do
 done
 if [ -f "$OUT/values/$GROUP.json" ]; then FILES+=("values/$GROUP.json"); else FAILED+=("bundle: values/$GROUP.json"); fi
 
-python - "$OUT/MANIFEST.$GROUP.json" "$GROUP" "$STAMP" "${FAILED[@]}" <<'EOF'
+python - "$OUT/MANIFEST.$GROUP.json" "$GROUP" "$STAMP" "$CLAIMS_FILE" "${FAILED[@]}" <<'EOF'
 import json, sys
+from pathlib import Path
 from scripts.analysis.v5.modules.figure_io import git_state
-path, group, stamp, *failed = sys.argv[1:]
-json.dump({"group": group, "created_utc": stamp, "git": git_state(), "failures": failed},
+path, group, stamp, claims, *failed = sys.argv[1:]
+json.dump({"group": group, "created_utc": stamp, "git": git_state(), "failures": failed,
+           "claims_checked": Path(claims).is_file()},
           open(path, "w"), indent=1)
 EOF
 FILES+=("MANIFEST.$GROUP.json")

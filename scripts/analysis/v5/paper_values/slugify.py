@@ -5,7 +5,8 @@ r"""Build the slugged template from the paper project.
 Copies what the paper compiles (main.tex, the sections main.tex inputs, the
 bibliography and class files, and the non-data figures) into
 `paper/template/`, applies the spec (`paper/spec.py`: every generated number becomes
-`\pv{key}`), adds the `\pv` macro to main.tex, and writes
+`\new{\pv{key}}`, so the rendered number prints in the paper's `\new` colour until
+`render --no-mark` strips the wrapper), adds the `\pv` macro to main.tex, and writes
 `paper/template/slugs.orig.json`: for every slug use, the file, line and the
 literal the paper printed. The data figures are not copied: render takes
 them from the published PDF folder.
@@ -30,6 +31,9 @@ DEFAULT_TEMPLATE = REPO_ROOT / "paper" / "template"
 DEFAULT_SPEC = REPO_ROOT / "paper" / "spec.py"   # kept out of git with the template
 MARK = re.compile(r"\[\[(.+?)\|([a-z0-9][a-z0-9.-]*)(?:\|([a-z0-9]+))?\]\]")
 PV = re.compile(r"\\pv(?:\[([a-z0-9]+)\])?\{([a-z0-9][a-z0-9.-]*)\}")
+#: A slot as the template writes it: the slug inside the paper's `\new{}` highlight.
+NEW_PV = re.compile(r"\\new\{(\\pv(?:\[[a-z0-9]+\])?\{[a-z0-9][a-z0-9.-]*\})\}")
+NEW_MACRO = r"\providecommand{\new}[1]{{\color{blue}#1}}"
 INPUT = re.compile(r"\\(?:input|include)\{([^}]+)\}")
 GRAPHIC = re.compile(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}")
 TOP_FILES = ("main.tex", "references.bib")
@@ -70,8 +74,8 @@ def unmark(marked: str) -> tuple[str, str, list[tuple[str, str, str | None]]]:
     """(paper text, template text, [(literal, key, fmt)])."""
     uses = [(m.group(1), m.group(2), m.group(3)) for m in MARK.finditer(marked)]
     old = MARK.sub(lambda m: m.group(1), marked)
-    new = MARK.sub(lambda m: f"\\pv[{m.group(3)}]{{{m.group(2)}}}" if m.group(3) else f"\\pv{{{m.group(2)}}}",
-                   marked)
+    new = MARK.sub(lambda m: "\\new{" + (f"\\pv[{m.group(3)}]{{{m.group(2)}}}" if m.group(3)
+                                         else f"\\pv{{{m.group(2)}}}") + "}", marked)
     return old, new, uses
 
 
@@ -84,9 +88,19 @@ def _occurrences(text: str, sub: str) -> list[int]:
 
 
 def _in_comment(text: str, i: int) -> bool:
-    """Whether position `i` follows an unescaped `%` on its line."""
+    """Whether position `i` follows an unescaped `%` on its line, or sits in an `\\iffalse ... \\fi` block."""
     line_start = text.rfind("\n", 0, i) + 1
-    return re.search(r"(?<!\\)%", text[line_start:i]) is not None
+    if re.search(r"(?<!\\)%", text[line_start:i]) is not None:
+        return True
+    return any(a <= i < b for a, b in _hidden_spans(text))
+
+
+IFFALSE = re.compile(r"^[ \t]*\\iffalse\b.*?^[ \t]*\\fi\b", re.S | re.M)
+
+
+def _hidden_spans(text: str) -> list[tuple[int, int]]:
+    """Spans of the `\\iffalse ... \\fi` blocks (each opening at the start of a line): text LaTeX never prints."""
+    return [m.span() for m in IFFALSE.finditer(text)]
 
 
 def load_spec(path: Path = DEFAULT_SPEC) -> list[tuple]:
@@ -135,6 +149,14 @@ def build(paper: Path, out: Path, spec_path: Path = DEFAULT_SPEC) -> tuple[list[
         else:
             i = anchor.end() + 1
             texts["main.tex"] = texts["main.tex"][:i] + MACRO + texts["main.tex"][i:]
+    if NEW_MACRO not in texts["main.tex"]:  # kept by render: the rendered numbers stay highlighted
+        i = texts["main.tex"].find("\\begin{document}")
+        if i < 0:
+            problems.append("main.tex: no \\begin{document} to put the \\new fallback before")
+        else:
+            texts["main.tex"] = (texts["main.tex"][:i] + NEW_MACRO
+                                 + "% paper_values: the slot highlight, if the paper does not define \\new\n"
+                                 + texts["main.tex"][i:])
     if problems:
         return uses, problems
 

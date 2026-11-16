@@ -20,6 +20,8 @@ R.load_all()
     ("x0", 1.4, r"1$\times$"), ("xsig1", 1234.0, r"1,000$\times$"), ("frac2", 12.34, "0.12"),
     ("sig2", 1234.0, "1,200"), ("sig2", 1.996, "2.0"), ("sig2", 9.96, "10"), ("sig2", 12.3, "12"),
     ("ms", 1.23, "1.2"), ("ms", 123.4, "123"), ("s", 1234.0, "1.2"), ("s", 12300.0, "12"), ("int", 12.4, "12"),
+    ("negpp", 15.7, "-16"), ("negpp", 0.0, "0"), ("negpp", 0.2, "0"), ("negpp", -2.4, "2"),
+    ("e3w", 0.931, "0.93"), ("e3w", 6.18, "6.2"), ("e3w", 9.96, "10"), ("e3w", 11.2, "11"), ("e3w", 136.9, "137"),
 ])
 def test_formats(fmt, value, out):
     assert R.render_value(value, fmt) == out
@@ -53,7 +55,7 @@ def test_derived_and_claims_need_registered_slugs():
 def test_unmark():
     old, new, uses = SG.unmark(r"at [[12\%|a.b]] and p[[34|c.d|bare]].")
     assert old == r"at 12\% and p34."
-    assert new == r"at \pv{a.b} and p\pv[bare]{c.d}."
+    assert new == r"at \new{\pv{a.b}} and p\new{\pv[bare]{c.d}}."
     assert uses == [(r"12\%", "a.b", None), ("34", "c.d", "bare")]
 
 
@@ -61,9 +63,25 @@ def test_apply_spec_skips_comments_and_reports_absent():
     spec = [("a.tex", r"reach [[12\%|a.b]]."), ("a.tex", "absent passage")]
     texts = {"a.tex": "% old: reach 12\\%.\nNow they reach 12\\%.\n"}
     out, uses, problems = SG.apply_spec(texts, spec)
-    assert out["a.tex"] == "% old: reach 12\\%.\nNow they reach \\pv{a.b}.\n"
+    assert out["a.tex"] == "% old: reach 12\\%.\nNow they reach \\new{\\pv{a.b}}.\n"
     assert uses == [{"key": "a.b", "fmt": None, "literal": r"12\%", "file": "a.tex", "line": 2}]
     assert len(problems) == 1 and "found 0 times" in problems[0]
+
+
+def test_apply_spec_skips_iffalse_blocks():
+    spec = [("a.tex", r"reach [[12\%|a.b]].")]
+    texts = {"a.tex": "\\iffalse\nHidden: reach 12\\%.\n\\fi\nNow they reach 12\\%.\n"}
+    out, uses, problems = SG.apply_spec(texts, spec)
+    assert not problems and uses[0]["line"] == 4
+    assert out["a.tex"].startswith("\\iffalse\nHidden: reach 12\\%.")
+
+
+def test_substitute_marks_or_unwraps():
+    slugs = {"a.b": {"value": 12.0, "latex": r"12\%", "status": "ok"}}
+    text = r"at \new{\pv{a.b}} and \new{\pv[bare]{a.b}}, kept \new{other}."
+    assert RD.substitute(text, slugs, allow_missing=False, missing=[]) == r"at \new{12\%} and \new{12}, kept \new{other}."
+    assert (RD.substitute(text, slugs, allow_missing=False, missing=[], mark=False)
+            == r"at 12\% and 12, kept \new{other}.")
 
 
 def _values(tmp_path, group, slugs):

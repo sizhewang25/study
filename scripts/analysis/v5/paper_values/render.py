@@ -14,6 +14,10 @@ reference; `--zip` packs it for Overleaf.
 A slug with no value, or a figure with no PDF, is an error. `--allow-missing`
 renders it as a red `[key]` (a boxed name for a figure) and lists it instead,
 for a draft built before every machine has delivered its values.
+
+Every slot is written `\new{\pv{key}}` in the template, so each generated number
+prints in the paper's `\new` colour (blue) and stands out from the hand-written
+text. `--no-mark` drops the wrapper and prints the plain number, for submission.
 """
 
 from __future__ import annotations
@@ -31,7 +35,7 @@ from scripts.analysis.v5.modules.figure_io import git_state
 from scripts.analysis.v5.modules.paths import REPO_ROOT
 from scripts.analysis.v5.paper_values import registry as R
 from scripts.analysis.v5.paper_values.slugify import (
-    DEFAULT_TEMPLATE, GRAPHIC, INPUT, MACRO_BEGIN, MACRO_END, PV, compiled_sections, uncomment,
+    DEFAULT_TEMPLATE, GRAPHIC, INPUT, MACRO_BEGIN, MACRO_END, NEW_PV, PV, compiled_sections, uncomment,
 )
 
 PAPER_OUT = REPO_ROOT / "outputs" / "paper"
@@ -83,7 +87,11 @@ def evaluate_derived(slugs: dict, claims: dict) -> None:
         claims[k.key] = rec
 
 
-def substitute(text: str, slugs: dict, *, allow_missing: bool, missing: list[str]) -> str:
+def substitute(text: str, slugs: dict, *, allow_missing: bool, missing: list[str], mark: bool = True) -> str:
+    """Replace every slug with its value; `mark=False` also drops each slot's `\\new{}` highlight."""
+    if not mark:
+        text = NEW_PV.sub(lambda m: m.group(1), text)
+
     def one(m):
         fmt, key = m.group(1), m.group(2)
         rec = slugs.get(key)
@@ -100,7 +108,8 @@ def drop_macro(main: str) -> str:
     return re.sub(rf"^{re.escape(MACRO_BEGIN)}.*?^{re.escape(MACRO_END)}\n", "", main, flags=re.S | re.M)
 
 
-def render(template: Path, values: list[Path], figs: Path, out: Path, *, allow_missing: bool = False) -> dict:
+def render(template: Path, values: list[Path], figs: Path, out: Path, *, allow_missing: bool = False,
+           mark: bool = True) -> dict:
     template, out = Path(template).resolve(), Path(out).resolve()
     if out == template or template in out.parents:
         raise ValueError("--out must be outside the template")
@@ -118,7 +127,7 @@ def render(template: Path, values: list[Path], figs: Path, out: Path, *, allow_m
         body = p.read_text()
         used |= {m.group(2) for m in PV.finditer(body)}
         if "\\pv" in body:
-            p.write_text(substitute(body, slugs, allow_missing=allow_missing, missing=missing))
+            p.write_text(substitute(body, slugs, allow_missing=allow_missing, missing=missing, mark=mark))
     main = out / "main.tex"
     main.write_text(drop_macro(main.read_text()))
 
@@ -169,7 +178,7 @@ def render(template: Path, values: list[Path], figs: Path, out: Path, *, allow_m
         "template": str(template),
         "values": sources,
         "figures": {"copied": copied, "missing": sorted(set(absent)), "state": fig_state},
-        "slugs": {"used": len(used), "missing": sorted(set(missing))},
+        "slugs": {"used": len(used), "missing": sorted(set(missing)), "marked": mark},
         "claims_failing": {k: {"text": v["text"], "detail": v["detail"]} for k, v in failing.items()},
         "claims_unevaluated": sorted(k for k, v in claims.items() if v.get("status") != "ok"),
     }
@@ -204,12 +213,14 @@ def main(
     allow_missing: bool = typer.Option(False, help="Render missing slugs/figures as red placeholders."),
     do_build: bool = typer.Option(False, "--build", help="Compile with latexmk and check."),
     do_zip: bool = typer.Option(False, "--zip", help="Also write <out>.zip."),
+    mark: bool = typer.Option(True, "--mark/--no-mark",
+                              help="Keep each generated number in \\new{} (blue); --no-mark prints it plain."),
 ) -> None:
     values = values or sorted((PAPER_OUT / "values").glob("*.json"))
     if not values:
         raise typer.BadParameter("no values files; run paper_values.generate first")
     try:
-        prov = render(template, values, figs, out, allow_missing=allow_missing)
+        prov = render(template, values, figs, out, allow_missing=allow_missing, mark=mark)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"wrote {out} from {', '.join(s['group'] for s in prov['values'])}: "

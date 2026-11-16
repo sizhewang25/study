@@ -192,8 +192,9 @@ grun plot-step-heading
 # Appendix: each CBG method's three phases on one TG and VP (cbg_mech.<method>.<phase>.png),
 # after checking that the all-VP rebuild reproduces the recorded predictions.
 grun plot-cbg-mechanism
-# Table x-cell (has-X / no-X accuracy, seen sites) and, in §5.4, Table
-# seen-unseen: both from loso_delta.{csv,by_has_x.csv}.
+# Table x-cell (has-X / no-X accuracy, seen sites) and App. G.1's Table
+# seen-unseen (accuracy, has-X / no-X accuracy and median error at seen and
+# unseen sites): both from loso_delta.{csv,by_has_x.csv}.
 grun report-loso-delta
 
 section "§5.2 shared and single-method successes"
@@ -203,8 +204,11 @@ section "§5.2 shared and single-method successes"
 # Needs the pooled S-P cell report (above) for has_x_share.
 grun plot-correct-upset
 
-section "§5.3 unbounded cells and bounded accuracy"
-# The three SPO-vs-OCT-H panels. The bounded outcome bars are built in §5.1.
+section "App. G.2 SPO vs OCT-H"
+# Fig. 15's three SPO-vs-OCT-H panels and the numbers App. G.2 quotes from their
+# manifests: each method's wins and its error on them (exclusive-error), the
+# replica spread and the zero-spread sites (stability), and the winning sites'
+# distance to the footprint centre (peripherality).
 grun plot-exclusive-error
 grun plot-stability
 grun plot-peripherality
@@ -249,8 +253,13 @@ section "data report"
 grun report-paper
 # The text's numbers report-paper does not print (ratios, §6.4-6.5 replay and
 # step/heading shares, §7 budget words, §8 ratios, App. D), by paper section:
-# _cross/paper/<group>/paper_stats.json. A one-off for the current draft.
-run paper-stats python -m scripts.analysis.v5.paper_stats --group "$GROUP"
+# _cross/paper/<group>/paper_stats.json. A one-off for the current draft, not
+# in git: skipped on a checkout without it (paper_values reads the artifacts).
+if [ -f scripts/analysis/v5/paper_stats.py ]; then
+  run paper-stats python -m scripts.analysis.v5.paper_stats --group "$GROUP"
+else
+  echo "(paper_stats.py not checked out; skipped)"
+fi
 
 # ---- the paper's figures --------------------------------------------------------------------
 # paper name -> artifact lives in modules/paper_figures.py (PAPER_FIGURES), the one
