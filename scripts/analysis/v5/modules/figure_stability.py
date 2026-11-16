@@ -417,6 +417,10 @@ def draw_spread(ax, series: list, inks: list[str], figure: str = SPREAD) -> None
         # A tick per pixel: the spread is in pixels, and the reader compares
         # the boxes against whole steps.
         ax.yaxis.set_major_locator(MultipleLocator(1.0))
+    elif figure == SPREAD_ERROR:
+        # Steps of 10 (x10^-3): the boxes sit below ~20, and the default
+        # 25-step leaves them with a single gridline to be read against.
+        ax.yaxis.set_major_locator(MultipleLocator(10.0))
     ax.set_ylabel(SPREAD_LABEL[figure], fontsize=_LABEL_PT, color=_INK)
 
 
