@@ -100,7 +100,7 @@ SUFFIX = {GRID: "", ERROR: ".error"}
 #: two-column row (~1/3 of the text width) beside the peripherality and
 #: stability figures.
 _FIG_W = 2.3
-_FIG_H = 1.4
+_FIG_H = 1.1
 
 _SURFACE = "#ffffff"
 _INK = "#0b0b0b"
@@ -330,7 +330,7 @@ def render(
         ticks = [10.0 ** k for k in range(int(np.log10(lo)), int(np.log10(hi)) + 1)]
         ax.set_xticks(ticks, [DN.power_label(t) for t in ticks])
     ax.set_ylim(-0.02, 1.0 + _HEADROOM)
-    ax.set_yticks(np.linspace(0.0, 1.0, 6))
+    ax.set_yticks(np.linspace(0.0, 1.0, 3))
     ax.set_xlabel(X_LABEL[metric], fontsize=_LABEL_PT, color=_INK)
     ax.set_ylabel(_Y_LABEL, fontsize=_LABEL_PT, color=_INK)
     ax.tick_params(labelsize=_TICK_PT, colors=_INK, length=2, width=0.6)

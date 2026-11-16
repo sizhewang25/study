@@ -123,7 +123,7 @@ MANIFEST_NAME = "peripherality.{pair}.manifest.json"
 #: runs past the canvas and is clipped. `test_the_axis_label_fits` measures
 #: it rather than trusting this number, so lengthening the label fails loudly.
 _FIG_W = 2.3
-_FIG_H = 1.4
+_FIG_H = 1.1
 
 _SURFACE = "#ffffff"
 _INK = "#0b0b0b"
@@ -144,7 +144,7 @@ _FLIER_SIZE = 2.0
 
 #: The figure's only text. The repo's axis labels are sentence case. Short
 #: enough to run up a 1.4 in axis; the caption says what the distance is.
-_YLABEL = "Dist. to centroid\n(normalized)"
+_YLABEL = "Dist. to center"
 
 
 def output_dir(run_ids: list[str], *, analysis_root: Path | None = None) -> Path:

@@ -149,7 +149,7 @@ MANIFEST_NAME = "paired_{figure}.{pair}.manifest.json"
 #: two-column row (~1/3 of the text width) beside the exclusive-error and
 #: peripherality figures.
 _FIG_W = 2.3
-_FIG_H = 1.4
+_FIG_H = 1.1
 
 #: The ratio figure is not in the paper's row and keeps its standalone size:
 #: its x-label does not fit the row's narrow canvas.
@@ -189,7 +189,7 @@ _TICK_PT = 6.0
 _RATIO_LABEL = "Fraction of Correct Predictions per Cell"
 _RATIO_Y_LABEL = "Fraction of Cells"
 _SPREAD_LABEL = "Replica std. dev.\n(pixel distance)"
-_SPREAD_ERROR_LABEL = "Replica std. dev.\n" + rf"(norm. error, $\times 10^{{-3}}$)"
+_SPREAD_ERROR_LABEL = r"Std. ($\times 10^{-3}$)"
 SPREAD_LABEL = {SPREAD: _SPREAD_LABEL, SPREAD_ERROR: _SPREAD_ERROR_LABEL}
 
 
